@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/routing"
 )
 
 func TestBuildNeverMarksIncompleteCapabilityProtected(t *testing.T) {
@@ -34,6 +35,59 @@ func TestBuildNeverMarksIncompleteCapabilityProtected(t *testing.T) {
 	}
 	if len(plan.Routes) != 0 || plan.Summary.Protected != 0 || plan.Summary.Total != 4 {
 		t.Fatalf("invalid plan summary: %+v", plan)
+	}
+}
+
+func TestBuildBlocksContentModifierAfterDLPWithoutDroppingRisk(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"},
+		Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary,
+			Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443},
+			Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true, Required: true}}}
+	capabilities := map[domain.Protocol]Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}
+	graph := routing.Graph{Nodes: []routing.Node{
+		{ID: "agent", Name: "Agent", Kind: routing.NodeAgent},
+		{ID: "veil", Name: "AgentVeil", Kind: routing.NodeDLP},
+		{ID: "enhancer", Name: "Prompt enhancer", Kind: routing.NodeContentModifier},
+		{ID: "provider", Name: "Provider", Kind: routing.NodeProvider},
+	}}
+	plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: capabilities, RoutingGraphs: map[string]routing.Graph{"primary": graph}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Routes) != 0 || len(plan.Risks) != 1 || plan.Risks[0].Code != domain.RiskContentModifierAfterDLP || plan.Coverage[0].Status != domain.CoverageUnprotected || plan.Summary.Unprotected != 1 {
+		t.Fatalf("unsafe graph plan=%+v", plan)
+	}
+}
+
+func TestBuildAcceptsValidatedPreDLPModifierAndRejectsUnknownGraphSurface(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"},
+		Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary,
+			Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443},
+			Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true}}}
+	capabilities := map[domain.Protocol]Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}
+	graph := routing.Graph{Nodes: []routing.Node{
+		{ID: "agent", Name: "Agent", Kind: routing.NodeAgent},
+		{ID: "enhancer", Name: "Prompt enhancer", Kind: routing.NodeContentModifier},
+		{ID: "veil", Name: "AgentVeil", Kind: routing.NodeDLP},
+		{ID: "transport", Name: "Network", Kind: routing.NodeTransport},
+		{ID: "provider", Name: "Provider", Kind: routing.NodeProvider},
+	}}
+	plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: capabilities, RoutingGraphs: map[string]routing.Graph{"primary": graph}})
+	if err != nil || len(plan.Routes) != 1 {
+		t.Fatalf("safe graph plan=%+v err=%v", plan, err)
+	}
+	if _, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: capabilities, RoutingGraphs: map[string]routing.Graph{"typo": graph}}); err == nil {
+		t.Fatal("graph for unknown surface was ignored")
+	}
+	malformedAndUnsafe := routing.Graph{Nodes: []routing.Node{
+		{ID: "agent", Name: "Agent", Kind: routing.NodeAgent},
+		{ID: "veil", Name: "AgentVeil", Kind: routing.NodeDLP},
+		{ID: "mystery", Name: "Mystery", Kind: routing.NodeKind("mystery")},
+		{ID: "enhancer", Name: "Prompt enhancer", Kind: routing.NodeContentModifier},
+		{ID: "provider", Name: "Provider", Kind: routing.NodeProvider},
+	}}
+	if _, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: capabilities, RoutingGraphs: map[string]routing.Graph{"primary": malformedAndUnsafe}}); err == nil {
+		t.Fatal("malformed graph was downgraded to a routing risk")
 	}
 }
 

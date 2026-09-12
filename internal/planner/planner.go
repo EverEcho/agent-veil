@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/routing"
 )
 
 type Capability struct {
@@ -19,6 +20,7 @@ type Options struct {
 	Capabilities  map[domain.Protocol]Capability
 	DefaultPolicy string
 	Network       domain.NetworkRoute
+	RoutingGraphs map[string]routing.Graph
 }
 
 func Build(manifest domain.AgentManifest, options Options) (domain.ProtectionPlan, error) {
@@ -36,9 +38,31 @@ func Build(manifest domain.AgentManifest, options Options) (domain.ProtectionPla
 			return domain.ProtectionPlan{}, domain.NewError(domain.ErrInvalidContract, "build protection plan", "capability protocol does not match its registry key")
 		}
 	}
+	knownSurfaces := make(map[string]struct{}, len(manifest.Surfaces))
+	for _, surface := range manifest.Surfaces {
+		knownSurfaces[surface.ID] = struct{}{}
+	}
+	for surfaceID := range options.RoutingGraphs {
+		if _, ok := knownSurfaces[surfaceID]; !ok {
+			return domain.ProtectionPlan{}, domain.NewError(domain.ErrInvalidContract, "build protection plan", "routing graph references an unknown surface")
+		}
+	}
 	plan := domain.ProtectionPlan{SchemaVersion: manifest.SchemaVersion, ManifestID: manifest.Agent.ID}
 	routeIDs := map[string]struct{}{}
 	for _, surface := range manifest.Surfaces {
+		if graph, ok := options.RoutingGraphs[surface.ID]; ok {
+			if err := graph.ValidateStructure(); err != nil {
+				return domain.ProtectionPlan{}, err
+			}
+			risks := graph.Risks(surface.ID)
+			if len(risks) != 0 {
+				coverage := domain.SurfaceCoverage{SurfaceID: surface.ID, Status: domain.CoverageUnprotected, Reason: "routing graph contains a content modifier after AgentVeil"}
+				plan.Coverage = append(plan.Coverage, coverage)
+				plan.Risks = append(plan.Risks, risks...)
+				addSummary(&plan.Summary, coverage.Status)
+				continue
+			}
+		}
 		coverage, route, risks := classify(surface, options)
 		plan.Coverage = append(plan.Coverage, coverage)
 		plan.Risks = append(plan.Risks, risks...)
