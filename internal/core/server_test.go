@@ -130,7 +130,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 		t.Fatal("dashboard leaked management data")
 	}
 	assertLocalSecurityHeaders(t, recorder.Header())
-	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
+	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
@@ -684,6 +684,53 @@ func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
 	}
 	if _, _, err := store.OpenActive(); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rule store remained active: %v", err)
+	}
+}
+
+func TestRulePackManagementRemovesOnlyInactiveVersions(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := rulestore.New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(detector.RulePack{SchemaVersion: "v1", Rules: []detector.RuleDefinition{{ID: "custom.ticket", Category: "internal.ticket", Severity: domain.SeverityHigh, SuggestedAction: domain.ActionRedact, Pattern: `TICKET-[0-9]{6}`}}})
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		sum := sha256.Sum256(payload)
+		manifest := rulestore.Manifest{SchemaVersion: "v1", Version: version, Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+		manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, rulestore.SigningPayload(manifest)))
+		if err := store.Install(manifest, bytes.NewReader(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Activate("1.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithRuleStore(store); err != nil {
+		t.Fatal(err)
+	}
+
+	activeRequest := httptest.NewRequest(http.MethodDelete, "/v1/rules/1.1.0", nil)
+	activeRequest.SetPathValue("version", "1.1.0")
+	activeRecorder := httptest.NewRecorder()
+	s.removeRulePack(activeRecorder, activeRequest)
+	if activeRecorder.Code != http.StatusConflict {
+		t.Fatalf("active removal status=%d body=%s", activeRecorder.Code, activeRecorder.Body.String())
+	}
+
+	inactiveRequest := httptest.NewRequest(http.MethodDelete, "/v1/rules/1.0.0", nil)
+	inactiveRequest.SetPathValue("version", "1.0.0")
+	inactiveRecorder := httptest.NewRecorder()
+	s.removeRulePack(inactiveRecorder, inactiveRequest)
+	if inactiveRecorder.Code != http.StatusNoContent {
+		t.Fatalf("inactive removal status=%d body=%s", inactiveRecorder.Code, inactiveRecorder.Body.String())
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.1.0" {
+		t.Fatalf("versions=%+v error=%v", versions, err)
 	}
 }
 
