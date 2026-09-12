@@ -121,6 +121,16 @@ func TestStreamEventRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestExpectedRouteProtocolPreventsEndpointConfusion(t *testing.T) {
+	if _, err := ParseExpected(domain.ProtocolAnthropic, "/v1/responses", "application/json", "", []byte(`{"input":"safe"}`)); err == nil {
+		t.Fatal("route accepted an endpoint from another protocol")
+	}
+	document, err := ParseExpected(domain.ProtocolMCPStreamable, "/mcp", "application/json", "", []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"value":"safe"}}}`))
+	if err != nil || document.Protocol != domain.ProtocolMCPStreamable || len(document.Fields) != 1 {
+		t.Fatalf("document=%+v err=%v", document, err)
+	}
+}
+
 func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
 	f.Add([]byte(`{"input":"hello"}`))
 	f.Add([]byte(`{"input":"hello"}{"second":true}`))

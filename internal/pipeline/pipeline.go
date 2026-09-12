@@ -28,7 +28,11 @@ type Result struct {
 }
 
 func Process(ctx Context, endpoint, contentType, encoding string, body []byte, scanner *detector.Scanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
-	document, err := protocol.Parse(endpoint, contentType, encoding, body)
+	return ProcessForProtocol(ctx, "", endpoint, contentType, encoding, body, scanner, engine, vault)
+}
+
+func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, contentType, encoding string, body []byte, scanner *detector.Scanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
+	document, err := protocol.ParseExpected(expected, endpoint, contentType, encoding, body)
 	if err != nil {
 		return Result{}, err
 	}

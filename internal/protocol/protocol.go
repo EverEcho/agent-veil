@@ -31,6 +31,10 @@ const (
 )
 
 func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Document, error) {
+	return ParseExpected("", endpoint, contentType, contentEncoding, body)
+}
+
+func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncoding string, body []byte) (*Document, error) {
 	if strings.TrimSpace(contentEncoding) != "" && !strings.EqualFold(contentEncoding, "identity") {
 		return nil, domain.NewError(domain.ErrUnsupportedEncoding, "parse request", "only identity content encoding is supported")
 	}
@@ -47,13 +51,20 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 	case "/v1/messages":
 		protocol = domain.ProtocolAnthropic
 	case "/mcp", "/v1/mcp":
-		protocol = domain.ProtocolMCPHTTP
+		if expected == domain.ProtocolMCPStreamable {
+			protocol = domain.ProtocolMCPStreamable
+		} else {
+			protocol = domain.ProtocolMCPHTTP
+		}
 	default:
 		if strings.Contains(cleanEndpoint, "/models/") && (strings.HasSuffix(cleanEndpoint, ":generateContent") || strings.HasSuffix(cleanEndpoint, ":streamGenerateContent")) {
 			protocol = domain.ProtocolGemini
 		} else {
 			return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is not supported")
 		}
+	}
+	if expected != "" && protocol != expected {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint does not match the protected route protocol")
 	}
 	var root any
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -75,7 +86,7 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 		extractAnthropic(document)
 	case domain.ProtocolGemini:
 		extractGemini(document)
-	case domain.ProtocolMCPHTTP:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
 		extractMCP(document)
 	}
 	if document.extractionErr != nil {

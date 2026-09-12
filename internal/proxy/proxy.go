@@ -142,7 +142,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer vault.Destroy()
-	processed, err := pipeline.Process(pipeline.Context{SurfaceID: routeID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	processed, err := pipeline.ProcessForProtocol(pipeline.Context{SurfaceID: routeID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.ErrorCode = errorCodeValue(err)
