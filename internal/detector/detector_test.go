@@ -39,6 +39,32 @@ func TestStructuredChineseValidators(t *testing.T) {
 	}
 }
 
+func TestInternationalStructuredPIIValidators(t *testing.T) {
+	scanner := NewDefault()
+	matches := scan(t, scanner, "ssn 123-45-6789 iban GB82WEST12345698765432 ipv6 2001:db8::1 loopback ::1")
+	categories := make(map[string]int)
+	for _, match := range matches {
+		categories[match.Finding.Category]++
+	}
+	for category, want := range map[string]int{
+		"pii.us.ssn": 1,
+		"pii.iban":   1,
+		"pii.ipv6":   2,
+	} {
+		if got := categories[category]; got != want {
+			t.Fatalf("category %s count=%d want=%d matches=%+v", category, got, want, matches)
+		}
+	}
+	if len(matches) != 4 {
+		t.Fatalf("unexpected additional matches: %+v", matches)
+	}
+
+	invalid := scan(t, scanner, "000-12-3456 666-12-3456 900-12-3456 123-00-3456 123-45-0000 GB83WEST12345698765432")
+	if len(invalid) != 0 {
+		t.Fatalf("invalid structured identifiers accepted: %+v", invalid)
+	}
+}
+
 func scan(t *testing.T, scanner *Scanner, text string) []Match {
 	t.Helper()
 	matches, err := scanner.ScanChecked("/x", text)

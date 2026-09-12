@@ -54,8 +54,11 @@ func NewDefault() *Scanner {
 		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},
 		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID, 0},
 		{"pii.cn.uscc", "pii.cn.uscc", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9ABCDEFGHJKLMNPQRTUWXY]{18}\b`), validUSCC, 0},
+		{"pii.us.ssn", "pii.us.ssn", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b`), validUSSSN, 0},
+		{"pii.iban", "pii.iban", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`), validIBAN, 0},
 		{"pii.bank_card", "pii.bank_card", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{13,19}\b`), validLuhn, 0},
 		{"pii.ipv4", "pii.ipv4", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`), validIP, 0},
+		{"pii.ipv6", "pii.ipv6", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`[0-9A-Fa-f:]{2,39}`), validIPv6, 0},
 		{"pii.mac", "pii.mac", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`), nil, 0},
 	}}
 }
@@ -192,7 +195,38 @@ func validUSCC(value string) bool {
 	return value[17] == expected
 }
 
+func validUSSSN(value string) bool {
+	if len(value) != 11 || value[3] != '-' || value[6] != '-' {
+		return false
+	}
+	area := int(value[0]-'0')*100 + int(value[1]-'0')*10 + int(value[2]-'0')
+	return area != 0 && area != 666 && area < 900 && value[4:6] != "00" && value[7:] != "0000"
+}
+
+func validIBAN(value string) bool {
+	if len(value) < 15 || len(value) > 34 || value[0] < 'A' || value[0] > 'Z' || value[1] < 'A' || value[1] > 'Z' || value[2] < '0' || value[2] > '9' || value[3] < '0' || value[3] > '9' {
+		return false
+	}
+	reordered := value[4:] + value[:4]
+	remainder := 0
+	for _, character := range reordered {
+		switch {
+		case character >= '0' && character <= '9':
+			remainder = (remainder*10 + int(character-'0')) % 97
+		case character >= 'A' && character <= 'Z':
+			remainder = (remainder*100 + int(character-'A') + 10) % 97
+		default:
+			return false
+		}
+	}
+	return remainder == 1
+}
+
 func validIP(value string) bool { return net.ParseIP(value) != nil }
+func validIPv6(value string) bool {
+	ip := net.ParseIP(value)
+	return ip != nil && ip.To4() == nil
+}
 
 func highEntropy(value string) bool {
 	if len(value) < 12 {
