@@ -52,6 +52,69 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	}
 }
 
+func TestNestedJSONStringFieldsRoundTripAtLeafLevel(t *testing.T) {
+	body := []byte(`{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"notify","arguments":"{\"contact\":\"dev@example.com\",\"nested\":\"{\\\"phone\\\":\\\"13800138000\\\"}\"}"}}]}]}`)
+	document, err := Parse("/v1/chat/completions", "application/json", "", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Fields) != 2 {
+		t.Fatalf("fields=%+v", document.Fields)
+	}
+	replacements := map[string]string{}
+	for _, field := range document.Fields {
+		replacements[field.Path] = "[[VEIL_TEST_0123456789ABCDEF]]"
+	}
+	rebuilt, err := document.Replace(replacements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer struct {
+		Messages []struct {
+			ToolCalls []struct {
+				Function struct {
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(rebuilt, &outer); err != nil {
+		t.Fatal(err)
+	}
+	arguments := outer.Messages[0].ToolCalls[0].Function.Arguments
+	var first map[string]any
+	if err := json.Unmarshal([]byte(arguments), &first); err != nil {
+		t.Fatalf("arguments stopped being JSON string content: %v", err)
+	}
+	nested, ok := first["nested"].(string)
+	if !ok {
+		t.Fatalf("nested type changed: %#v", first)
+	}
+	var second map[string]any
+	if err := json.Unmarshal([]byte(nested), &second); err != nil {
+		t.Fatalf("nested content stopped being JSON: %v", err)
+	}
+	if first["contact"] != "[[VEIL_TEST_0123456789ABCDEF]]" || second["phone"] != "[[VEIL_TEST_0123456789ABCDEF]]" {
+		t.Fatalf("leaf replacements missing: %#v %#v", first, second)
+	}
+}
+
+func TestExcessiveContentNestingFailsClosed(t *testing.T) {
+	var input any = "secret"
+	for i := 0; i < maxValueDepth+2; i++ {
+		input = map[string]any{"child": input}
+	}
+	body, err := json.Marshal(map[string]any{"input": input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Parse("/v1/responses", "application/json", "", body)
+	var veilErr *domain.VeilError
+	if !errors.As(err, &veilErr) || veilErr.Code != domain.ErrUnknownProtocol {
+		t.Fatalf("expected fail-closed nesting error, got %v", err)
+	}
+}
+
 func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
 	f.Add([]byte(`{"input":"hello"}`))
 	f.Add([]byte(`{"input":"hello"}{"second":true}`))

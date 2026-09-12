@@ -44,6 +44,9 @@ func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*
 	default:
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "protocol is unsupported")
 	}
+	if document.extractionErr != nil {
+		return nil, document.extractionErr
+	}
 	return document, nil
 }
 
@@ -79,6 +82,9 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		extractMCP(document)
 	default:
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "protocol is unsupported")
+	}
+	if document.extractionErr != nil {
+		return nil, document.extractionErr
 	}
 	return document, nil
 }

@@ -5,22 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
 
 type Field struct {
-	Path string
-	Text string
-	path []any
+	Path      string
+	Text      string
+	path      []any
+	jsonPaths [][]any
 }
 
 type Document struct {
-	Protocol domain.Protocol
-	root     any
-	Fields   []Field
+	Protocol      domain.Protocol
+	root          any
+	Fields        []Field
+	extractionErr error
 }
+
+const (
+	maxValueDepth       = 16
+	maxEmbeddedJSONSize = 1 << 20
+)
 
 func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Document, error) {
 	if strings.TrimSpace(contentEncoding) != "" && !strings.EqualFold(contentEncoding, "identity") {
@@ -69,6 +77,9 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 		extractGemini(document)
 	case domain.ProtocolMCPHTTP:
 		extractMCP(document)
+	}
+	if document.extractionErr != nil {
+		return nil, document.extractionErr
 	}
 	return document, nil
 }
@@ -124,6 +135,16 @@ func (d *Document) Replace(replacements map[string]string) ([]byte, error) {
 		if !ok {
 			continue
 		}
+		if len(field.jsonPaths) > 0 {
+			outer, err := getString(d.root, field.path)
+			if err != nil {
+				return nil, err
+			}
+			value, err = replaceEmbeddedJSON(outer, field.jsonPaths, value)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if err := set(d.root, field.path, value); err != nil {
 			return nil, err
 		}
@@ -166,18 +187,20 @@ func extractResponses(d *Document) {
 }
 
 func extractResponseInput(d *Document, value any, path []any, depth int) {
-	if depth > 16 {
+	if depth > maxValueDepth {
+		d.failDepth()
 		return
 	}
 	switch typed := value.(type) {
 	case string:
-		d.Fields = append(d.Fields, Field{Path: pathString(path), Text: typed, path: path})
+		addText(d, typed, path, nil, depth)
 	case []any:
 		for i, child := range typed {
 			extractResponseInput(d, child, appendPath(path, i), depth+1)
 		}
 	case map[string]any:
-		for key, child := range typed {
+		for _, key := range sortedKeys(typed) {
+			child := typed[key]
 			switch key {
 			case "type", "role", "name", "id", "call_id", "status", "signature", "thinking", "redacted_thinking":
 				continue
@@ -206,7 +229,7 @@ func extractAnthropic(d *Document) {
 func extractContent(d *Document, value any, path []any) {
 	switch typed := value.(type) {
 	case string:
-		d.Fields = append(d.Fields, Field{Path: pathString(path), Text: typed, path: path})
+		addText(d, typed, path, nil, 0)
 	case []any:
 		for i, raw := range typed {
 			block, ok := raw.(map[string]any)
@@ -230,18 +253,20 @@ func extractContent(d *Document, value any, path []any) {
 }
 
 func extractValue(d *Document, value any, path []any, depth int) {
-	if depth > 16 {
+	if depth > maxValueDepth {
+		d.failDepth()
 		return
 	}
 	switch typed := value.(type) {
 	case string:
-		d.Fields = append(d.Fields, Field{Path: pathString(path), Text: typed, path: path})
+		addText(d, typed, path, nil, depth)
 	case []any:
 		for i, child := range typed {
 			extractValue(d, child, appendPath(path, i), depth+1)
 		}
 	case map[string]any:
-		for key, child := range typed {
+		for _, key := range sortedKeys(typed) {
+			child := typed[key]
 			if key == "thinking" || key == "redacted_thinking" || key == "signature" {
 				continue
 			}
@@ -253,7 +278,117 @@ func extractValue(d *Document, value any, path []any, depth int) {
 func addString(d *Document, object map[string]any, key string, base []any) {
 	if value, ok := object[key].(string); ok {
 		path := appendPath(base, key)
-		d.Fields = append(d.Fields, Field{Path: pathString(path), Text: value, path: path})
+		addText(d, value, path, nil, 0)
+	}
+}
+
+func addText(d *Document, value string, path []any, jsonPaths [][]any, depth int) {
+	if depth < maxValueDepth && len(value) <= maxEmbeddedJSONSize {
+		if embedded, ok := decodeEmbeddedJSON(value); ok {
+			extractEmbedded(d, embedded, path, jsonPaths, nil, depth+1)
+			return
+		}
+	}
+	fieldPath := pathString(path)
+	for _, nested := range jsonPaths {
+		fieldPath += "/$json" + pathString(nested)
+	}
+	d.Fields = append(d.Fields, Field{Path: fieldPath, Text: value, path: path, jsonPaths: clonePaths(jsonPaths)})
+}
+
+func extractEmbedded(d *Document, value any, outerPath []any, parents [][]any, path []any, depth int) {
+	if depth > maxValueDepth {
+		d.failDepth()
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		chain := append(clonePaths(parents), appendPath(nil, path...))
+		addText(d, typed, outerPath, chain, depth)
+	case []any:
+		for i, child := range typed {
+			extractEmbedded(d, child, outerPath, parents, appendPath(path, i), depth+1)
+		}
+	case map[string]any:
+		for _, key := range sortedKeys(typed) {
+			child := typed[key]
+			if key == "thinking" || key == "redacted_thinking" || key == "signature" {
+				continue
+			}
+			extractEmbedded(d, child, outerPath, parents, appendPath(path, key), depth+1)
+		}
+	}
+}
+
+func decodeEmbeddedJSON(value string) (any, bool) {
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, false
+	}
+	switch decoded.(type) {
+	case map[string]any, []any:
+		return decoded, true
+	default:
+		return nil, false
+	}
+}
+
+func replaceEmbeddedJSON(encoded string, paths [][]any, replacement string) (string, error) {
+	decoded, ok := decodeEmbeddedJSON(encoded)
+	if !ok {
+		return "", domain.NewError(domain.ErrInvalidContract, "rebuild protocol", "embedded JSON field is no longer valid")
+	}
+	currentPath := paths[0]
+	if len(paths) == 1 {
+		if err := set(decoded, currentPath, replacement); err != nil {
+			return "", err
+		}
+	} else {
+		child, err := getString(decoded, currentPath)
+		if err != nil {
+			return "", err
+		}
+		child, err = replaceEmbeddedJSON(child, paths[1:], replacement)
+		if err != nil {
+			return "", err
+		}
+		if err := set(decoded, currentPath, child); err != nil {
+			return "", err
+		}
+	}
+	result, err := json.Marshal(decoded)
+	if err != nil {
+		return "", domain.NewError(domain.ErrInvalidContract, "rebuild protocol", "embedded JSON cannot be encoded")
+	}
+	return string(result), nil
+}
+
+func clonePaths(paths [][]any) [][]any {
+	result := make([][]any, len(paths))
+	for i, path := range paths {
+		result[i] = appendPath(nil, path...)
+	}
+	return result
+}
+
+func sortedKeys(object map[string]any) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (d *Document) failDepth() {
+	if d.extractionErr == nil {
+		d.extractionErr = domain.NewError(domain.ErrUnknownProtocol, "parse content", "content nesting exceeds safety limit")
 	}
 }
 
@@ -267,12 +402,38 @@ func pathString(path []any) string {
 		switch v := part.(type) {
 		case string:
 			b.WriteByte('/')
-			b.WriteString(strings.ReplaceAll(v, "~", "~0"))
+			escaped := strings.ReplaceAll(v, "~", "~0")
+			b.WriteString(strings.ReplaceAll(escaped, "/", "~1"))
 		case int:
 			fmt.Fprintf(&b, "/%d", v)
 		}
 	}
 	return b.String()
+}
+
+func getString(root any, path []any) (string, error) {
+	current := root
+	for _, part := range path {
+		switch key := part.(type) {
+		case string:
+			object, ok := current.(map[string]any)
+			if !ok {
+				return "", domain.NewError(domain.ErrInvalidContract, "rebuild protocol", "field path changed type")
+			}
+			current = object[key]
+		case int:
+			array, ok := current.([]any)
+			if !ok || key < 0 || key >= len(array) {
+				return "", domain.NewError(domain.ErrInvalidContract, "rebuild protocol", "field path is invalid")
+			}
+			current = array[key]
+		}
+	}
+	value, ok := current.(string)
+	if !ok {
+		return "", domain.NewError(domain.ErrInvalidContract, "rebuild protocol", "field is no longer a string")
+	}
+	return value, nil
 }
 
 func set(root any, path []any, value string) error {

@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -44,5 +45,27 @@ func TestPrivateKeyFailsClosed(t *testing.T) {
 	_, err := Process(Context{}, "/v1/chat/completions", "application/json", "", []byte(`{"messages":[{"role":"user","content":"-----BEGIN PRIVATE KEY-----"}]}`), detector.NewDefault(), policy.Engine{Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{FindingType: "secret.private_key"}, Action: domain.ActionBlock}}}, vault)
 	if err == nil {
 		t.Fatal("private key was not blocked")
+	}
+}
+
+func TestNestedJSONStringToolArgumentsAreRedactedAndRemainTyped(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	body := []byte(`{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"notify","arguments":"{\"contact\":\"dev@example.com\",\"nested\":\"{\\\"phone\\\":\\\"13800138000\\\"}\"}"}}]}]}`)
+	result, err := Process(Context{}, "/v1/chat/completions", "application/json", "", body, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result.Body), "dev@example.com") || strings.Contains(string(result.Body), "13800138000") {
+		t.Fatalf("nested sensitive value leaked: %s", result.Body)
+	}
+	var outer map[string]any
+	if err := json.Unmarshal(result.Body, &outer); err != nil {
+		t.Fatal(err)
+	}
+	messages := outer["messages"].([]any)
+	call := messages[0].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+	arguments, ok := call["function"].(map[string]any)["arguments"].(string)
+	if !ok || !json.Valid([]byte(arguments)) {
+		t.Fatalf("arguments type or JSON content changed: %#v", call)
 	}
 }
