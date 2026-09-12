@@ -37,7 +37,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "01234567890123456789012345678901") {
 		t.Fatal("dashboard leaked management data")
 	}
-	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/detect", "testRules", "input cleared"} {
+	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "unknown version"} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
