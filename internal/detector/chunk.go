@@ -22,6 +22,9 @@ const (
 	DefaultChunkBytes        = 64 << 10
 	DefaultOverlapBytes      = 4 << 10
 	defaultChunkCacheEntries = 1024
+	MaxChunkBytes            = 1 << 20
+	MaxOverlapBytes          = 256 << 10
+	MaxChunkCacheEntries     = 16 << 10
 )
 
 func NewDefaultChunked() (*ChunkedScanner, error) {
@@ -33,7 +36,7 @@ func NewChunked(scanner *Scanner, chunkBytes, overlapBytes int) (*ChunkedScanner
 }
 
 func NewChunkedWithCacheLimit(scanner *Scanner, chunkBytes, overlapBytes, maxCacheEntries int) (*ChunkedScanner, error) {
-	if scanner == nil || chunkBytes < 256 || overlapBytes < 32 || overlapBytes >= chunkBytes || maxCacheEntries < 1 {
+	if scanner == nil || chunkBytes < 256 || chunkBytes > MaxChunkBytes || overlapBytes < 32 || overlapBytes > MaxOverlapBytes || overlapBytes >= chunkBytes || maxCacheEntries < 1 || maxCacheEntries > MaxChunkCacheEntries {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create chunk scanner", "invalid chunk, overlap, or cache limit")
 	}
 	return &ChunkedScanner{

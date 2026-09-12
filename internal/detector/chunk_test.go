@@ -118,9 +118,18 @@ func TestChunkCacheEvictsOldestEntryAtLimit(t *testing.T) {
 	}
 }
 
-func TestChunkCacheRejectsInvalidLimit(t *testing.T) {
-	if _, err := NewChunkedWithCacheLimit(NewDefault(), 256, 64, 0); err == nil {
-		t.Fatal("expected zero cache limit to be rejected")
+func TestChunkScannerRejectsUnboundedConfiguration(t *testing.T) {
+	for _, configuration := range []struct {
+		chunk, overlap, cache int
+	}{
+		{256, 64, 0},
+		{MaxChunkBytes + 1, 64, 1},
+		{MaxChunkBytes, MaxOverlapBytes + 1, 1},
+		{256, 64, MaxChunkCacheEntries + 1},
+	} {
+		if _, err := NewChunkedWithCacheLimit(NewDefault(), configuration.chunk, configuration.overlap, configuration.cache); err == nil {
+			t.Fatalf("unbounded scanner configuration accepted: %+v", configuration)
+		}
 	}
 }
 
