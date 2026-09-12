@@ -42,6 +42,23 @@ func TestVaultFailsClosedAtCapacityAndAfterDestroy(t *testing.T) {
 	}
 }
 
+func TestVaultRejectsUnboundedConfiguration(t *testing.T) {
+	validSecret := []byte(strings.Repeat("a", MinSessionSecretBytes))
+	for _, test := range []struct {
+		secret []byte
+		limits Limits
+	}{
+		{[]byte(strings.Repeat("a", MinSessionSecretBytes-1)), Limits{MaxEntries: 1, MaxOriginalBytes: 1}},
+		{[]byte(strings.Repeat("a", MaxSessionSecretBytes+1)), Limits{MaxEntries: 1, MaxOriginalBytes: 1}},
+		{validSecret, Limits{MaxEntries: MaxVaultEntries + 1, MaxOriginalBytes: 1}},
+		{validSecret, Limits{MaxEntries: 1, MaxOriginalBytes: MaxVaultOriginalBytes + 1}},
+	} {
+		if _, err := NewVault(test.secret, test.limits); err == nil {
+			t.Fatalf("unbounded vault configuration accepted: secret=%d limits=%+v", len(test.secret), test.limits)
+		}
+	}
+}
+
 func TestRestoreRejectsUnknownAndMalformedPlaceholder(t *testing.T) {
 	v, _ := NewVault([]byte(strings.Repeat("a", 32)), Limits{MaxEntries: 1, MaxOriginalBytes: 20})
 	if _, err := v.Restore("[[VEIL_EMAIL_0123456789ABCDEF]]"); err == nil {

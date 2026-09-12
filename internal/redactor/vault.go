@@ -22,6 +22,13 @@ type Limits struct {
 	MaxOriginalBytes int
 }
 
+const (
+	MinSessionSecretBytes = 32
+	MaxSessionSecretBytes = 64
+	MaxVaultEntries       = 64 << 10
+	MaxVaultOriginalBytes = 64 << 20
+)
+
 type Vault struct {
 	mu            sync.RWMutex
 	sessionSecret []byte
@@ -32,11 +39,11 @@ type Vault struct {
 }
 
 func NewVault(sessionSecret []byte, limits Limits) (*Vault, error) {
-	if len(sessionSecret) < 32 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "session secret must contain at least 256 bits")
+	if len(sessionSecret) < MinSessionSecretBytes || len(sessionSecret) > MaxSessionSecretBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "session secret length must be within its configured bounds")
 	}
-	if limits.MaxEntries <= 0 || limits.MaxOriginalBytes <= 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "positive vault limits are required")
+	if limits.MaxEntries <= 0 || limits.MaxEntries > MaxVaultEntries || limits.MaxOriginalBytes <= 0 || limits.MaxOriginalBytes > MaxVaultOriginalBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "vault limits must be within configured bounds")
 	}
 	return &Vault{sessionSecret: append([]byte(nil), sessionSecret...), limits: limits, entries: make(map[string][]byte)}, nil
 }
