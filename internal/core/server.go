@@ -32,6 +32,7 @@ import (
 const maxManagementBody = 64 << 10
 const defaultMaxConcurrentProxyRequests = 64
 const maxIntegrationLeaseSeconds = 3600
+const defaultSessionCleanupInterval = 100 * time.Millisecond
 
 type Server struct {
 	manager     *session.Manager
@@ -53,7 +54,9 @@ type Server struct {
 	discoverer interface {
 		DetectAll(context.Context) []discovery.Detection
 	}
-	scanner detector.ContentScanner
+	scanner       detector.ContentScanner
+	cleanupCancel context.CancelFunc
+	cleanupDone   chan struct{}
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -167,6 +170,22 @@ func (s *Server) Start() error {
 	})
 	s.httpServer = &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	cleanupContext, cancelCleanup := context.WithCancel(context.Background())
+	s.cleanupCancel = cancelCleanup
+	s.cleanupDone = make(chan struct{})
+	go func() {
+		defer close(s.cleanupDone)
+		ticker := time.NewTicker(defaultSessionCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s.manager.PruneExpired()
+			case <-cleanupContext.Done():
+				return
+			}
+		}
+	}()
 	go func() { _ = s.httpServer.Serve(listener) }()
 	return nil
 }
@@ -466,6 +485,10 @@ func (s *Server) Endpoint() string {
 
 func (s *Server) Close(ctx context.Context) error {
 	s.manager.Close()
+	if s.cleanupCancel != nil {
+		s.cleanupCancel()
+		<-s.cleanupDone
+	}
 	if s.httpServer == nil {
 		return nil
 	}

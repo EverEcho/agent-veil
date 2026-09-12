@@ -156,6 +156,19 @@ func (m *Manager) Delete(id string) bool {
 	return true
 }
 
+func (m *Manager) PruneExpired() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before := len(m.sessions)
+	now := m.now()
+	for id, entry := range m.sessions {
+		if !entry.session.ExpiresAt.After(now) {
+			m.deleteCascadeLocked(id)
+		}
+	}
+	return before - len(m.sessions)
+}
+
 func (m *Manager) deleteCascadeLocked(rootID string) {
 	pending := map[string]struct{}{rootID: {}}
 	for changed := true; changed; {

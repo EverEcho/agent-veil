@@ -94,3 +94,27 @@ func TestExpiredAuthorizationImmediatelyRemovesSession(t *testing.T) {
 		t.Fatal("expired session secret remained resident after authorization")
 	}
 }
+
+func TestPruneExpiredRevokesIdleParentAndChildSessions(t *testing.T) {
+	m := NewManager()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	parent, _ := m.Create("", "local", []string{"parent"}, time.Minute)
+	child, _ := m.Create(parent.Session.ID, "local", []string{"child"}, 30*time.Second)
+	authorization, ok := m.AuthorizeRoute(child.Session.ID, "child", child.Routes[0].Token)
+	if !ok {
+		t.Fatal("child authorization failed")
+	}
+	now = now.Add(2 * time.Minute)
+	if removed := m.PruneExpired(); removed != 2 {
+		t.Fatalf("removed=%d", removed)
+	}
+	select {
+	case <-authorization.Context.Done():
+	default:
+		t.Fatal("idle child authorization was not revoked")
+	}
+	if len(m.sessions) != 0 {
+		t.Fatalf("expired sessions retained=%d", len(m.sessions))
+	}
+}

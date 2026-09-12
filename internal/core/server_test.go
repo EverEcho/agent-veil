@@ -94,6 +94,25 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestCoreBackgroundCleanupRevokesIdleExpiredSessions(t *testing.T) {
+	manager := session.NewManager()
+	s, _ := New(manager, "01234567890123456789012345678901")
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	created, _ := manager.Create("", s.Endpoint(), []string{"primary"}, 25*time.Millisecond)
+	authorization, ok := manager.AuthorizeRoute(created.Session.ID, "primary", created.Routes[0].Token)
+	if !ok {
+		t.Fatal("session authorization failed")
+	}
+	select {
+	case <-authorization.Context.Done():
+	case <-time.After(time.Second):
+		t.Fatal("idle expired session was not revoked by background cleanup")
+	}
+}
+
 func TestCoreRejectsDNSRebindingAuthorityAndCrossOriginManagement(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	if err := s.Start(); err != nil {
