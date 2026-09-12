@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -119,6 +120,33 @@ func OpenCA(directory string) (CA, error) {
 	if certificateErr != nil || keyErr != nil || !certificateInfo.Mode().IsRegular() || certificateInfo.Mode().Perm()&0o022 != 0 || !keyInfo.Mode().IsRegular() || keyInfo.Mode().Perm() != 0o600 {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA material permissions or type are unsafe")
 	}
+	certificatePEM, err := readCAFile(certificatePath, false)
+	if err != nil {
+		return CA{}, err
+	}
+	keyPEM, err := readCAFile(keyPath, true)
+	if err != nil {
+		return CA{}, err
+	}
+	defer clearBytes(keyPEM)
+	pair, err := tls.X509KeyPair(certificatePEM, keyPEM)
+	if err != nil || len(pair.Certificate) != 1 {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA material is invalid")
+	}
+	certificate, err := x509.ParseCertificate(pair.Certificate[0])
+	key, keyOK := pair.PrivateKey.(*ecdsa.PrivateKey)
+	if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid || !certificate.MaxPathLenZero || !keyOK || !key.PublicKey.Equal(certificate.PublicKey) {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA certificate and key do not form a valid pair")
+	}
+	for _, identity := range []struct {
+		path     string
+		expected os.FileInfo
+	}{{certificatePath, certificateInfo}, {keyPath, keyInfo}} {
+		matches, err := sameCAFile(identity.path, identity.expected)
+		if err != nil || !matches {
+			return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA material changed while opening")
+		}
+	}
 	return CA{CertificatePath: certificatePath, KeyPath: keyPath, directory: directory, directoryInfo: directoryInfo, certificateInfo: certificateInfo, keyInfo: keyInfo}, nil
 }
 
@@ -201,7 +229,21 @@ func (c CA) Remove() error {
 }
 
 func validCADirectoryPath(directory string) bool {
-	return directory != "" && filepath.IsAbs(directory) && !strings.ContainsRune(directory, 0) && strings.HasPrefix(filepath.Base(directory), "ca-")
+	if directory == "" || !filepath.IsAbs(directory) || strings.ContainsRune(directory, 0) {
+		return false
+	}
+	name := strings.TrimPrefix(filepath.Base(directory), "ca-")
+	if name == filepath.Base(directory) || len(name) < 1 || len(name) > 32 {
+		return false
+	}
+	for _, character := range name {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func sameCAFile(path string, expected os.FileInfo) (bool, error) {

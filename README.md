@@ -54,9 +54,10 @@ conservatively than discovered traffic.
 - conservative Cursor global MCP enumeration, with ambiguous remote transports,
   project/nested MCP, extension registrations, and closed model backends kept as
   explicit unknown risks;
-- scoped transparent-mode CA, bounded Linux process-tree/TCP egress collection,
-  and process-egress assessment primitives. These are not yet a complete
-  transparent interception product or OS enforcement layer.
+- scoped transparent-mode CA with private atomic activation, local signing
+  revocation and restart recovery; bounded Linux process-tree/TCP egress
+  collection and process-egress assessment primitives. These are not yet a
+  complete transparent interception product or OS enforcement layer.
 
 ## Commands
 
