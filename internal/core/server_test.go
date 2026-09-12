@@ -702,6 +702,9 @@ func TestCoreRoutesMCPStreamableLifecycleMethods(t *testing.T) {
 	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
 	request := func(method string) *http.Request {
 		result, _ := http.NewRequest(method, s.Endpoint()+"/route/"+routeID+"/mcp", nil)
+		if method == http.MethodGet {
+			result.Header.Set("Accept", "text/event-stream")
+		}
 		result.Header.Set("X-Veil-Session", created.Session.ID)
 		result.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
 		return result

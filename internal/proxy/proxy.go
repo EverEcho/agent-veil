@@ -187,6 +187,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, string(domain.ErrUnknownProtocol))
 			return
 		}
+		if err := protocol.ValidateMCPStreamableAccept(r.Method, r.Header.Values("Accept")); err != nil {
+			auditEvent.Action = domain.ActionBlock
+			auditEvent.ErrorCode = domain.ErrUnknownProtocol
+			fail(w, http.StatusBadRequest, string(domain.ErrUnknownProtocol))
+			return
+		}
 	}
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {

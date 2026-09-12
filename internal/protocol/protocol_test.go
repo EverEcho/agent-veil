@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -74,6 +75,40 @@ func TestResolveMCPStreamableVersionAllowsOnlyImplementedRevisions(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestValidateMCPStreamableAccept(t *testing.T) {
+	valid := []struct {
+		method string
+		values []string
+	}{
+		{http.MethodPost, []string{"application/json, text/event-stream"}},
+		{http.MethodPost, []string{"application/json; q=0.5", "text/event-stream; q=1"}},
+		{http.MethodGet, []string{"text/event-stream"}},
+		{http.MethodDelete, nil},
+	}
+	for _, test := range valid {
+		if err := ValidateMCPStreamableAccept(test.method, test.values); err != nil {
+			t.Fatalf("method=%s values=%v error=%v", test.method, test.values, err)
+		}
+	}
+	invalid := []struct {
+		method string
+		values []string
+	}{
+		{http.MethodPost, nil},
+		{http.MethodPost, []string{"application/json"}},
+		{http.MethodPost, []string{"application/json, text/event-stream; q=0"}},
+		{http.MethodGet, []string{"application/json"}},
+		{http.MethodGet, []string{"text/event-stream; q=bogus"}},
+	}
+	for _, test := range invalid {
+		var veilErr *domain.VeilError
+		err := ValidateMCPStreamableAccept(test.method, test.values)
+		if !errors.As(err, &veilErr) || veilErr.Code != domain.ErrUnknownProtocol {
+			t.Fatalf("method=%s values=%v error=%v", test.method, test.values, err)
+		}
 	}
 }
 

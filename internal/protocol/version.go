@@ -2,6 +2,10 @@ package protocol
 
 import (
 	"encoding/json"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
@@ -32,6 +36,44 @@ func ResolveMCPStreamableVersion(values []string) (string, error) {
 	}
 }
 
+// ValidateMCPStreamableAccept enforces the response media ranges required by
+// the stateful Streamable HTTP revisions supported by this adapter.
+func ValidateMCPStreamableAccept(method string, values []string) error {
+	if method == http.MethodDelete {
+		return nil
+	}
+	if method != http.MethodPost && method != http.MethodGet || len(values) == 0 {
+		return unsupportedMCPTransportHeader()
+	}
+	wantsJSON, wantsSSE := false, false
+	for _, line := range values {
+		for _, item := range strings.Split(line, ",") {
+			mediaType, parameters, err := mime.ParseMediaType(strings.TrimSpace(item))
+			if err != nil || !acceptableQuality(parameters["q"]) {
+				continue
+			}
+			switch strings.ToLower(mediaType) {
+			case "application/json":
+				wantsJSON = true
+			case "text/event-stream":
+				wantsSSE = true
+			}
+		}
+	}
+	if !wantsSSE || method == http.MethodPost && !wantsJSON {
+		return unsupportedMCPTransportHeader()
+	}
+	return nil
+}
+
+func acceptableQuality(value string) bool {
+	if value == "" {
+		return true
+	}
+	quality, err := strconv.ParseFloat(value, 64)
+	return err == nil && quality > 0 && quality <= 1
+}
+
 // ValidateMCPStreamableBodyVersion rejects modern per-request version metadata
 // that disagrees with the HTTP envelope. Callers pass a body that has already
 // passed the strict MCP JSON envelope parser.
@@ -55,4 +97,8 @@ func ValidateMCPStreamableBodyVersion(version string, body []byte) error {
 
 func unsupportedMCPVersion() error {
 	return domain.NewError(domain.ErrUnknownProtocol, "validate MCP protocol version", "protocol revision is invalid, ambiguous, or unsupported")
+}
+
+func unsupportedMCPTransportHeader() error {
+	return domain.NewError(domain.ErrUnknownProtocol, "validate MCP transport headers", "Accept does not permit every required response media type")
 }

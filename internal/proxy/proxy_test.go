@@ -368,6 +368,7 @@ func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	setMCPAccept(request)
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
@@ -390,6 +391,7 @@ func TestMCPStreamableRejectsUnsupportedVersionBeforeUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	setMCPAccept(request)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("MCP-Protocol-Version", "2026-07-28")
 	request.Header.Set(HeaderSession, created.Session.ID)
@@ -413,6 +415,7 @@ func TestMCPStreamableRejectsBodyVersionMismatchBeforeUpstream(t *testing.T) {
 	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`))
+	setMCPAccept(request)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
@@ -436,6 +439,7 @@ func TestMCPStreamableForwardsImplementedVersion(t *testing.T) {
 	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	setMCPAccept(request)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
 	request.Header.Set(HeaderSession, created.Session.ID)
@@ -459,6 +463,7 @@ func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing
 	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{Timeout: time.Millisecond})
 	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	setMCPAccept(request)
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
@@ -482,6 +487,7 @@ func TestMCPStreamableGETEndsAtProtectionSessionExpiry(t *testing.T) {
 	created, _ := manager.Create("", "local", []string{"mcp"}, 100*time.Millisecond)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{})
 	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	setMCPAccept(request)
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
@@ -512,6 +518,7 @@ func TestActiveProtectedRequestEndsWhenSessionIsDeleted(t *testing.T) {
 	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{})
 	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	setMCPAccept(request)
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
@@ -573,6 +580,7 @@ func TestMCPStreamableGETRejectsRequestBody(t *testing.T) {
 	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
 	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", strings.NewReader("unexpected"))
+	setMCPAccept(request)
 	request.Header.Set(HeaderSession, created.Session.ID)
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
@@ -626,6 +634,34 @@ func TestMCPStreamableDELETEForwardsSessionAndEmptyResponse(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent || providerMethod != http.MethodDelete || providerSession != "mcp-session-1" || recorder.Header().Get("Mcp-Session-Id") != "mcp-session-1" || recorder.Body.Len() != 0 {
 		t.Fatalf("status=%d method=%q provider-session=%q response-session=%q body=%q", recorder.Code, providerMethod, providerSession, recorder.Header().Get("Mcp-Session-Id"), recorder.Body.String())
+	}
+}
+
+func TestMCPStreamableRejectsIncompleteAcceptBeforeUpstream(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+	}
+}
+
+func setMCPAccept(request *http.Request) {
+	if request.Method == http.MethodPost {
+		request.Header.Set("Accept", "application/json, text/event-stream")
+	} else if request.Method == http.MethodGet {
+		request.Header.Set("Accept", "text/event-stream")
 	}
 }
 
