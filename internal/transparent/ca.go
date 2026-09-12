@@ -15,12 +15,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
 
 const maxStoredCAs = 1024
+
+var caCreationMu sync.Mutex
 
 type CA struct {
 	CertificatePath string
@@ -35,12 +38,21 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 	if directory == "" || !filepath.IsAbs(directory) || now.IsZero() {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "absolute directory and creation time are required")
 	}
+	caCreationMu.Lock()
+	defer caCreationMu.Unlock()
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return CA{}, err
 	}
 	info, err := os.Lstat(directory)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "CA directory permissions or type are unsafe")
+	}
+	count, err := storedCAEntryCount(directory, maxStoredCAs+1)
+	if err != nil {
+		return CA{}, err
+	}
+	if count >= maxStoredCAs {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "CA store reached its entry limit")
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -98,6 +110,22 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "published CA identity could not be verified")
 	}
 	return created, nil
+}
+
+func storedCAEntryCount(root string, limit int) (int, error) {
+	directory, err := os.Open(root)
+	if err != nil {
+		return 0, err
+	}
+	entries, readErr := directory.ReadDir(limit)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return 0, readErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	return len(entries), nil
 }
 
 // OpenCA reconstructs a removable CA handle after a process restart. It only

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,6 +162,64 @@ func TestCARejectsRelativeAndUnsafeDirectories(t *testing.T) {
 	}
 	if _, err := CreateCA(wideRoot, time.Now().UTC()); err == nil {
 		t.Fatal("group/world-readable CA root was accepted")
+	}
+}
+
+func TestCreateCARejectsStoreAtCapacity(t *testing.T) {
+	root := privateCARoot(t)
+	for index := 0; index < maxStoredCAs; index++ {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("reserved-%04d", index)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := CreateCA(root, time.Now().UTC()); err == nil {
+		t.Fatal("CA creation exceeded the store capacity")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != maxStoredCAs {
+		t.Fatalf("capacity failure changed store entries: %d", len(entries))
+	}
+}
+
+func TestConcurrentCreateCACannotExceedStoreCapacity(t *testing.T) {
+	root := privateCARoot(t)
+	for index := 0; index < maxStoredCAs-1; index++ {
+		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("reserved-%04d", index)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for index := 0; index < 2; index++ {
+		go func(offset int) {
+			ready.Done()
+			<-start
+			_, err := CreateCA(root, time.Now().UTC().Add(time.Duration(offset)*time.Second))
+			results <- err
+		}(index)
+	}
+	ready.Wait()
+	close(start)
+	succeeded := 0
+	for index := 0; index < 2; index++ {
+		if err := <-results; err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("successful concurrent CA creations=%d, want 1", succeeded)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != maxStoredCAs {
+		t.Fatalf("store entries=%d, want %d", len(entries), maxStoredCAs)
 	}
 }
 
