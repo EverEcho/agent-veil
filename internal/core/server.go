@@ -26,6 +26,7 @@ import (
 	"github.com/agentveil/agentveil/internal/egress"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
 	"github.com/agentveil/agentveil/internal/policy"
+	"github.com/agentveil/agentveil/internal/protocol"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/registry"
@@ -823,6 +824,14 @@ func routeIDFromPath(path string) (string, bool) {
 }
 
 func decodeManagement(r *http.Request, destination any) error {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
+		return errors.New("management request requires one valid application/json content type")
+	}
+	encodings := r.Header.Values("Content-Encoding")
+	if len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") {
+		return errors.New("management request content encoding is unsupported or ambiguous")
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxManagementBody+1))
 	if err != nil {
 		return err

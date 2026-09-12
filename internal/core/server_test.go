@@ -55,11 +55,48 @@ func (f fixedInspectableDiscoverer) Inspect(context.Context, string) (domain.Age
 
 func TestDecodeManagementRejectsDuplicateKeys(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"agent_id":"visible","agent_id":"hidden"}`))
+	request.Header.Set("Content-Type", "application/json")
 	var destination struct {
 		AgentID string `json:"agent_id"`
 	}
 	if err := decodeManagement(request, &destination); err == nil {
 		t.Fatal("management request with duplicate identity was accepted")
+	}
+}
+
+func TestDecodeManagementRequiresUnambiguousJSONRepresentation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		contentType []string
+		encoding    []string
+	}{
+		{name: "missing content type"},
+		{name: "wrong content type", contentType: []string{"text/plain"}},
+		{name: "malformed content type", contentType: []string{"application/json; malformed"}},
+		{name: "duplicate content type", contentType: []string{"application/json", "application/json"}},
+		{name: "compressed", contentType: []string{"application/json"}, encoding: []string{"gzip"}},
+		{name: "duplicate encoding", contentType: []string{"application/json"}, encoding: []string{"identity", "identity"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"value":"safe"}`))
+			request.Header["Content-Type"] = test.contentType
+			request.Header["Content-Encoding"] = test.encoding
+			var destination struct {
+				Value string `json:"value"`
+			}
+			if err := decodeManagement(request, &destination); err == nil {
+				t.Fatal("ambiguous management representation accepted")
+			}
+		})
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"value":"safe"}`))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	request.Header.Set("Content-Encoding", "identity")
+	var destination struct {
+		Value string `json:"value"`
+	}
+	if err := decodeManagement(request, &destination); err != nil || destination.Value != "safe" {
+		t.Fatalf("valid management representation rejected: value=%q error=%v", destination.Value, err)
 	}
 }
 
@@ -288,6 +325,7 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	defer s.Close(context.Background())
 	registrationPayload, _ := json.Marshal(manifest)
 	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/agents", bytes.NewReader(registrationPayload))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil || response.StatusCode != http.StatusCreated {
@@ -304,6 +342,7 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
 	request, _ = http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/sessions", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	response, err = http.DefaultClient.Do(request)
 	if err != nil || response.StatusCode != http.StatusCreated {
@@ -332,6 +371,7 @@ func TestSessionAPIRejectsUnboundedTTLAndRouteCounts(t *testing.T) {
 	} {
 		payload, _ := json.Marshal(input)
 		request := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
 		recorder := httptest.NewRecorder()
 		s.createSession(recorder, request)
 		if recorder.Code != http.StatusBadRequest {
@@ -347,6 +387,7 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
 	payload, _ := json.Marshal(map[string]any{"manifest": manifest, "ttl_seconds": 60})
 	request := httptest.NewRequest(http.MethodPost, "/v1/agents/leases", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	s.registerLeasedAgent(recorder, request)
 	if recorder.Code != http.StatusCreated {
@@ -358,6 +399,7 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	}
 	heartbeat, _ := json.Marshal(map[string]any{"generation": entry.Generation, "ttl_seconds": 120})
 	request = httptest.NewRequest(http.MethodPost, "/v1/agents/native/heartbeat", bytes.NewReader(heartbeat))
+	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", "native")
 	recorder = httptest.NewRecorder()
 	s.heartbeatAgent(recorder, request)
@@ -365,6 +407,7 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 		t.Fatalf("heartbeat status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	request = httptest.NewRequest(http.MethodPost, "/v1/agents/native/heartbeat", bytes.NewReader([]byte(`{"generation":2,"ttl_seconds":120}`)))
+	request.Header.Set("Content-Type", "application/json")
 	request.SetPathValue("id", "native")
 	recorder = httptest.NewRecorder()
 	s.heartbeatAgent(recorder, request)
@@ -443,6 +486,7 @@ func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
 	document := policy.Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{AgentID: "agent-a", Provider: "api.example", SurfaceID: "primary", FindingType: "pii.email"}, Action: domain.ActionBlock}}}
 	payload, _ := json.Marshal(document)
 	request := httptest.NewRequest(http.MethodPut, "/v1/policy", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	recorder := httptest.NewRecorder()
 	s.auth(s.updatePolicy)(recorder, request)
@@ -466,6 +510,7 @@ func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
 func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	request := httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"contact dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	recorder := httptest.NewRecorder()
 	s.auth(s.testDetection)(recorder, request)
@@ -481,6 +526,7 @@ func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"safe","unexpected":true}`))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	recorder = httptest.NewRecorder()
 	s.auth(s.testDetection)(recorder, request)
@@ -513,6 +559,7 @@ func TestRuleStoreActivePackConfiguresCoreDataPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"reference TICKET-123456"}`))
+	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	recorder := httptest.NewRecorder()
 	s.auth(s.testDetection)(recorder, request)
@@ -601,6 +648,7 @@ func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
 	server.WithRegistry(reg).WithAuditor(store)
 	body := fmt.Sprintf(`{"session_id":%q,"agent_id":"agent","generation":%d,"route_id":%q,"transport":"udp"}`, created.Session.ID, registered.Generation, routeID)
 	request := httptest.NewRequest(http.MethodPost, "/v1/egress-events", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.reportUnexpectedEgress(recorder, request)
 	if recorder.Code != http.StatusNoContent {
@@ -631,6 +679,7 @@ func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/egress-events", strings.NewReader(strings.Replace(body, fmt.Sprintf(`"generation":%d`, registered.Generation), `"generation":999`, 1)))
+	request.Header.Set("Content-Type", "application/json")
 	recorder = httptest.NewRecorder()
 	server.reportUnexpectedEgress(recorder, request)
 	if recorder.Code != http.StatusConflict {
