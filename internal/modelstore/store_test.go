@@ -8,11 +8,28 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
+
+type gatedReader struct {
+	reader           *bytes.Reader
+	started, release chan struct{}
+	once             sync.Once
+}
+
+func (r *gatedReader) Read(buffer []byte) (int, error) {
+	r.once.Do(func() {
+		close(r.started)
+		<-r.release
+	})
+	return r.reader.Read(buffer)
+}
 
 func signedManifest(t *testing.T, private ed25519.PrivateKey, version string, payload []byte) Manifest {
 	t.Helper()
@@ -165,5 +182,66 @@ func TestStoreRejectsUnsafeRootsAndVersions(t *testing.T) {
 		if _, err := store.List(); err == nil {
 			t.Fatal("symlinked model version was accepted by inventory")
 		}
+	}
+}
+
+func TestStoreRejectsInstallAtVersionCapacity(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions := filepath.Join(store.root, "versions")
+	for index := 0; index < maxInstalledVersions; index++ {
+		if err := os.Mkdir(filepath.Join(versions, fmt.Sprintf("existing-%03d", index)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload := []byte("verified-model")
+	if err := store.Install(signedManifest(t, private, "overflow", payload), bytes.NewReader(payload)); err == nil {
+		t.Fatal("model install exceeded version capacity")
+	}
+	if _, err := os.Lstat(filepath.Join(versions, "overflow")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("overflow version was partially installed: %v", err)
+	}
+}
+
+func TestStoreInventoryCannotObservePartialInstall(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("verified-model")
+	manifest := signedManifest(t, private, "1.0.0", payload)
+	reader := &gatedReader{reader: bytes.NewReader(payload), started: make(chan struct{}), release: make(chan struct{})}
+	installDone := make(chan error, 1)
+	go func() { installDone <- store.Install(manifest, reader) }()
+	<-reader.started
+	listDone := make(chan error, 1)
+	go func() {
+		versions, err := store.List()
+		if err == nil && (len(versions) != 1 || versions[0].Version != "1.0.0") {
+			err = fmt.Errorf("inventory=%+v", versions)
+		}
+		listDone <- err
+	}()
+	select {
+	case err := <-listDone:
+		t.Fatalf("inventory observed an in-progress install: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(reader.release)
+	if err := <-installDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-listDone; err != nil {
+		t.Fatal(err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
@@ -42,6 +43,7 @@ type activeVersion struct {
 type Store struct {
 	root      string
 	verifyKey ed25519.PublicKey
+	mu        sync.RWMutex
 }
 
 func New(root string, verifyKey ed25519.PublicKey) (*Store, error) {
@@ -62,6 +64,8 @@ func New(root string, verifyKey ed25519.PublicKey) (*Store, error) {
 }
 
 func (s *Store) Install(manifest Manifest, source io.Reader) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if source == nil {
 		return domain.NewError(domain.ErrInvalidContract, "install model", "model source is required")
 	}
@@ -74,6 +78,13 @@ func (s *Store) Install(manifest Manifest, source io.Reader) error {
 		return domain.NewError(domain.ErrInvalidContract, "install model", "model version is already installed")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	count, err := installedEntryCount(versions, maxInstalledVersions+1)
+	if err != nil {
+		return err
+	}
+	if count >= maxInstalledVersions {
+		return domain.NewError(domain.ErrInvalidContract, "install model", "installed model versions reached their limit")
 	}
 	temporary, err := os.MkdirTemp(versions, ".install-*")
 	if err != nil {
@@ -126,6 +137,12 @@ func (s *Store) Install(manifest Manifest, source io.Reader) error {
 }
 
 func (s *Store) Open(version string) (*os.File, Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.open(version)
+}
+
+func (s *Store) open(version string) (*os.File, Manifest, error) {
 	if !versionPattern.MatchString(version) {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open model", "model version is invalid")
 	}
@@ -168,6 +185,8 @@ func (s *Store) Open(version string) (*os.File, Manifest, error) {
 
 // List returns only versions whose signed manifest and artifact both verify.
 func (s *Store) List() ([]Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	directory, err := os.Open(filepath.Join(s.root, "versions"))
 	if err != nil {
 		return nil, err
@@ -188,7 +207,7 @@ func (s *Store) List() ([]Manifest, error) {
 		if !versionPattern.MatchString(entry.Name()) || !entry.IsDir() {
 			return nil, domain.NewError(domain.ErrInvalidContract, "list models", "model versions directory contains an invalid entry")
 		}
-		file, manifest, err := s.Open(entry.Name())
+		file, manifest, err := s.open(entry.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +221,9 @@ func (s *Store) List() ([]Manifest, error) {
 }
 
 func (s *Store) Activate(version string) error {
-	file, _, err := s.Open(version)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, _, err := s.open(version)
 	if err != nil {
 		return err
 	}
@@ -219,6 +240,8 @@ func (s *Store) Activate(version string) error {
 // Deactivate removes only the active pointer. Installed, signed model versions
 // remain available for later reactivation or rollback.
 func (s *Store) Deactivate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	activePath := filepath.Join(s.root, "active.json")
 	info, err := os.Lstat(activePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -237,6 +260,8 @@ func (s *Store) Deactivate() error {
 }
 
 func (s *Store) OpenActive() (*os.File, Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	payload, err := readPrivateFile(filepath.Join(s.root, "active.json"), maxManifestBytes)
 	if err != nil {
 		return nil, Manifest{}, err
@@ -250,7 +275,23 @@ func (s *Store) OpenActive() (*os.File, Manifest, error) {
 	if err := decoder.Decode(&active); err != nil {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open active model", "active model pointer is invalid")
 	}
-	return s.Open(active.Version)
+	return s.open(active.Version)
+}
+
+func installedEntryCount(path string, limit int) (int, error) {
+	directory, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	entries, readErr := directory.ReadDir(limit)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return 0, readErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	return len(entries), nil
 }
 
 func (s *Store) verifyManifest(manifest Manifest) error {
