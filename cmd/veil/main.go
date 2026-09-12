@@ -124,6 +124,9 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if err != nil {
 		return err
 	}
+	localBypass := localNoProxy(os.Getenv("NO_PROXY"), os.Getenv("no_proxy"))
+	launch.Environment["NO_PROXY"] = localBypass
+	launch.Environment["no_proxy"] = localBypass
 	args := childArgs
 	if name == "codex" {
 		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
@@ -185,6 +188,26 @@ func overlayEnvironment(base []string, overrides map[string]string) []string {
 		result = append(result, key+"="+value)
 	}
 	return result
+}
+
+func localNoProxy(values ...string) string {
+	ordered := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, value := range append(values, "127.0.0.1", "localhost", "::1") {
+		for _, entry := range strings.Split(value, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			key := strings.ToLower(entry)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			ordered = append(ordered, entry)
+		}
+	}
+	return strings.Join(ordered, ",")
 }
 
 func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []string {

@@ -107,7 +107,7 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil && (containsTOMLKey(content, "model_provider") || containsTOMLKey(content, "base_url")) {
 			return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover codex", "custom provider configuration requires a versioned adapter")
 		}
-		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, BaseURL: "https://api.openai.com", Auth: domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:codex-login-or-environment"}, Rewritable: true, Required: true}}
+		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, BaseURL: "https://api.openai.com", Auth: domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:codex-login-or-environment"}, Network: environmentProxyRoute(d.System), Rewritable: true, Required: true}}
 	case "claude":
 		config.ConfigSource = filepath.Join(home, ".claude", "settings.json")
 		baseURL := "https://api.anthropic.com"
@@ -128,7 +128,7 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			auth = domain.AuthStrategy{Type: domain.AuthAnthropicKey, Source: "environment:ANTHROPIC_API_KEY"}
 			rewritable = true
 		}
-		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Rewritable: rewritable, Required: true}}
+		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Network: environmentProxyRoute(d.System), Rewritable: rewritable, Required: true}}
 	case "hermes":
 		config.ConfigSource = filepath.Join(home, ".hermes", "config.yaml")
 		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
@@ -248,6 +248,16 @@ func clineUnknownSlot(id, reason string) integration.Slot {
 
 func cursorUnknownSlot(id, reason string) integration.Slot {
 	return integration.Slot{ID: id, Name: "Unresolved Cursor egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
+}
+
+func environmentProxyRoute(system System) *domain.NetworkRoute {
+	for _, key := range []string{"HTTPS_PROXY", "https_proxy"} {
+		if value, ok := system.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			route := domain.NetworkRoute{Type: domain.NetworkSystemProxy}
+			return &route
+		}
+	}
+	return nil
 }
 
 func containsTOMLKey(content []byte, key string) bool {

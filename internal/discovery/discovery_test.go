@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/agentveil/agentveil/internal/domain"
 	"path/filepath"
@@ -282,6 +283,28 @@ func TestClaudeAPIKeyDiscoveryUsesIndirectRuntimeSource(t *testing.T) {
 	auth := manifest.Surfaces[0].Auth
 	if auth.Type != domain.AuthAnthropicKey || auth.Source != "environment:ANTHROPIC_API_KEY" || strings.Contains(auth.Source, "must-not-enter-manifest") {
 		t.Fatalf("auth=%+v", auth)
+	}
+}
+
+func TestProtectedCLIDiscoveryBindsEnvironmentProxyAfterDLP(t *testing.T) {
+	for _, name := range []string{"codex", "claude"} {
+		version := "0.153.4"
+		if name == "claude" {
+			version = "2.1.220"
+		}
+		d := Discoverer{System: fakeSystem{version: name + " " + version, environment: map[string]string{"HTTPS_PROXY": "http://proxy-user:proxy-secret@proxy.example:8080", "ANTHROPIC_API_KEY": "provider-secret"}}, Verified: map[string]map[string]struct{}{name: {version: {}}}}
+		manifest, err := d.Inspect(context.Background(), name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		surface := manifest.Surfaces[0]
+		if surface.Network == nil || surface.Network.Type != domain.NetworkSystemProxy || surface.Network.Endpoint != "" {
+			t.Fatalf("%s network=%+v", name, surface.Network)
+		}
+		encoded, _ := json.Marshal(manifest)
+		if strings.Contains(string(encoded), "proxy-secret") || strings.Contains(string(encoded), "provider-secret") {
+			t.Fatalf("%s manifest retained credentials: %s", name, encoded)
+		}
 	}
 }
 

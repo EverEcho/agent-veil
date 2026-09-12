@@ -50,6 +50,15 @@ func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing
 	}
 }
 
+func TestLocalNoProxyPreservesExistingRulesAndAddsCoreAuthorities(t *testing.T) {
+	value := localNoProxy("corp.example, localhost", ".internal,127.0.0.1")
+	for _, required := range []string{"corp.example", ".internal", "127.0.0.1", "localhost", "::1"} {
+		if strings.Count(strings.ToLower(value), strings.ToLower(required)) != 1 {
+			t.Fatalf("NO_PROXY=%q missing or duplicated %q", value, required)
+		}
+	}
+}
+
 func TestResolveCoreEndpointUsesExplicitValueOrSecureState(t *testing.T) {
 	if got, err := resolveCoreEndpoint("http://127.0.0.1:1234"); err != nil || got != "http://127.0.0.1:1234" {
 		t.Fatalf("explicit endpoint=%q err=%v", got, err)
