@@ -60,6 +60,21 @@ func TestLinuxProcCollectorRejectsMalformedAndOversizedSnapshots(t *testing.T) {
 	if _, err := (LinuxProcCollector{Root: "relative", MaxProcesses: 4}).Snapshot(); err == nil {
 		t.Fatal("relative proc root was accepted")
 	}
+	if _, err := (LinuxProcCollector{Root: root, MaxProcesses: DefaultMaxProcessSnapshot + 1}).Snapshot(); err == nil {
+		t.Fatal("unbounded process limit was accepted")
+	}
+}
+
+func TestLinuxProcCollectorBoundsDirectoryScanning(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("safe"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := (LinuxProcCollector{Root: root, MaxProcesses: 2, MaxEntries: 2}).Snapshot(); err == nil {
+		t.Fatal("oversized proc directory was accepted")
+	}
 }
 
 func TestReadProcStatRejectsPIDMismatchAndOversizedRecord(t *testing.T) {

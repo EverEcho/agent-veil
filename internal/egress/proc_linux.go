@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -15,9 +16,12 @@ import (
 
 const maxProcStatBytes = 4096
 
+const DefaultMaxProcDirectoryEntries = 8192
+
 type LinuxProcCollector struct {
 	Root         string
 	MaxProcesses int
+	MaxEntries   int
 }
 
 func (c LinuxProcCollector) Snapshot() ([]Process, error) {
@@ -29,34 +33,54 @@ func (c LinuxProcCollector) Snapshot() ([]Process, error) {
 	if limit == 0 {
 		limit = DefaultMaxProcessSnapshot
 	}
-	if !filepath.IsAbs(root) || limit < 1 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "absolute proc root and positive process limit are required")
+	entryLimit := c.MaxEntries
+	if entryLimit == 0 {
+		entryLimit = DefaultMaxProcDirectoryEntries
 	}
-	entries, err := os.ReadDir(root)
+	if !filepath.IsAbs(root) || limit < 1 || limit > DefaultMaxProcessSnapshot || entryLimit < 1 || entryLimit > DefaultMaxProcDirectoryEntries {
+		return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "absolute proc root and bounded scan limits are required")
+	}
+	directory, err := os.Open(root)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]Process, 0, min(len(entries), limit))
-	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid <= 0 || !entry.IsDir() {
-			continue
+	defer directory.Close()
+	result := make([]Process, 0, min(limit, 256))
+	scanned := 0
+	for {
+		entries, readErr := directory.ReadDir(256)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return nil, readErr
 		}
-		if len(result) == limit {
-			return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "process snapshot exceeds its limit")
+		for _, entry := range entries {
+			scanned++
+			if scanned > entryLimit {
+				return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "proc directory exceeds its scan limit")
+			}
+			pid, parseErr := strconv.Atoi(entry.Name())
+			if parseErr != nil || pid <= 0 || !entry.IsDir() {
+				continue
+			}
+			if len(result) == limit {
+				return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "process snapshot exceeds its limit")
+			}
+			process, statErr := readProcStat(filepath.Join(root, entry.Name(), "stat"), pid)
+			if errors.Is(statErr, os.ErrNotExist) {
+				continue
+			}
+			if statErr != nil {
+				return nil, statErr
+			}
+			result = append(result, process)
 		}
-		process, err := readProcStat(filepath.Join(root, entry.Name(), "stat"), pid)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+		if errors.Is(readErr, io.EOF) {
+			break
 		}
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, process)
 	}
 	if len(result) == 0 {
 		return nil, domain.NewError(domain.ErrInvalidContract, "collect process snapshot", "process snapshot is empty")
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ProcessID < result[j].ProcessID })
 	return result, nil
 }
 
