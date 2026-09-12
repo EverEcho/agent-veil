@@ -19,3 +19,12 @@ func TestAuditRejectsSensitiveContent(t *testing.T) {
 		t.Fatalf("workspace reference is not safely hashed: %s", ref)
 	}
 }
+
+func TestAuditLeakScanRejectsSensitiveMetadataByDefault(t *testing.T) {
+	for _, value := range []string{"dev@example.com", "ghp_abcdefghijklmnopqrstuvwxyz"} {
+		event := domain.AuditEvent{Timestamp: time.Now(), AgentID: value, Action: domain.ActionBlock}
+		if _, err := Marshal(event); err == nil {
+			t.Fatalf("audit marshal accepted sensitive metadata %q", value)
+		}
+	}
+}

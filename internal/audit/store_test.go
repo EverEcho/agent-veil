@@ -58,3 +58,24 @@ func TestOpeningStorePrunesEventsOutsideRetention(t *testing.T) {
 		t.Fatalf("expired event survived restart pruning: %s", persisted)
 	}
 }
+
+func TestStoreDefaultLeakScanPreventsSensitivePersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	store, err := NewStore(path, time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(domain.AuditEvent{Timestamp: time.Now().UTC(), AgentID: "safe-agent", Action: domain.ActionAllow}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(domain.AuditEvent{Timestamp: time.Now().UTC(), AgentID: "dev@example.com", Action: domain.ActionBlock}); err == nil {
+		t.Fatal("default audit leak scan accepted sensitive metadata")
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "dev@example.com") {
+		t.Fatalf("sensitive metadata reached disk: %s", persisted)
+	}
+}
