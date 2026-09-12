@@ -97,6 +97,9 @@ func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 				emitCount = i + 1
 			}
 		}
+		for emitCount > 0 && !safeCredentialBoundary(combined, eventEnds[emitCount-1]) {
+			emitCount--
+		}
 		for emitCount > 0 && !safePlaceholderBoundary(p.pending[:emitCount]) {
 			emitCount--
 		}
@@ -155,6 +158,20 @@ func (p *SSEProcessor) parts() ([]string, [][2]int, []int) {
 		eventEnds[i] = total
 	}
 	return parts, references, eventEnds
+}
+
+func safeCredentialBoundary(text string, offset int) bool {
+	if offset <= 0 || offset >= len(text) {
+		return true
+	}
+	return !credentialByte(text[offset-1]) || !credentialByte(text[offset])
+}
+
+func credentialByte(character byte) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9' ||
+		strings.ContainsRune("._~+/-=:@", rune(character))
 }
 
 func safePlaceholderBoundary(prefix []streamDocument) bool {

@@ -290,7 +290,7 @@ func TestStreamingResponseFlushesSafeEventsBeforeProviderCloses(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		for i := 0; i < 7; i++ {
-			event, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": strings.Repeat(string(rune('a'+i)), 100)})
+			event, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": strings.Repeat(string(rune('a'+i)), 99) + " "})
 			_, _ = w.Write([]byte("data: " + string(event) + "\n\n"))
 		}
 		w.(http.Flusher).Flush()
@@ -327,7 +327,7 @@ func TestStreamingResponseFlushesSafeEventsBeforeProviderCloses(t *testing.T) {
 		close(releaseProvider)
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if !strings.Contains(string(body), strings.Repeat("a", 100)) {
+		if !strings.Contains(string(body), strings.Repeat("a", 99)+" ") {
 			t.Fatalf("safe prefix missing: %s", body)
 		}
 	case <-time.After(time.Second):

@@ -49,18 +49,21 @@ func TestSSEProcessorEmitsSafeEventsBeforeClose(t *testing.T) {
 		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": value})
 		return []byte("data: " + string(payload) + "\n\n")
 	}
-	if output, err := processor.Push(event(strings.Repeat("a", 100))); err != nil || len(output) != 0 {
+	firstText := strings.Repeat("a", 99) + " "
+	secondText := strings.Repeat("b", 99) + " "
+	thirdText := strings.Repeat("c", 99) + " "
+	if output, err := processor.Push(event(firstText)); err != nil || len(output) != 0 {
 		t.Fatalf("first push output=%q err=%v", output, err)
 	}
-	if output, err := processor.Push(event(strings.Repeat("b", 100))); err != nil || len(output) != 0 {
+	if output, err := processor.Push(event(secondText)); err != nil || len(output) != 0 {
 		t.Fatalf("second push output=%q err=%v", output, err)
 	}
-	output, err := processor.Push(event(strings.Repeat("c", 100)))
-	if err != nil || !strings.Contains(string(output), strings.Repeat("a", 100)) || strings.Contains(string(output), strings.Repeat("b", 100)) {
+	output, err := processor.Push(event(thirdText))
+	if err != nil || !strings.Contains(string(output), firstText) || strings.Contains(string(output), secondText) {
 		t.Fatalf("safe prefix was not emitted incrementally: %q %v", output, err)
 	}
 	tail, err := processor.Close()
-	if err != nil || !strings.Contains(string(tail), strings.Repeat("b", 100)) || !strings.Contains(string(tail), strings.Repeat("c", 100)) {
+	if err != nil || !strings.Contains(string(tail), secondText) || !strings.Contains(string(tail), thirdText) {
 		t.Fatalf("tail=%q err=%v", tail, err)
 	}
 }
@@ -77,5 +80,24 @@ func TestSSEProcessorBlocksCredentialSplitAcrossEvents(t *testing.T) {
 	}
 	if output, err := processor.Push(event("klmnopqrstuvwxyz" + strings.Repeat("x", 200))); err == nil || len(output) != 0 {
 		t.Fatalf("split credential was emitted: %q err=%v", output, err)
+	}
+}
+
+func TestSSEProcessorDoesNotFlushLongUnfinishedCredentialToken(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	processor, _ := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, 4096, 512)
+	event := func(value string) []byte {
+		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": value})
+		return []byte("data: " + string(payload) + "\n\n")
+	}
+	firstSegment := "eyJ" + strings.Repeat("a", 600)
+	if output, err := processor.Push(event(firstSegment)); err != nil || len(output) != 0 {
+		t.Fatalf("first segment output=%q err=%v", output, err)
+	}
+	if output, err := processor.Push(event(strings.Repeat("b", 600))); err != nil || len(output) != 0 {
+		t.Fatalf("unfinished credential prefix leaked after lookbehind: bytes=%d err=%v", len(output), err)
+	}
+	if output, err := processor.Push(event(".payload1.signature1")); err == nil || len(output) != 0 {
+		t.Fatalf("completed long JWT was emitted: bytes=%d err=%v", len(output), err)
 	}
 }
