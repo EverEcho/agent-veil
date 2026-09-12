@@ -57,8 +57,10 @@ conservatively than discovered traffic.
 - scoped transparent-mode CA with private atomic activation, local signing
   revocation, restart-reconciled rotation, and a rollback-capable Linux
   trust-store file adapter; bounded Linux process-tree and TCP/connected-UDP
-  egress collection plus process-egress assessment primitives. These are not yet
-  a complete transparent interception product or OS enforcement layer.
+  egress collection plus fail-closed, serialized process-egress assessment and
+  watch primitives. Exact loopback hops are reported as `Local`, never as
+  content-protected. These are not yet a complete transparent interception
+  product or OS enforcement layer.
 
 ## Commands
 
