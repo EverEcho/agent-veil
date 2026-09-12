@@ -17,6 +17,8 @@ func TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip(t *testing.T) {
 		{"/v1/chat/completions", `{"messages":[{"role":"user","content":"secret"},{"role":"assistant","tool_calls":[{"function":{"name":"x","arguments":"{\"token\":\"secret\"}"}}]}],"model":"gpt"}`, 2, ""},
 		{"/v1/responses", `{"instructions":"secret","input":[{"type":"function_call","arguments":"secret","signature":"do-not-scan"}],"model":"gpt"}`, 2, "do-not-scan"},
 		{"/v1/messages", `{"system":"secret","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"do-not-scan","signature":"signed"},{"type":"tool_use","input":{"token":"secret"}}]}]}`, 2, "do-not-scan"},
+		{"/v1beta/models/gemini-2.5-pro:generateContent", `{"systemInstruction":{"parts":[{"text":"secret"}]},"contents":[{"role":"user","parts":[{"text":"secret"},{"functionCall":{"name":"x","args":{"token":"secret"}}}]}]}`, 3, ""},
+		{"/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query","arguments":{"token":"secret"}}}`, 2, ""},
 	}
 	for _, test := range tests {
 		document, err := Parse(test.endpoint, "application/json; charset=utf-8", "", []byte(test.body))

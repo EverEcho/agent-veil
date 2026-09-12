@@ -28,15 +28,22 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "protocol endpoint requires application/json")
 	}
 	var protocol domain.Protocol
-	switch strings.TrimSuffix(endpoint, "/") {
+	cleanEndpoint := strings.TrimSuffix(endpoint, "/")
+	switch cleanEndpoint {
 	case "/v1/chat/completions":
 		protocol = domain.ProtocolOpenAIChat
 	case "/v1/responses":
 		protocol = domain.ProtocolOpenAIResponses
 	case "/v1/messages":
 		protocol = domain.ProtocolAnthropic
+	case "/mcp", "/v1/mcp":
+		protocol = domain.ProtocolMCPHTTP
 	default:
-		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is not supported")
+		if strings.Contains(cleanEndpoint, "/models/") && (strings.HasSuffix(cleanEndpoint, ":generateContent") || strings.HasSuffix(cleanEndpoint, ":streamGenerateContent")) {
+			protocol = domain.ProtocolGemini
+		} else {
+			return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is not supported")
+		}
 	}
 	var root any
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
@@ -52,8 +59,57 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 		extractResponses(document)
 	case domain.ProtocolAnthropic:
 		extractAnthropic(document)
+	case domain.ProtocolGemini:
+		extractGemini(document)
+	case domain.ProtocolMCPHTTP:
+		extractMCP(document)
 	}
 	return document, nil
+}
+
+func extractGemini(d *Document) {
+	root, ok := d.root.(map[string]any)
+	if !ok {
+		return
+	}
+	if system, ok := root["systemInstruction"].(map[string]any); ok {
+		extractGeminiParts(d, system["parts"], []any{"systemInstruction", "parts"})
+	}
+	if contents, ok := root["contents"].([]any); ok {
+		for i, raw := range contents {
+			if content, ok := raw.(map[string]any); ok {
+				extractGeminiParts(d, content["parts"], []any{"contents", i, "parts"})
+			}
+		}
+	}
+}
+
+func extractGeminiParts(d *Document, value any, path []any) {
+	parts, _ := value.([]any)
+	for i, raw := range parts {
+		part, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		base := appendPath(path, i)
+		addString(d, part, "text", base)
+		if call, ok := part["functionCall"].(map[string]any); ok {
+			extractValue(d, call["args"], appendPath(base, "functionCall", "args"), 0)
+		}
+		if response, ok := part["functionResponse"].(map[string]any); ok {
+			extractValue(d, response["response"], appendPath(base, "functionResponse", "response"), 0)
+		}
+	}
+}
+
+func extractMCP(d *Document) {
+	root, ok := d.root.(map[string]any)
+	if !ok {
+		return
+	}
+	for _, key := range []string{"params", "result"} {
+		extractValue(d, root[key], []any{key}, 0)
+	}
 }
 
 func (d *Document) Replace(replacements map[string]string) ([]byte, error) {
