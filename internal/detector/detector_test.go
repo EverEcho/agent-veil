@@ -68,6 +68,27 @@ func TestFeatureAndPrefixPrefilterSkipsImpossibleRegexes(t *testing.T) {
 	}
 }
 
+func TestContextualEntropyDetectorFindsUnknownTokens(t *testing.T) {
+	value := "uW8xQ2mZ7pL4vN9cR5tK3sH6jD1fG0aB"
+	matches := scan(t, NewDefault(), "client_secret: "+value)
+	if len(matches) != 1 || matches[0].Value != value || matches[0].Finding.Detector != "entropy" || matches[0].Finding.Confidence != 0.8 {
+		t.Fatalf("matches=%+v", matches)
+	}
+}
+
+func TestEntropyDetectorRequiresContextAndExcludesPlaceholders(t *testing.T) {
+	value := "uW8xQ2mZ7pL4vN9cR5tK3sH6jD1fG0aB"
+	if matches := scan(t, NewDefault(), "identifier "+value); len(matches) != 0 {
+		t.Fatalf("context-free value matched: %+v", matches)
+	}
+	if matches := scan(t, NewDefault(), "token [[VEIL_TOKEN_4E13FA917EB2621A]]"); len(matches) != 0 {
+		t.Fatalf("placeholder matched: %+v", matches)
+	}
+	if matches := scan(t, NewDefault(), "password: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); len(matches) != 0 {
+		t.Fatalf("low-entropy value matched: %+v", matches)
+	}
+}
+
 func TestProviderSecretFamilies(t *testing.T) {
 	text := "AKIAABCDEFGHIJKLMNOP xoxb-1234567890-abcdefghijklmnop glpat-abcdefghijklmnopqrst sk_live_abcdefghijklmnopqrst eyJabcdef.abcdefgh.abcdefgh"
 	if matches := scan(t, NewDefault(), text); len(matches) != 5 {

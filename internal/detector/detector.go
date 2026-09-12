@@ -145,6 +145,7 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 				Location: domain.ContentLocation{Path: path, Start: index[0], End: index[1]}, Confidence: 1, Detector: "deterministic", SuggestedAction: rule.action}, Value: value})
 		}
 	}
+	matches = append(matches, scanEntropyCandidates(path, text)...)
 	if s.semantic == nil {
 		if s.semanticRequired {
 			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "required local semantic detector is unavailable")
