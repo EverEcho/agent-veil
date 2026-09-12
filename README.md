@@ -29,9 +29,9 @@ conservatively than discovered traffic.
   discovery-only Hermes and Cursor compatibility records;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
   surfaces without retaining credentials;
-- conservative OpenClaw JSON5 enumeration of primary, fallback, purpose-specific,
-  sub-agent, and per-agent model surfaces; no OpenClaw release is yet marked as
-  verified or protected;
+- conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
+  and Web Tool surfaces; no OpenClaw release is yet marked as verified or
+  protected;
 - scoped transparent-mode CA and process-egress assessment primitives. These are
   not yet a complete transparent interception product.
 

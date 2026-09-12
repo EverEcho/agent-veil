@@ -30,6 +30,13 @@ type openClawAgent struct {
 	Model      openClawModelChoice  `yaml:"model"`
 	ImageModel *openClawModelChoice `yaml:"imageModel"`
 	PDFModel   *openClawModelChoice `yaml:"pdfModel"`
+	Runtime    struct {
+		Type string `yaml:"type"`
+		ACP  struct {
+			Agent   string `yaml:"agent"`
+			Backend string `yaml:"backend"`
+		} `yaml:"acp"`
+	} `yaml:"runtime"`
 }
 
 type openClawDefaults struct {
@@ -46,6 +53,18 @@ type openClawProvider struct {
 	API     string `yaml:"api"`
 }
 
+type openClawMCPServer struct {
+	Command   string `yaml:"command"`
+	URL       string `yaml:"url"`
+	Transport string `yaml:"transport"`
+}
+
+type openClawBrowser struct {
+	Enabled        *bool                  `yaml:"enabled"`
+	DefaultProfile string                 `yaml:"defaultProfile"`
+	Profiles       map[string]interface{} `yaml:"profiles"`
+}
+
 type openClawConfig struct {
 	Agents struct {
 		Defaults openClawDefaults         `yaml:"defaults"`
@@ -55,6 +74,16 @@ type openClawConfig struct {
 	Models struct {
 		Providers map[string]openClawProvider `yaml:"providers"`
 	} `yaml:"models"`
+	MCP struct {
+		Servers map[string]openClawMCPServer `yaml:"servers"`
+	} `yaml:"mcp"`
+	ACP struct {
+		Enabled       *bool    `yaml:"enabled"`
+		DefaultAgent  string   `yaml:"defaultAgent"`
+		AllowedAgents []string `yaml:"allowedAgents"`
+	} `yaml:"acp"`
+	Browser *openClawBrowser     `yaml:"browser"`
+	Tools   map[string]yaml.Node `yaml:"tools"`
 }
 
 // ParseOpenClawConfig enumerates model egress without retaining provider keys.
@@ -113,8 +142,112 @@ func ParseOpenClawConfig(content []byte) ([]Slot, error) {
 		}
 		slots = append(slots, openClawOptionalChoiceSlots(prefix+"-image", "Agent "+id+" image model", domain.SurfaceVision, agent.ImageModel, config.Models.Providers)...)
 		slots = append(slots, openClawOptionalChoiceSlots(prefix+"-pdf", "Agent "+id+" PDF model", domain.SurfaceModelAuxiliary, agent.PDFModel, config.Models.Providers)...)
+		if strings.EqualFold(strings.TrimSpace(agent.Runtime.Type), "acp") {
+			if !safeOptionalOpenClawName(agent.Runtime.ACP.Agent) || !safeOptionalOpenClawName(agent.Runtime.ACP.Backend) {
+				return nil, domain.NewError(domain.ErrInvalidContract, "parse openclaw config", "ACP runtime identifier is unsafe")
+			}
+			slots = append(slots, openClawACPSlot("acp-agent-"+strings.ReplaceAll(id, "_", "-"), "Agent "+id+" ACP runtime", agent.Runtime.ACP.Agent, agent.Runtime.ACP.Backend))
+		}
+	}
+	mcpSlots, err := openClawMCPSlots(config.MCP.Servers)
+	if err != nil {
+		return nil, err
+	}
+	slots = append(slots, mcpSlots...)
+	acpSlots, err := openClawGlobalACPSlots(config.ACP.Enabled, config.ACP.DefaultAgent, config.ACP.AllowedAgents)
+	if err != nil {
+		return nil, err
+	}
+	slots = append(slots, acpSlots...)
+	if config.Browser != nil && (config.Browser.Enabled == nil || *config.Browser.Enabled) {
+		metadata := map[string]string{"coverage": "dynamic-browser-targets"}
+		if config.Browser.DefaultProfile != "" {
+			if !safeHermesName(config.Browser.DefaultProfile) {
+				return nil, domain.NewError(domain.ErrInvalidContract, "parse openclaw config", "browser profile name is unsafe")
+			}
+			metadata["default_profile"] = config.Browser.DefaultProfile
+		}
+		if len(config.Browser.Profiles) != 0 {
+			metadata["profile_count"] = fmt.Sprintf("%d", len(config.Browser.Profiles))
+		}
+		slots = append(slots, Slot{ID: "browser", Name: "Browser automation", Type: domain.SurfaceBrowser, Protocol: domain.ProtocolUnknown, Auth: openClawAuth(), Metadata: metadata, Rewritable: false})
+	}
+	if _, configured := config.Tools["web"]; configured {
+		slots = append(slots, Slot{ID: "tool-web", Name: "Web tools", Type: domain.SurfaceToolHTTP, Protocol: domain.ProtocolUnknown, Auth: openClawAuth(), Metadata: map[string]string{"coverage": "dynamic-tool-targets"}, Rewritable: false})
 	}
 	return slots, nil
+}
+
+func openClawMCPSlots(servers map[string]openClawMCPServer) ([]Slot, error) {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	slots := make([]Slot, 0, len(names))
+	for _, name := range names {
+		if !safeHermesName(name) {
+			return nil, domain.NewError(domain.ErrInvalidContract, "parse openclaw config", "MCP server name is unsafe")
+		}
+		server := servers[name]
+		command, endpoint := strings.TrimSpace(server.Command), strings.TrimSpace(server.URL)
+		if command != "" && endpoint != "" {
+			return nil, domain.NewError(domain.ErrInvalidContract, "parse openclaw config", "MCP transport is ambiguous")
+		}
+		id := "mcp-" + strings.ReplaceAll(name, "_", "-")
+		if command != "" {
+			slots = append(slots, Slot{ID: id, Name: "Local MCP " + name, Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, Auth: openClawAuth(), Metadata: map[string]string{"process_egress": "not-inspected"}, Rewritable: false})
+			continue
+		}
+		protocolType := domain.ProtocolMCPStreamable
+		if strings.EqualFold(strings.TrimSpace(server.Transport), "sse") {
+			protocolType = domain.ProtocolMCPHTTP
+		}
+		if endpoint == "" || strings.Contains(endpoint, "${") {
+			endpoint, protocolType = "", domain.ProtocolUnknown
+		}
+		slots = append(slots, Slot{ID: id, Name: "Remote MCP " + name, Type: domain.SurfaceMCPHTTP, Protocol: protocolType, BaseURL: endpoint, Auth: openClawAuth(), Rewritable: false})
+	}
+	return slots, nil
+}
+
+func openClawGlobalACPSlots(enabled *bool, defaultAgent string, allowedAgents []string) ([]Slot, error) {
+	if enabled == nil || !*enabled {
+		return nil, nil
+	}
+	agents := append([]string(nil), allowedAgents...)
+	if len(agents) == 0 && strings.TrimSpace(defaultAgent) != "" {
+		agents = append(agents, defaultAgent)
+	}
+	if len(agents) == 0 {
+		return []Slot{openClawACPSlot("acp-runtime", "ACP runtime", "", "")}, nil
+	}
+	sort.Strings(agents)
+	var slots []Slot
+	seen := map[string]struct{}{}
+	for _, agent := range agents {
+		agent = strings.TrimSpace(agent)
+		if !safeHermesName(agent) {
+			return nil, domain.NewError(domain.ErrInvalidContract, "parse openclaw config", "ACP agent identifier is unsafe")
+		}
+		if _, exists := seen[agent]; exists {
+			continue
+		}
+		seen[agent] = struct{}{}
+		slots = append(slots, openClawACPSlot("acp-"+strings.ReplaceAll(agent, "_", "-"), "ACP harness "+agent, agent, ""))
+	}
+	return slots, nil
+}
+
+func openClawACPSlot(id, name, agent, backend string) Slot {
+	metadata := map[string]string{}
+	if agent != "" {
+		metadata["agent"] = agent
+	}
+	if backend != "" {
+		metadata["backend"] = backend
+	}
+	return Slot{ID: id, Name: name, Type: domain.SurfaceACP, Protocol: domain.ProtocolUnknown, Auth: openClawAuth(), Metadata: metadata, Rewritable: false}
 }
 
 func openClawOptionalChoiceSlots(id, name string, surfaceType domain.SurfaceType, choice *openClawModelChoice, providers map[string]openClawProvider) []Slot {
@@ -151,7 +284,15 @@ func openClawSlot(id, name string, surfaceType domain.SurfaceType, modelRef stri
 	if providerID != "" {
 		metadata["provider"] = strings.ToLower(providerID)
 	}
-	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: baseURL, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:openclaw-provider"}, Metadata: metadata, Rewritable: false, Required: required}
+	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: baseURL, Auth: openClawAuth(), Metadata: metadata, Rewritable: false, Required: required}
+}
+
+func openClawAuth() domain.AuthStrategy {
+	return domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:openclaw-provider"}
+}
+
+func safeOptionalOpenClawName(value string) bool {
+	return strings.TrimSpace(value) == "" || safeHermesName(strings.TrimSpace(value))
 }
 
 func openClawProtocol(value string) domain.Protocol {

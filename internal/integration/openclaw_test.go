@@ -25,6 +25,7 @@ const openClawConfigFixture = `
     entries: {
       reviewer: {
         model: { primary: "corp/reviewer", fallbacks: ["openai/gpt-fallback"] },
+        runtime: { type: "acp", acp: { agent: "codex", backend: "acpx" } },
       },
     },
   },
@@ -42,6 +43,19 @@ const openClawConfigFixture = `
       },
     },
   },
+  mcp: {
+    servers: {
+      filesystem: { command: "npx", args: ["server-filesystem"] },
+      research: {
+        url: "https://mcp.example/rpc",
+        transport: "streamable-http",
+        headers: { Authorization: "Bearer must-never-enter-the-manifest" },
+      },
+    },
+  },
+  acp: { enabled: true, defaultAgent: "codex", allowedAgents: ["claude", "codex"] },
+  browser: { enabled: true, defaultProfile: "openclaw", profiles: { work: {} } },
+  tools: { web: { fetch: { enabled: true } } },
 }
 `
 
@@ -50,7 +64,7 @@ func TestOpenClawConfigEnumeratesDefaultFallbackPurposeAndPerAgentModels(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(slots) != 7 {
+	if len(slots) != 14 {
 		t.Fatalf("slots=%+v", slots)
 	}
 	byID := map[string]Slot{}
@@ -72,6 +86,15 @@ func TestOpenClawConfigEnumeratesDefaultFallbackPurposeAndPerAgentModels(t *test
 	if byID["subagent-fallback-1"].Metadata["model_ref"] != "corp/worker-backup" || byID["agent-reviewer-fallback-1"].Metadata["provider"] != "openai" {
 		t.Fatalf("fallback metadata missing: %+v", slots)
 	}
+	if byID["mcp-filesystem"].Protocol != domain.ProtocolLocalStdio || byID["mcp-filesystem"].Type != domain.SurfaceMCPStdio || byID["mcp-research"].Protocol != domain.ProtocolMCPStreamable {
+		t.Fatalf("MCP surfaces missing: %+v", slots)
+	}
+	if byID["acp-agent-reviewer"].Type != domain.SurfaceACP || byID["acp-agent-reviewer"].Metadata["agent"] != "codex" || byID["acp-claude"].Type != domain.SurfaceACP {
+		t.Fatalf("ACP surfaces missing: %+v", slots)
+	}
+	if byID["browser"].Type != domain.SurfaceBrowser || byID["browser"].Protocol != domain.ProtocolUnknown || byID["tool-web"].Type != domain.SurfaceToolHTTP {
+		t.Fatalf("dynamic browser/tool surfaces missing: %+v", slots)
+	}
 	encoded, _ := json.Marshal(slots)
 	if strings.Contains(string(encoded), "must-never-enter") || strings.Contains(string(encoded), "another-secret") {
 		t.Fatalf("credential leaked from parsed config: %s", encoded)
@@ -82,6 +105,9 @@ func TestOpenClawConfigFailsClosedOnUnsafeInput(t *testing.T) {
 	for _, content := range [][]byte{
 		[]byte(`{ agents: { entries: { "dev@example.com": { model: "corp/a" } } } }`),
 		[]byte(`{ agents: { defaults: { model: ["invalid"] } } }`),
+		[]byte(`{ mcp: { servers: { ambiguous: { command: "npx", url: "https://mcp.example/rpc" } } } }`),
+		[]byte(`{ acp: { enabled: true, allowedAgents: ["dev@example.com"] } }`),
+		[]byte(`{ browser: { defaultProfile: "dev@example.com" } }`),
 		[]byte(`{ /* unterminated`),
 		make([]byte, maxOpenClawConfigBytes+1),
 	} {
