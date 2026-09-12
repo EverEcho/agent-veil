@@ -216,6 +216,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := *route.client
+	if route.Protocol == domain.ProtocolMCPStreamable && r.Method == http.MethodGet {
+		client.Timeout = 0
+	}
 	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
 	response, err := client.Do(upstreamRequest)
 	if err != nil {

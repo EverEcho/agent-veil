@@ -318,6 +318,27 @@ func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{Timeout: time.Millisecond})
+	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"value":"safe"`) {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestStreamingResponseClearsServerWriteDeadline(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
