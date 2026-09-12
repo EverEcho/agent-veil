@@ -12,6 +12,7 @@ import (
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
+	veilnetwork "github.com/agentveil/agentveil/internal/network"
 	"github.com/agentveil/agentveil/internal/pipeline"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/redactor"
@@ -36,10 +37,12 @@ type Route struct {
 	}
 	Auth        domain.AuthStrategy
 	AuthApplier veilauth.Applier
+	Network     domain.NetworkRoute
 }
 type configuredRoute struct {
 	Route
 	allowlist *security.UpstreamAllowlist
+	client    *http.Client
 }
 type Handler struct {
 	sessions *session.Manager
@@ -78,7 +81,15 @@ func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) 
 		if _, exists := h.routes[route.ID]; exists {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "duplicate route id")
 		}
-		h.routes[route.ID] = configuredRoute{Route: route, allowlist: allowlist}
+		routeClient := *client
+		if route.Network.Type != "" {
+			transport, err := veilnetwork.NewTransport(route.Network)
+			if err != nil {
+				return nil, err
+			}
+			routeClient.Transport = transport
+		}
+		h.routes[route.ID] = configuredRoute{Route: route, allowlist: allowlist, client: &routeClient}
 	}
 	return h, nil
 }
@@ -139,7 +150,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
 	}
-	client := *h.client
+	client := *route.client
 	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
 	response, err := client.Do(upstreamRequest)
 	if err != nil {
