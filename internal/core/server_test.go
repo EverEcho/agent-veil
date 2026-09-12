@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/planner"
+	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -51,7 +57,10 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 }
 
 func TestSessionLifecycleAPI(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	_, _ = reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, ConfigSource: "test", Rewritable: true, Required: true}}})
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.WithRegistry(reg)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -75,5 +84,42 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	response, err = http.DefaultClient.Do(request)
 	if err != nil || response.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete failed: %v", err)
+	}
+}
+
+func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
+	var received string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		_, _ = w.Write(body)
+	}))
+	defer provider.Close()
+	parsed, _ := url.Parse(provider.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	s, _ := New(manager, "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	created, _ := manager.Create("", s.Endpoint(), []string{"route-primary"}, time.Minute)
+	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/route-primary/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Veil-Session", created.Session.ID)
+	request.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || strings.Contains(received, "dev@example.com") || !strings.Contains(string(body), "dev@example.com") {
+		t.Fatalf("status=%d provider=%s body=%s", response.StatusCode, received, body)
 	}
 }

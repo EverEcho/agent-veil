@@ -8,10 +8,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/policy"
+	veilproxy "github.com/agentveil/agentveil/internal/proxy"
+	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
@@ -51,6 +56,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /v1/agents", s.auth(s.registerAgent))
 	mux.HandleFunc("DELETE /v1/agents/{id}", s.auth(s.deleteAgent))
 	mux.HandleFunc("GET /", s.dashboard)
+	mux.Handle("POST /route/", s.proxyHandler())
+	mux.Handle("GET /route/", s.proxyHandler())
 	s.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() { _ = s.httpServer.Serve(listener) }()
@@ -167,12 +174,82 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_REQUEST"})
 		return
 	}
+	for _, routeID := range request.RouteIDs {
+		if !s.routeExists(routeID) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "UNKNOWN_ROUTE"})
+			return
+		}
+	}
 	created, err := s.manager.Create(request.ParentSessionID, s.Endpoint(), request.RouteIDs, time.Duration(request.TTLSeconds)*time.Second)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_SESSION"})
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) routeExists(routeID string) bool {
+	if s.registry == nil {
+		return false
+	}
+	for _, entry := range s.registry.List() {
+		if entry.State != registry.StateActive {
+			continue
+		}
+		for _, route := range entry.Plan.Routes {
+			if route.ID == routeID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) proxyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routeID, ok := routeIDFromPath(r.URL.Path)
+		if !ok || s.registry == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
+			return
+		}
+		var selected *domain.ProtectedRoute
+		for _, entry := range s.registry.List() {
+			if entry.State != registry.StateActive {
+				continue
+			}
+			for i := range entry.Plan.Routes {
+				route := entry.Plan.Routes[i]
+				if route.ID == routeID {
+					selected = &route
+					break
+				}
+			}
+		}
+		if selected == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
+			return
+		}
+		upstream, err := url.Parse(selected.Upstream.Scheme + "://" + selected.Upstream.Host + ":" + strconv.Itoa(int(selected.Upstream.Port)))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
+			return
+		}
+		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+}
+
+func routeIDFromPath(path string) (string, bool) {
+	rest := strings.TrimPrefix(path, "/route/")
+	if rest == path {
+		return "", false
+	}
+	id, _, found := strings.Cut(rest, "/")
+	return id, found && id != ""
 }
 
 func decodeManagement(r *http.Request, destination any) error {
