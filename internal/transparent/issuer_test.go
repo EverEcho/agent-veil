@@ -12,7 +12,7 @@ import (
 
 func TestIssuerRestrictsLeafCertificatesToExactScope(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	ca, err := CreateCA(t.TempDir(), now)
+	ca, err := CreateCA(privateCARoot(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestIssuerRestrictsLeafCertificatesToExactScope(t *testing.T) {
 
 func TestIssuerRejectsTamperedCAPermissions(t *testing.T) {
 	now := time.Now().UTC()
-	ca, err := CreateCA(t.TempDir(), now)
+	ca, err := CreateCA(privateCARoot(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,7 +63,7 @@ func TestScopeRejectsMalformedDomainsSessionsAndUnboundedSets(t *testing.T) {
 
 func TestCALifecycleIsShortLivedAndRemovable(t *testing.T) {
 	now := time.Now().UTC()
-	ca, err := CreateCA(t.TempDir(), now)
+	ca, err := CreateCA(privateCARoot(t), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestCALifecycleIsShortLivedAndRemovable(t *testing.T) {
 }
 
 func TestCACreationPublishesIndependentAtomicDirectories(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "transparent")
+	root := privateCARoot(t)
 	now := time.Now().UTC()
 	first, err := CreateCA(root, now)
 	if err != nil {
@@ -155,4 +155,44 @@ func TestCARejectsRelativeAndUnsafeDirectories(t *testing.T) {
 	if _, err := CreateCA(fileRoot, time.Now().UTC()); err == nil {
 		t.Fatal("non-directory CA root was accepted")
 	}
+	wideRoot := filepath.Join(t.TempDir(), "wide")
+	if err := os.Mkdir(wideRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateCA(wideRoot, time.Now().UTC()); err == nil {
+		t.Fatal("group/world-readable CA root was accepted")
+	}
+}
+
+func TestCARemovalRejectsReplacedMaterialBeforeDeletingAnything(t *testing.T) {
+	root := privateCARoot(t)
+	ca, err := CreateCA(root, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalCertificate := ca.CertificatePath + ".original"
+	if err := os.Rename(ca.CertificatePath, originalCertificate); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ca.CertificatePath, []byte("replacement"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ca.Remove(); err == nil {
+		t.Fatal("replaced CA certificate was removed")
+	}
+	if _, err := os.Stat(ca.KeyPath); err != nil {
+		t.Fatalf("valid key was deleted before replacement was detected: %v", err)
+	}
+	if content, err := os.ReadFile(ca.CertificatePath); err != nil || string(content) != "replacement" {
+		t.Fatalf("replacement certificate changed: %q err=%v", content, err)
+	}
+}
+
+func privateCARoot(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "transparent")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

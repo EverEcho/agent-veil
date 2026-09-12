@@ -21,6 +21,9 @@ type CA struct {
 	CertificatePath string
 	KeyPath         string
 	directory       string
+	directoryInfo   os.FileInfo
+	certificateInfo os.FileInfo
+	keyInfo         os.FileInfo
 }
 
 func CreateCA(directory string, now time.Time) (CA, error) {
@@ -31,7 +34,7 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 		return CA{}, err
 	}
 	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() {
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "CA directory permissions or type are unsafe")
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -82,12 +85,41 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 		_ = os.Remove(finalDirectory)
 		return CA{}, err
 	}
-	return CA{CertificatePath: filepath.Join(finalDirectory, "ca-cert.pem"), KeyPath: filepath.Join(finalDirectory, "ca-key.pem"), directory: finalDirectory}, nil
+	certificatePath := filepath.Join(finalDirectory, "ca-cert.pem")
+	keyPath := filepath.Join(finalDirectory, "ca-key.pem")
+	directoryInfo, directoryErr := os.Lstat(finalDirectory)
+	certificateInfo, certificateErr := os.Lstat(certificatePath)
+	keyInfo, keyErr := os.Lstat(keyPath)
+	if directoryErr != nil || certificateErr != nil || keyErr != nil {
+		_ = os.Remove(keyPath)
+		_ = os.Remove(certificatePath)
+		_ = os.Remove(finalDirectory)
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "published CA identity could not be verified")
+	}
+	return CA{CertificatePath: certificatePath, KeyPath: keyPath, directory: finalDirectory, directoryInfo: directoryInfo, certificateInfo: certificateInfo, keyInfo: keyInfo}, nil
 }
 
 func (c CA) Remove() error {
-	if c.directory == "" || !filepath.IsAbs(c.directory) || !strings.HasPrefix(filepath.Base(c.directory), "ca-") || c.CertificatePath != filepath.Join(c.directory, "ca-cert.pem") || c.KeyPath != filepath.Join(c.directory, "ca-key.pem") {
+	if c.directory == "" || !filepath.IsAbs(c.directory) || !strings.HasPrefix(filepath.Base(c.directory), "ca-") || c.CertificatePath != filepath.Join(c.directory, "ca-cert.pem") || c.KeyPath != filepath.Join(c.directory, "ca-key.pem") || c.directoryInfo == nil || c.certificateInfo == nil || c.keyInfo == nil {
 		return domain.NewError(domain.ErrInvalidContract, "remove transparent CA", "CA paths are invalid")
+	}
+	directoryExists, err := sameCAFile(c.directory, c.directoryInfo)
+	if err != nil {
+		return err
+	}
+	certificateExists, err := sameCAFile(c.CertificatePath, c.certificateInfo)
+	if err != nil {
+		return err
+	}
+	keyExists, err := sameCAFile(c.KeyPath, c.keyInfo)
+	if err != nil {
+		return err
+	}
+	if !directoryExists {
+		if certificateExists || keyExists {
+			return domain.NewError(domain.ErrInvalidContract, "remove transparent CA", "CA directory identity is missing")
+		}
+		return nil
 	}
 	for _, path := range []string{c.KeyPath, c.CertificatePath} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -102,6 +134,20 @@ func (c CA) Remove() error {
 		return nil
 	}
 	return syncCADirectory(parent)
+}
+
+func sameCAFile(path string, expected os.FileInfo) (bool, error) {
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(current, expected) {
+		return false, domain.NewError(domain.ErrInvalidContract, "remove transparent CA", "CA material changed after creation")
+	}
+	return true, nil
 }
 
 func writeCAFile(path string, content []byte, mode os.FileMode) error {
