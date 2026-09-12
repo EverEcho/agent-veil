@@ -501,6 +501,59 @@ func TestCoreProxyConcurrencyLimitDoesNotBlockManagement(t *testing.T) {
 	}
 }
 
+func TestCoreRoutesMCPStreamableLifecycleMethods(t *testing.T) {
+	var providerMethods []string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerMethods = append(providerMethods, r.Method)
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+	}))
+	defer provider.Close()
+	parsed, _ := url.Parse(provider.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolMCPStreamable: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "mcp-agent", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "remote-mcp", Name: "Remote MCP", Type: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPStreamable, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeID := registered.Plan.Routes[0].ID
+	manager := session.NewManager()
+	s, _ := New(manager, "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
+	request := func(method string) *http.Request {
+		result, _ := http.NewRequest(method, s.Endpoint()+"/route/"+routeID+"/mcp", nil)
+		result.Header.Set("X-Veil-Session", created.Session.ID)
+		result.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
+		return result
+	}
+	response, err := http.DefaultClient.Do(request(http.MethodGet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `"value":"safe"`) {
+		t.Fatalf("GET status=%d body=%s", response.StatusCode, body)
+	}
+	response, err = http.DefaultClient.Do(request(http.MethodDelete))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent || len(providerMethods) != 2 || providerMethods[0] != http.MethodGet || providerMethods[1] != http.MethodDelete {
+		t.Fatalf("DELETE status=%d provider methods=%v", response.StatusCode, providerMethods)
+	}
+}
+
 func TestProxyConcurrencyConfigurationRejectsInvalidOrLateChanges(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	if err := s.WithProxyConcurrency(0); err == nil {
