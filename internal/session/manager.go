@@ -143,10 +143,7 @@ func constantTimeStringEqual(a, b string) bool {
 }
 
 func wipe(entry *managedSession) {
-	secret := entry.session.SessionSecret()
-	for i := range secret {
-		secret[i] = 0
-	}
+	entry.session.DestroySecret()
 	for i := range entry.routes {
 		entry.routes[i].Token = ""
 	}

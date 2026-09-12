@@ -121,6 +121,15 @@ func NewProtectionSession(id, parentID, endpoint string, startedAt, expiresAt ti
 
 func (s ProtectionSession) SessionSecret() []byte { return append([]byte(nil), s.secret...) }
 
+// DestroySecret clears the in-memory session capability. Callers must not use a
+// ProtectionSession after destruction.
+func (s *ProtectionSession) DestroySecret() {
+	for i := range s.secret {
+		s.secret[i] = 0
+	}
+	s.secret = nil
+}
+
 type ContentLocation struct {
 	Path  string `json:"path"`
 	Start int    `json:"start"`
