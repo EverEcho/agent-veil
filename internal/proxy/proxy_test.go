@@ -468,6 +468,30 @@ func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testi
 	}
 }
 
+func TestProtectedRouteForcesIdentityResponseEncoding(t *testing.T) {
+	providerAcceptEncoding := ""
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerAcceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"safe"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept-Encoding", "gzip, br")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerAcceptEncoding != "identity" {
+		t.Fatalf("status=%d upstream accept-encoding=%q body=%s", recorder.Code, providerAcceptEncoding, recorder.Body.String())
+	}
+}
+
 func TestStreamingResponseFlushesSafeEventsBeforeProviderCloses(t *testing.T) {
 	providerReady := make(chan struct{})
 	releaseProvider := make(chan struct{})

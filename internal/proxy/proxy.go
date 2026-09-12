@@ -204,6 +204,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamRequest.Header.Del(HeaderSession)
 	upstreamRequest.Header.Del(HeaderRouteToken)
 	upstreamRequest.Header.Del("Content-Encoding")
+	upstreamRequest.Header.Set("Accept-Encoding", "identity")
 	upstreamRequest.ContentLength = int64(len(processed.Body))
 	authStrategy := route.Auth
 	if authStrategy.Type == "" {
