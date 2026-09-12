@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
@@ -353,6 +354,24 @@ func TestOSSystemBoundsConfigurationReads(t *testing.T) {
 	}
 	if _, err := (OSSystem{}).ReadFile(path); err == nil {
 		t.Fatal("oversized agent configuration was accepted")
+	}
+}
+
+func TestOSSystemBoundsVersionCommandOutputAndRuntime(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "noisy-agent")
+	content := []byte("#!/bin/sh\nwhile true; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done\n")
+	if err := os.WriteFile(script, content, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	output, err := (OSSystem{}).Version(ctx, script)
+	if err == nil || len(output) > maxAgentVersionBytes {
+		t.Fatalf("output bytes=%d error=%v", len(output), err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("version process exceeded its caller deadline: elapsed=%v", time.Since(started))
 	}
 }
 

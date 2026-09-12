@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -21,6 +24,8 @@ import (
 var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 
 const maxAgentConfigBytes = 8 << 20
+const maxAgentVersionBytes = 64 << 10
+const agentVersionTimeout = 3 * time.Second
 
 var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
 
@@ -50,8 +55,59 @@ type OSSystem struct{}
 
 func (OSSystem) LookPath(name string) (string, error) { return exec.LookPath(name) }
 func (OSSystem) Version(ctx context.Context, executable string) (string, error) {
-	value, err := exec.CommandContext(ctx, executable, "--version").CombinedOutput()
-	return string(value), err
+	if ctx == nil {
+		return "", domain.NewError(domain.ErrInvalidContract, "read agent version", "context is required")
+	}
+	bounded, cancel := context.WithTimeout(ctx, agentVersionTimeout)
+	defer cancel()
+	output := &boundedVersionOutput{limit: maxAgentVersionBytes}
+	command := exec.CommandContext(bounded, executable, "--version")
+	command.Stdout = output
+	command.Stderr = output
+	err := command.Run()
+	if output.Exceeded() {
+		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version output exceeds its size limit")
+	}
+	if bounded.Err() != nil {
+		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version command timed out or was cancelled")
+	}
+	return output.String(), err
+}
+
+type boundedVersionOutput struct {
+	mu       sync.Mutex
+	buffer   bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (w *boundedVersionOutput) Write(payload []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	remaining := w.limit - w.buffer.Len()
+	if remaining <= 0 {
+		w.exceeded = true
+		return len(payload), nil
+	}
+	if len(payload) > remaining {
+		_, _ = w.buffer.Write(payload[:remaining])
+		w.exceeded = true
+		return len(payload), nil
+	}
+	_, _ = w.buffer.Write(payload)
+	return len(payload), nil
+}
+
+func (w *boundedVersionOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
+}
+
+func (w *boundedVersionOutput) Exceeded() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.exceeded
 }
 func (OSSystem) ReadFile(path string) ([]byte, error) {
 	file, err := os.Open(path)
