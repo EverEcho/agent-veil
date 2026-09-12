@@ -1,27 +1,70 @@
 # AgentVeil
 
-AgentVeil is a local-first privacy control plane for AI agents. This repository
-currently contains the phase-one domain contracts and security baseline described
-in [`doc/06-development-roadmap.md`](doc/06-development-roadmap.md).
+AgentVeil is a local-first privacy control plane for AI agents. The target
+architecture, security invariants, and remaining work are defined in
+[`doc/`](doc/README.md); implemented coverage is intentionally reported more
+conservatively than discovered traffic.
 
-Implemented foundations:
+## Implemented
 
 - domain models for agents, egress surfaces, manifests, routes, plans, sessions,
   findings, policies, networking and audit events;
-- fail-closed validation with stable error and risk codes;
+- a loopback-only Core with capability-authenticated routes, lifecycle-bound
+  sessions, management APIs, ASK decisions, bounded concurrency, and safe
+  shutdown;
+- protocol-aware request/response rewriting for OpenAI Chat and Responses,
+  Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
+- incremental SSE protection with cross-chunk secret detection and placeholder
+  restoration;
+- deterministic and structured PII/secret detection, chunk caching, layered
+  policies, session-stable placeholders, and request-scoped bounded Vaults;
+- direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
+  Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
+- persistent policy and privacy-safe audit stores with retention;
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
-- deterministic session-scoped placeholders and a bounded request-scoped memory
-  vault;
-- exact upstream allowlisting with HTTPS-by-default and loopback-only HTTP;
-- metadata-only audit events and workspace-path hashing.
+- exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
+  redirect revalidation, and preserved custom Gateway base paths;
+- version-gated Codex and Claude Code discovery/protected launch, plus
+  discovery-only Hermes and Cursor compatibility records;
+- Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
+  surfaces without retaining credentials;
+- scoped transparent-mode CA and process-egress assessment primitives. These are
+  not yet a complete transparent interception product.
+
+## Commands
+
+Build or run with Go 1.23 or newer. `serve` requires a random management token
+of at least 32 characters:
+
+```bash
+export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
+go run ./cmd/veil serve
+```
+
+Point other commands at the printed loopback endpoint:
+
+```bash
+export VEIL_CORE_ENDPOINT='http://127.0.0.1:PORT'
+go run ./cmd/veil status
+go run ./cmd/veil inspect codex
+go run ./cmd/veil inspect claude
+go run ./cmd/veil inspect hermes
+go run ./cmd/veil run codex -- --help
+```
+
+Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
+Claude and Hermes protected launch remain unverified and fail closed.
+
+## Verification
 
 Run the tests with:
 
 ```bash
-go test ./...
+go test -race ./...
+go vet ./...
 ```
 
-The product documents describe the complete target product. Features from later
-roadmap phases are not represented as complete merely because their contracts
-exist here.
+The repository is still under active development. Native/managed integrations,
+complete desktop UX, production transparent MITM and OS enforcement, local
+semantic-model distribution, and release/supply-chain hardening remain open.
