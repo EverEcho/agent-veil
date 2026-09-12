@@ -141,15 +141,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "UNKNOWN_ROUTE")
 		return
 	}
-	sessionID, routeToken := r.Header.Get(HeaderSession), r.Header.Get(HeaderRouteToken)
+	sessionValues, routeTokenValues := r.Header.Values(HeaderSession), r.Header.Values(HeaderRouteToken)
+	var sessionID, routeToken string
 	if route.CapabilityHeader != "" {
-		encoded := r.Header.Get(route.CapabilityHeader)
+		encodedValues := r.Header.Values(route.CapabilityHeader)
 		r.Header.Del(route.CapabilityHeader)
-		if decodedSession, decodedToken, valid := DecodeCapability(encoded); valid {
+		if len(encodedValues) != 1 || len(sessionValues) != 0 || len(routeTokenValues) != 0 {
+			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+			return
+		}
+		if decodedSession, decodedToken, valid := DecodeCapability(encodedValues[0]); valid {
 			sessionID, routeToken = decodedSession, decodedToken
 		} else {
-			sessionID, routeToken = "", ""
+			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+			return
 		}
+	} else if len(sessionValues) != 1 || len(routeTokenValues) != 1 {
+		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+		return
+	} else {
+		sessionID, routeToken = sessionValues[0], routeTokenValues[0]
 	}
 	authorization, ok := h.sessions.AuthorizeRoute(sessionID, routeID, routeToken)
 	if !ok {

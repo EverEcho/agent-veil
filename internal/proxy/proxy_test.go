@@ -151,7 +151,9 @@ func TestCopyHeadersRemovesConnectionNominatedFields(t *testing.T) {
 
 func TestCapabilityCarrierIsRemovedBeforeProviderAuth(t *testing.T) {
 	var providerKey string
+	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
 		providerKey = r.Header.Get("X-Api-Key")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
@@ -169,6 +171,62 @@ func TestCapabilityCarrierIsRemovedBeforeProviderAuth(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || providerKey != "real-provider-key" || strings.Contains(providerKey, created.Session.ID) {
 		t.Fatalf("status=%d provider key=%q", recorder.Code, providerKey)
+	}
+	for name, configure := range map[string]func(http.Header){
+		"duplicate carrier": func(header http.Header) {
+			header["X-Api-Key"] = []string{EncodeCapability(created.Session.ID, created.Routes[0].Token), EncodeCapability(created.Session.ID, created.Routes[0].Token)}
+		},
+		"mixed carriers": func(header http.Header) {
+			header.Set("X-Api-Key", EncodeCapability(created.Session.ID, created.Routes[0].Token))
+			header.Set(HeaderSession, created.Session.ID)
+			header.Set(HeaderRouteToken, created.Routes[0].Token)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/messages", strings.NewReader(`{"messages":[{"role":"user","content":"safe"}]}`))
+			request.Header.Set("Content-Type", "application/json")
+			configure(request.Header)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized || providerCalls != 1 {
+				t.Fatalf("status=%d provider calls=%d", recorder.Code, providerCalls)
+			}
+		})
+	}
+}
+
+func TestRouteCapabilityHeadersMustBeUnique(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"safe"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	for name, values := range map[string][]string{
+		"duplicate session": {created.Session.ID, created.Session.ID},
+		"duplicate token":   {created.Routes[0].Token, created.Routes[0].Token},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			if name == "duplicate session" {
+				request.Header[HeaderSession] = values
+			} else {
+				request.Header[HeaderRouteToken] = values
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized || providerCalls != 0 {
+				t.Fatalf("status=%d provider calls=%d", recorder.Code, providerCalls)
+			}
+		})
 	}
 }
 
