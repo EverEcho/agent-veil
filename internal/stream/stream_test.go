@@ -33,6 +33,25 @@ func TestSSERandomChunkingPreservesEvents(t *testing.T) {
 	}
 }
 
+func TestSSEDecoderAcceptsAllStandardAndMixedLineEndings(t *testing.T) {
+	source := "data: cr\r\rdata: crlf-lf\r\n\ndata: lf-crlf\n\r\ndata: lf-cr\n\r"
+	decoder, _ := NewDecoder(4096)
+	var events []Event
+	for _, character := range []byte(source) {
+		decoded, err := decoder.Push([]byte{character})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, decoded...)
+	}
+	if err := decoder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 || events[0].Data != "cr" || events[1].Data != "crlf-lf" || events[2].Data != "lf-crlf" || events[3].Data != "lf-cr" {
+		t.Fatalf("events=%+v", events)
+	}
+}
+
 func TestGuardRestoresSplitPlaceholderAndBlocksSplitSecret(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 5, MaxOriginalBytes: 100})
 	placeholder, _ := vault.Store("email", "dev@example.com")

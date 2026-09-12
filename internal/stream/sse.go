@@ -40,6 +40,7 @@ func Encode(events []Event) []byte {
 type Decoder struct {
 	buffer   []byte
 	maxEvent int
+	skipLF   bool
 }
 
 const (
@@ -55,6 +56,12 @@ func NewDecoder(maxEventBytes int) (*Decoder, error) {
 }
 
 func (d *Decoder) Push(chunk []byte) ([]Event, error) {
+	if d.skipLF && len(chunk) > 0 {
+		d.skipLF = false
+		if chunk[0] == '\n' {
+			chunk = chunk[1:]
+		}
+	}
 	if len(chunk) > d.maxEvent-len(d.buffer) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "decode SSE", "event buffer limit exceeded")
 	}
@@ -66,7 +73,11 @@ func (d *Decoder) Push(chunk []byte) ([]Event, error) {
 			break
 		}
 		raw := append([]byte(nil), d.buffer[:index]...)
+		consumedTrailingCR := index+width == len(d.buffer) && d.buffer[len(d.buffer)-1] == '\r'
 		d.buffer = append(d.buffer[:0], d.buffer[index+width:]...)
+		if consumedTrailingCR {
+			d.skipLF = true
+		}
 		if len(events) == MaxSSEEventsPerPush {
 			return nil, domain.NewError(domain.ErrInvalidContract, "decode SSE", "event batch exceeds its limit")
 		}
@@ -80,22 +91,39 @@ func (d *Decoder) Close() error {
 		return domain.NewError(domain.ErrInvalidContract, "decode SSE", "stream ended with an incomplete event")
 	}
 	d.buffer = nil
+	d.skipLF = false
 	return nil
 }
 
 func eventBoundary(data []byte) (int, int) {
-	if index := bytes.Index(data, []byte("\n\n")); index >= 0 {
-		return index, 2
-	}
-	if index := bytes.Index(data, []byte("\r\n\r\n")); index >= 0 {
-		return index, 4
+	lineStart, previousLineEnding := 0, 0
+	for index := 0; index < len(data); {
+		if data[index] != '\r' && data[index] != '\n' {
+			index++
+			continue
+		}
+		width := 1
+		if data[index] == '\r' && index+1 < len(data) && data[index+1] == '\n' {
+			width = 2
+		}
+		if index == lineStart {
+			boundaryStart := index
+			if lineStart > 0 {
+				boundaryStart = previousLineEnding
+			}
+			return boundaryStart, index + width - boundaryStart
+		}
+		previousLineEnding = index
+		lineStart = index + width
+		index = lineStart
 	}
 	return -1, 0
 }
 
 func parseEvent(raw []byte) Event {
 	var event Event
-	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
 		if line == "" || strings.HasPrefix(line, ":") {
 			continue
 		}
