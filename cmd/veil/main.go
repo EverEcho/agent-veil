@@ -364,23 +364,9 @@ func decodeManagementResponse(response *http.Response, output any) error {
 	if response == nil || response.Body == nil || output == nil {
 		return errors.New("management response and destination are required")
 	}
-	contentTypes := response.Header.Values("Content-Type")
-	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
-		return errors.New("management response requires one valid application/json content type")
-	}
-	encodings := response.Header.Values("Content-Encoding")
-	if len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") {
-		return errors.New("management response content encoding is unsupported or ambiguous")
-	}
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maxManagementResponseBytes+1))
+	payload, err := readManagementResponse(response, maxManagementResponseBytes)
 	if err != nil {
 		return err
-	}
-	if len(payload) > maxManagementResponseBytes {
-		return errors.New("management response exceeds its size limit")
-	}
-	if err := jsonsafe.Validate(payload); err != nil {
-		return errors.New("management response contains invalid or ambiguous JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -392,6 +378,31 @@ func decodeManagementResponse(response *http.Response, output any) error {
 		return errors.New("management response contains trailing data")
 	}
 	return nil
+}
+
+func readManagementResponse(response *http.Response, limit int64) ([]byte, error) {
+	if response == nil || response.Body == nil || limit <= 0 {
+		return nil, errors.New("management response and positive size limit are required")
+	}
+	contentTypes := response.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
+		return nil, errors.New("management response requires one valid application/json content type")
+	}
+	encodings := response.Header.Values("Content-Encoding")
+	if len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") {
+		return nil, errors.New("management response content encoding is unsupported or ambiguous")
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(payload)) > limit {
+		return nil, errors.New("management response exceeds its size limit")
+	}
+	if err := jsonsafe.Validate(payload); err != nil {
+		return nil, errors.New("management response contains invalid or ambiguous JSON")
+	}
+	return payload, nil
 }
 
 func serve() error {
@@ -557,12 +568,9 @@ func diagnostics() error {
 		return fmt.Errorf("core returned %s", response.Status)
 	}
 	const maxDiagnosticBytes = 4 << 20
-	payload, err := io.ReadAll(io.LimitReader(response.Body, maxDiagnosticBytes+1))
+	payload, err := readManagementResponse(response, maxDiagnosticBytes)
 	if err != nil {
-		return err
-	}
-	if len(payload) > maxDiagnosticBytes {
-		return errors.New("diagnostic export exceeds its size limit")
+		return fmt.Errorf("invalid diagnostic export: %w", err)
 	}
 	_, err = os.Stdout.Write(payload)
 	return err

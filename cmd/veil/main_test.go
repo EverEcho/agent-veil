@@ -242,3 +242,18 @@ func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestManagementPayloadRejectsAmbiguousDiagnostics(t *testing.T) {
+	for _, body := range []string{
+		`{"schema_version":"v1"}{"schema_version":"v1"}`,
+		`{"schema_version":"v1","schema_version":"forged"}`,
+	} {
+		response := &http.Response{
+			Header: http.Header{"Content-Type": {"application/json"}},
+			Body:   io.NopCloser(strings.NewReader(body)),
+		}
+		if _, err := readManagementResponse(response, maxManagementResponseBytes); err == nil {
+			t.Fatalf("ambiguous diagnostic payload was accepted: %s", body)
+		}
+	}
+}
