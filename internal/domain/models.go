@@ -71,6 +71,7 @@ const (
 	RiskObservedOnly            RiskCode = "OBSERVED_ONLY"
 	RiskUnsupportedCapability   RiskCode = "UNSUPPORTED_CAPABILITY"
 	RiskContentModifierAfterDLP RiskCode = "CONTENT_MODIFIER_AFTER_DLP"
+	RiskUnexpectedEgress        RiskCode = "UNEXPECTED_EGRESS"
 )
 
 type ProtectionRisk struct {
