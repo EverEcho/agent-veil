@@ -52,6 +52,26 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	}
 }
 
+func TestMalformedProtocolEnvelopesFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		endpoint string
+		body     string
+	}{
+		{"/v1/chat/completions", `{}`},
+		{"/v1/chat/completions", `{"messages":"not-an-array"}`},
+		{"/v1/responses", `{}`},
+		{"/v1/messages", `[]`},
+		{"/v1/messages", `{"messages":null}`},
+		{"/v1beta/models/gemini-2.5-pro:generateContent", `{"contents":"unknown"}`},
+		{"/mcp", `{"jsonrpc":"2.0","params":{}}`},
+		{"/mcp", `[{"jsonrpc":"2.0","method":"tools/list"}]`},
+	} {
+		if _, err := Parse(test.endpoint, "application/json", "", []byte(test.body)); err == nil {
+			t.Fatalf("%s accepted malformed envelope %s", test.endpoint, test.body)
+		}
+	}
+}
+
 func TestNestedJSONStringFieldsRoundTripAtLeafLevel(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"notify","arguments":"{\"contact\":\"dev@example.com\",\"nested\":\"{\\\"phone\\\":\\\"13800138000\\\"}\"}"}}]}]}`)
 	document, err := Parse("/v1/chat/completions", "application/json", "", body)

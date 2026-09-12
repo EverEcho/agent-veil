@@ -76,6 +76,9 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body contains trailing data")
 	}
+	if !validRequestEnvelope(protocol, root) {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body does not match the protected protocol envelope")
+	}
 	document := &Document{Protocol: protocol, root: root}
 	switch protocol {
 	case domain.ProtocolOpenAIChat:
@@ -93,6 +96,34 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+func validRequestEnvelope(protocolType domain.Protocol, root any) bool {
+	object, ok := root.(map[string]any)
+	if !ok {
+		return false
+	}
+	switch protocolType {
+	case domain.ProtocolOpenAIChat:
+		_, ok = object["messages"].([]any)
+		return ok
+	case domain.ProtocolOpenAIResponses:
+		_, hasInput := object["input"]
+		_, hasInstructions := object["instructions"]
+		return hasInput || hasInstructions
+	case domain.ProtocolAnthropic:
+		_, ok = object["messages"].([]any)
+		return ok
+	case domain.ProtocolGemini:
+		_, ok = object["contents"].([]any)
+		return ok
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+		version, versionOK := object["jsonrpc"].(string)
+		method, methodOK := object["method"].(string)
+		return versionOK && version == "2.0" && methodOK && strings.TrimSpace(method) != ""
+	default:
+		return false
+	}
 }
 
 func extractGemini(d *Document) {
