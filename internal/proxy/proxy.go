@@ -144,6 +144,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		auditEvent.LatencyMS = time.Since(started).Milliseconds()
 		_ = route.Auditor.Append(auditEvent)
 	}()
+	if r.Method != http.MethodPost {
+		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
+		w.Header().Set("Allow", http.MethodPost)
+		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
+		return
+	}
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {
 		auditEvent.ErrorCode = "REQUEST_TOO_LARGE"

@@ -226,6 +226,26 @@ func TestRouteProtocolCannotBeChangedByRequestPath(t *testing.T) {
 	}
 }
 
+func TestUnsupportedMethodFailsBeforeUpstream(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPut, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != http.MethodPost || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedMethod {
+		t.Fatalf("status=%d allow=%q calls=%d audit=%+v", recorder.Code, recorder.Header().Get("Allow"), providerCalls, auditor.events)
+	}
+}
+
 func TestProxyEvaluatesAgentProviderAndSurfacePolicyScope(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))

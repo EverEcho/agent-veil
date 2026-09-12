@@ -7,6 +7,7 @@ type ErrorCode string
 const (
 	ErrInvalidContract      ErrorCode = "INVALID_CONTRACT"
 	ErrUnknownProtocol      ErrorCode = "UNKNOWN_PROTOCOL"
+	ErrUnsupportedMethod    ErrorCode = "UNSUPPORTED_METHOD"
 	ErrUnsupportedEncoding  ErrorCode = "UNSUPPORTED_ENCODING"
 	ErrDetectorFailure      ErrorCode = "DETECTOR_FAILURE"
 	ErrVaultFull            ErrorCode = "VAULT_FULL"
