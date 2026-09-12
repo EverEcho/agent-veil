@@ -16,7 +16,7 @@ const (
 )
 
 type Connection struct {
-	ProcessID      int    `json:"process_id"`
+	ProcessIdentity
 	ProcessName    string `json:"process_name,omitempty"`
 	Host           string `json:"host"`
 	Port           uint16 `json:"port"`
@@ -24,7 +24,7 @@ type Connection struct {
 	Blocked        bool   `json:"blocked"`
 }
 type Expected struct {
-	ProcessID int    `json:"process_id"`
+	ProcessIdentity
 	Host      string `json:"host"`
 	Port      uint16 `json:"port"`
 	RouteID   string `json:"route_id"`
@@ -42,7 +42,7 @@ func Assess(connections []Connection, expected []Expected) []Assessment {
 	for _, connection := range connections {
 		var matched *Expected
 		for _, route := range expected {
-			if validExpected(route) && connection.ProcessID == route.ProcessID && canonicalHost(connection.Host) == canonicalHost(route.Host) && connection.Port == route.Port && connection.ThroughRouteID == route.RouteID {
+			if validExpected(route) && connection.ProcessIdentity == route.ProcessIdentity && canonicalHost(connection.Host) == canonicalHost(route.Host) && connection.Port == route.Port && connection.ThroughRouteID == route.RouteID {
 				copy := route
 				matched = &copy
 				break
@@ -71,7 +71,7 @@ func Assess(connections []Connection, expected []Expected) []Assessment {
 }
 
 func validExpected(route Expected) bool {
-	return route.ProcessID > 0 && canonicalHost(route.Host) != "" && route.Port > 0 && route.RouteID != "" && route.SurfaceID != ""
+	return validProcessIdentity(route.ProcessIdentity) && canonicalHost(route.Host) != "" && route.Port > 0 && route.RouteID != "" && route.SurfaceID != ""
 }
 
 func canonicalHost(value string) string {
