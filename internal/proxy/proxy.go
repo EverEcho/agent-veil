@@ -18,6 +18,7 @@ import (
 	veilnetwork "github.com/agentveil/agentveil/internal/network"
 	"github.com/agentveil/agentveil/internal/pipeline"
 	"github.com/agentveil/agentveil/internal/policy"
+	"github.com/agentveil/agentveil/internal/protocol"
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/security"
 	"github.com/agentveil/agentveil/internal/session"
@@ -170,6 +171,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", allowedMethods(route.Protocol))
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
 		return
+	}
+	if route.Protocol == domain.ProtocolMCPStreamable {
+		if _, err := protocol.ResolveMCPStreamableVersion(r.Header.Values(protocol.HeaderMCPProtocolVersion)); err != nil {
+			auditEvent.Action = domain.ActionBlock
+			auditEvent.ErrorCode = domain.ErrUnknownProtocol
+			fail(w, http.StatusBadRequest, string(domain.ErrUnknownProtocol))
+			return
+		}
 	}
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {

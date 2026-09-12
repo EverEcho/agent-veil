@@ -42,6 +42,40 @@ func TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestResolveMCPStreamableVersionAllowsOnlyImplementedRevisions(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+		want   string
+		ok     bool
+	}{
+		{name: "missing legacy fallback", want: MCPVersion20250326, ok: true},
+		{name: "initial streamable HTTP", values: []string{MCPVersion20250326}, want: MCPVersion20250326, ok: true},
+		{name: "June revision", values: []string{MCPVersion20250618}, want: MCPVersion20250618, ok: true},
+		{name: "November revision", values: []string{MCPVersion20251125}, want: MCPVersion20251125, ok: true},
+		{name: "new incompatible revision", values: []string{"2026-07-28"}},
+		{name: "unknown revision", values: []string{"2099-01-01"}},
+		{name: "empty revision", values: []string{""}},
+		{name: "whitespace revision", values: []string{" 2025-11-25"}},
+		{name: "combined revisions", values: []string{"2025-06-18, 2025-11-25"}},
+		{name: "repeated revision", values: []string{MCPVersion20250618, MCPVersion20250618}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ResolveMCPStreamableVersion(test.values)
+			if test.ok && (err != nil || got != test.want) {
+				t.Fatalf("version=%q error=%v", got, err)
+			}
+			if !test.ok {
+				var veilErr *domain.VeilError
+				if !errors.As(err, &veilErr) || veilErr.Code != domain.ErrUnknownProtocol {
+					t.Fatalf("version=%q error=%v", got, err)
+				}
+			}
+		})
+	}
+}
+
 func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	for _, item := range []struct{ endpoint, contentType, encoding string }{{"/unknown", "application/json", ""}, {"/v1/responses", "text/plain", ""}, {"/v1/responses", "application/json", "gzip"}} {
 		_, err := Parse(item.endpoint, item.contentType, item.encoding, []byte(`{}`))

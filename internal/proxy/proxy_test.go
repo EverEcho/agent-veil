@@ -377,6 +377,57 @@ func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableRejectsUnsupportedVersionBeforeUpstream(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, err := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrUnknownProtocol {
+		t.Fatalf("audit=%+v", auditor.events)
+	}
+}
+
+func TestMCPStreamableForwardsImplementedVersion(t *testing.T) {
+	providerVersion := ""
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerVersion = r.Header.Get("MCP-Protocol-Version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerVersion != "2025-11-25" {
+		t.Fatalf("status=%d provider version=%q body=%s", recorder.Code, providerVersion, recorder.Body.String())
+	}
+}
+
 func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(30 * time.Millisecond)
