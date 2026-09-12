@@ -86,7 +86,7 @@ func run(args []string) error {
 	}
 }
 
-func runProtected(ctx context.Context, name string, childArgs []string) error {
+func runProtected(ctx context.Context, name string, childArgs []string) (resultErr error) {
 	if name != "codex" && name != "claude" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
@@ -139,6 +139,11 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if cleanupErr := launch.Cleanup(); cleanupErr != nil && resultErr == nil {
+			resultErr = cleanupErr
+		}
+	}()
 	localBypass := localNoProxy(os.Getenv("NO_PROXY"), os.Getenv("no_proxy"))
 	launch.Environment["NO_PROXY"] = localBypass
 	launch.Environment["no_proxy"] = localBypass

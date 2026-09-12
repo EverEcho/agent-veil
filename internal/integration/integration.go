@@ -112,6 +112,16 @@ type LaunchPlan struct {
 	Args        []string
 	Environment map[string]string
 	Temporary   bool
+	cleanup     func() error
+}
+
+// Cleanup releases temporary launch resources. It is safe to call more than
+// once and is a no-op for launch plans without external resources.
+func (p *LaunchPlan) Cleanup() error {
+	if p == nil || p.cleanup == nil {
+		return nil
+	}
+	return p.cleanup()
 }
 
 func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sessionID, parentID, routeToken string) (LaunchPlan, error) {
@@ -150,6 +160,26 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 		environment["AI_BASE_URL"] = coreEndpoint
 	}
 	return LaunchPlan{Executable: agent.Executable, Args: append([]string(nil), args...), Environment: environment, Temporary: true}, nil
+}
+
+// PrepareHermesLaunch binds an already rewritten Hermes configuration to a
+// private temporary HERMES_HOME. The caller must defer Cleanup immediately
+// after a successful return.
+func PrepareHermesLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sessionID, parentID, routeToken, sourceHome string, config []byte) (LaunchPlan, error) {
+	if agent.Kind != "hermes" {
+		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare hermes launch", "agent kind is not Hermes")
+	}
+	plan, err := PrepareLaunch(agent, args, coreEndpoint, sessionID, parentID, routeToken)
+	if err != nil {
+		return LaunchPlan{}, err
+	}
+	temporaryHome, cleanup, err := PrepareHermesHome(sourceHome, config)
+	if err != nil {
+		return LaunchPlan{}, err
+	}
+	plan.Environment["HERMES_HOME"] = temporaryHome
+	plan.cleanup = cleanup
+	return plan, nil
 }
 
 func validateCoreEndpoint(value string) error {

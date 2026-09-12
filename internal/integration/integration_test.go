@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,6 +49,41 @@ func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
 	}
 	if !plan.Temporary || plan.Environment["VEIL_PARENT_SESSION"] != "fedcba9876543210" || plan.Environment["CODEX_DISABLE_WEBSOCKET"] != "1" {
 		t.Fatalf("invalid launch plan: %+v", plan)
+	}
+}
+
+func TestPrepareHermesLaunchOwnsTemporaryHomeLifecycle(t *testing.T) {
+	sourceHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceHome, "config.yaml"), []byte("model: original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	agent := domain.AgentInstance{Kind: "hermes", Mode: domain.ModeLaunch, Executable: "/usr/bin/hermes"}
+	plan, err := PrepareHermesLaunch(agent, []string{"chat"}, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), sourceHome, []byte("model: protected\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := plan.Environment["HERMES_HOME"]
+	if home == "" || home == sourceHome {
+		t.Fatalf("unsafe HERMES_HOME override %q", home)
+	}
+	if content, err := os.ReadFile(filepath.Join(home, "config.yaml")); err != nil || string(content) != "model: protected\n" {
+		t.Fatalf("temporary config=%q err=%v", content, err)
+	}
+	if err := plan.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Cleanup(); err != nil {
+		t.Fatalf("repeated cleanup failed: %v", err)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("temporary home survived launch cleanup: %v", err)
+	}
+}
+
+func TestPrepareHermesLaunchRejectsOtherAgentKinds(t *testing.T) {
+	agent := domain.AgentInstance{Kind: "codex", Mode: domain.ModeLaunch, Executable: "/usr/bin/codex"}
+	if _, err := PrepareHermesLaunch(agent, nil, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), t.TempDir(), []byte("model: protected\n")); err == nil {
+		t.Fatal("non-Hermes agent received a Hermes launch plan")
 	}
 }
 
