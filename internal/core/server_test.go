@@ -388,7 +388,7 @@ func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 }
 
 func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policy.json")
+	path := filepath.Join(t.TempDir(), "private", "policy.json")
 	store, _ := policy.NewStore(path)
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	if err := s.WithPolicyStore(store); err != nil {

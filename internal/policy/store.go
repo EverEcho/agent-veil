@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -49,6 +50,10 @@ func NewStore(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
+	directory, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !directory.IsDir() || directory.Mode().Perm()&0o077 != 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create policy store", "policy directory permissions or type are unsafe")
+	}
 	return &Store{path: path}, nil
 }
 func (s *Store) Save(document Document) error {
@@ -60,6 +65,9 @@ func (s *Store) Save(document Document) error {
 		return err
 	}
 	payload = append(payload, '\n')
+	if len(payload) > maxPolicyBytes {
+		return domain.NewError(domain.ErrInvalidContract, "save policy", "policy file exceeds its size limit")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	file, err := os.CreateTemp(filepath.Dir(s.path), ".policy-*.tmp")
@@ -159,6 +167,8 @@ type Broker struct {
 	pending map[string]pendingApproval
 }
 
+const maxPendingApprovals = 1024
+
 func NewBroker() *Broker { return &Broker{pending: map[string]pendingApproval{}} }
 func (b *Broker) Request(ctx context.Context, finding domain.Finding) (domain.Action, error) {
 	idBytes := make([]byte, 16)
@@ -168,6 +178,10 @@ func (b *Broker) Request(ctx context.Context, finding domain.Finding) (domain.Ac
 	id := hex.EncodeToString(idBytes)
 	channel := make(chan approvalResult, 1)
 	b.mu.Lock()
+	if len(b.pending) >= maxPendingApprovals {
+		b.mu.Unlock()
+		return domain.ActionBlock, domain.NewError(domain.ErrInteractionRequired, "request ASK", "pending approval capacity is exhausted")
+	}
 	b.pending[id] = pendingApproval{finding: finding, channel: channel}
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); delete(b.pending, id); b.mu.Unlock() }()
@@ -185,6 +199,7 @@ func (b *Broker) Pending() []Approval {
 	for id, pending := range b.pending {
 		approvals = append(approvals, Approval{ID: id, Finding: pending.finding})
 	}
+	sort.Slice(approvals, func(i, j int) bool { return approvals[i].ID < approvals[j].ID })
 	return approvals
 }
 func (b *Broker) Resolve(id string, action domain.Action) bool {

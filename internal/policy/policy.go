@@ -13,6 +13,8 @@ var (
 	workspaceRef     = regexp.MustCompile(`^sha256:[a-f0-9]{32}$`)
 )
 
+const maxPolicyRules = 4096
+
 type Scope struct {
 	AgentID     string `json:"agent_id,omitempty"`
 	Workspace   string `json:"workspace,omitempty"`
@@ -93,6 +95,9 @@ func (e Engine) Decide(context Scope, interactive bool) (Decision, error) {
 }
 
 func validateRules(rules []Rule) error {
+	if len(rules) > maxPolicyRules {
+		return domain.NewError(domain.ErrInvalidContract, "evaluate policy", "policy rule count exceeds its limit")
+	}
 	seen := make(map[Scope]struct{}, len(rules))
 	for _, rule := range rules {
 		if !rule.Action.Valid() || rule.Scope.Validate() != nil {

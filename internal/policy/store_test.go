@@ -2,6 +2,8 @@ package policy
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"github.com/agentveil/agentveil/internal/domain"
 	"os"
 	"path/filepath"
@@ -32,6 +34,9 @@ func TestPolicyStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
 		t.Fatal("relative policy path was accepted")
 	}
 	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(directory, "policy.json")
 	store, err := NewStore(path)
 	if err != nil {
@@ -65,8 +70,43 @@ func TestPolicyStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
 	}
 }
 
+func TestPolicyStoreRejectsUnsafeDirectoryAndOversizedSave(t *testing.T) {
+	wide := filepath.Join(t.TempDir(), "wide")
+	if err := os.Mkdir(wide, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(filepath.Join(wide, "policy.json")); err == nil {
+		t.Fatal("world-accessible policy directory was accepted")
+	}
+	store, err := NewStore(filepath.Join(t.TempDir(), "private", "policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := make([]Rule, maxPolicyRules+1)
+	for index := range rules {
+		rules[index] = Rule{Scope: Scope{AgentID: fmt.Sprintf("agent-%d", index)}, Action: domain.ActionBlock}
+	}
+	if err := store.Save(Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: rules}); err == nil {
+		t.Fatal("oversized policy rule set was saved")
+	}
+	largeRules := make([]Rule, maxPolicyRules)
+	longSurface := "surface-" + strings.Repeat("s", 110)
+	longFinding := "finding-" + strings.Repeat("f", 110)
+	longProvider := strings.Repeat("p", 60) + "." + strings.Repeat("q", 60) + "." + strings.Repeat("r", 60) + "." + strings.Repeat("s", 60)
+	for index := range largeRules {
+		largeRules[index] = Rule{Scope: Scope{AgentID: fmt.Sprintf("%s%04d", strings.Repeat("a", 110), index), SurfaceID: longSurface, FindingType: longFinding, Provider: longProvider}, Action: domain.ActionBlock}
+	}
+	if err := store.Save(Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: largeRules}); err == nil {
+		t.Fatal("oversized serialized policy was saved")
+	}
+}
+
 func TestPolicyStoreRejectsDuplicateKeys(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policy.json")
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "policy.json")
 	payload := `{"schema_version":"v1","default":"redact","default":"allow","rules":[]}`
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
@@ -104,5 +144,23 @@ func TestASKBrokerIsOneTimeAndFailsClosedOnTimeout(t *testing.T) {
 	}
 	if <-result != domain.ActionAllow || broker.Resolve(id, domain.ActionAllow) {
 		t.Fatal("approval was not one-time")
+	}
+}
+
+func TestASKBrokerFailsClosedAtPendingCapacity(t *testing.T) {
+	broker := NewBroker()
+	for index := 0; index < maxPendingApprovals; index++ {
+		broker.pending[fmt.Sprintf("%032d", index)] = pendingApproval{channel: make(chan approvalResult, 1)}
+	}
+	action, err := broker.Request(context.Background(), domain.Finding{})
+	var veilErr *domain.VeilError
+	if action != domain.ActionBlock || !errors.As(err, &veilErr) || veilErr.Code != domain.ErrInteractionRequired || len(broker.pending) != maxPendingApprovals {
+		t.Fatalf("action=%s pending=%d err=%v", action, len(broker.pending), err)
+	}
+	approvals := broker.Pending()
+	for index := 1; index < len(approvals); index++ {
+		if approvals[index-1].ID >= approvals[index].ID {
+			t.Fatal("pending approvals are not deterministically sorted")
+		}
 	}
 }
