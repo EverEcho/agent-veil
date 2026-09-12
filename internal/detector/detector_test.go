@@ -179,6 +179,24 @@ func TestProviderSecretFamilies(t *testing.T) {
 	}
 }
 
+func TestModelProviderTokenFamilies(t *testing.T) {
+	text := "huggingface=hf_abcdefghijklmnopqrstuvwxyz12345678 oauth=hf_oauth_abcdefghijklmnopqrstuvwxyz12345678 groq=gsk_abcdefghijklmnopqrstuvwxyz12345678"
+	matches := scan(t, NewDefault(), text)
+	counts := make(map[string]int)
+	for _, match := range matches {
+		counts[match.Finding.Category]++
+		if match.Finding.Detector != "deterministic" || match.Finding.SuggestedAction != domain.ActionRedact {
+			t.Fatalf("unexpected model provider finding: %+v", match)
+		}
+	}
+	if counts["secret.huggingface_token"] != 2 || counts["secret.groq_key"] != 1 || len(matches) != 3 {
+		t.Fatalf("matches=%+v", matches)
+	}
+	if matches := scan(t, NewDefault(), "docs hf_... hf_short gsk_example"); len(matches) != 0 {
+		t.Fatalf("short model provider lookalikes matched: %+v", matches)
+	}
+}
+
 func TestDomesticCloudAccessKeyFamilies(t *testing.T) {
 	values := map[string]string{
 		"secret.alibaba_access_key":    "LTAI5tExampleKey123456",
