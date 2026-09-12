@@ -26,6 +26,14 @@ func TestRedirectTargetIsRevalidated(t *testing.T) {
 	}
 }
 
+func TestRedirectFailsClosedWithoutAllowlist(t *testing.T) {
+	client := NewHTTPClient(nil, nil)
+	target, _ := url.Parse("https://api.example/next")
+	if err := client.CheckRedirect(&http.Request{URL: target}, nil); err == nil {
+		t.Fatal("redirect was accepted without an allowlist")
+	}
+}
+
 func TestNetworkRouteTransportsAreExplicit(t *testing.T) {
 	direct, err := NewTransport(domain.NetworkRoute{Type: domain.NetworkDirect})
 	if err != nil || direct.Proxy != nil {

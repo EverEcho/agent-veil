@@ -17,7 +17,12 @@ func NewHTTPClient(transport http.RoundTripper, allowlist *security.UpstreamAllo
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	return &http.Client{Transport: transport, Timeout: 2 * time.Minute, CheckRedirect: func(request *http.Request, _ []*http.Request) error { return allowlist.ValidateURL(request.URL) }}
+	return &http.Client{Transport: transport, Timeout: 2 * time.Minute, CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+		if allowlist == nil {
+			return domain.NewError(domain.ErrUpstreamDenied, "validate redirect", "upstream allowlist is unavailable")
+		}
+		return allowlist.ValidateURL(request.URL)
+	}}
 }
 
 func NewTransport(route domain.NetworkRoute) (*http.Transport, error) {

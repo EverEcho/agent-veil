@@ -23,3 +23,16 @@ func TestAllowlistRequiresExactOriginAndRechecksRedirect(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowlistRejectsUnboundedOriginSets(t *testing.T) {
+	if _, err := NewUpstreamAllowlist(nil); err == nil {
+		t.Fatal("empty upstream allowlist accepted")
+	}
+	upstreams := make([]domain.Upstream, MaxAllowedUpstreams+1)
+	for index := range upstreams {
+		upstreams[index] = domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}
+	}
+	if _, err := NewUpstreamAllowlist(upstreams); err == nil {
+		t.Fatal("unbounded upstream allowlist accepted")
+	}
+}

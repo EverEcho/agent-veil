@@ -13,7 +13,12 @@ type UpstreamAllowlist struct {
 	allowed map[string]struct{}
 }
 
+const MaxAllowedUpstreams = 256
+
 func NewUpstreamAllowlist(upstreams []domain.Upstream) (*UpstreamAllowlist, error) {
+	if len(upstreams) == 0 || len(upstreams) > MaxAllowedUpstreams {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create upstream allowlist", "upstream count must be within its configured bounds")
+	}
 	a := &UpstreamAllowlist{allowed: make(map[string]struct{}, len(upstreams))}
 	for _, upstream := range upstreams {
 		if err := upstream.Validate(); err != nil {
