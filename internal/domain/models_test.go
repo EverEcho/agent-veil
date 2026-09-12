@@ -78,3 +78,26 @@ func TestNetworkSurfaceRequiresValidAuthAndNetworkRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestPersistedIdentifiersAndCredentialSourcesRejectSensitiveText(t *testing.T) {
+	base := EgressSurface{ID: "primary", Name: "Primary", Type: SurfaceModelPrimary, Protocol: ProtocolOpenAIResponses, Upstream: &Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: AuthStrategy{Type: AuthPassthrough, Source: "agent:managed-login"}, ConfigSource: "fixture", Rewritable: true}
+	for _, id := range []string{"dev@example.com", "../primary", "line\nbreak", strings.Repeat("a", 129)} {
+		surface := base
+		surface.ID = id
+		if err := surface.Validate(); err == nil {
+			t.Fatalf("unsafe surface id accepted: %q", id)
+		}
+	}
+	for _, source := range []string{"sk-secret-value", "environment:BAD/NAME", "literal:token", "agent:contains space"} {
+		if err := (AuthStrategy{Type: AuthBearer, Source: source}).Validate(); err == nil {
+			t.Fatalf("unsafe credential source accepted: %q", source)
+		}
+	}
+	if err := (AuthStrategy{Type: AuthBearer, Source: "environment:PROVIDER_TOKEN"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	finding := Finding{RuleID: "pii.email", Category: "dev@example.com", Detector: "semantic", Severity: SeverityHigh, SuggestedAction: ActionBlock, Confidence: 1, Location: ContentLocation{Start: 0, End: 1}}
+	if err := finding.Validate(1); err == nil {
+		t.Fatal("sensitive finding category was accepted for audit")
+	}
+}

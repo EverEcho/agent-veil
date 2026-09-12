@@ -4,12 +4,18 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
+var (
+	identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	referencePattern  = regexp.MustCompile(`^(?:environment|keychain|native|agent):[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+)
+
 func (m AgentManifest) Validate() error {
-	if m.SchemaVersion != "v1" || m.Agent.ID == "" || m.Agent.Kind == "" {
+	if m.SchemaVersion != "v1" || !identifierPattern.MatchString(m.Agent.ID) || !identifierPattern.MatchString(m.Agent.Kind) {
 		return NewError(ErrInvalidContract, "validate manifest", "schema version and agent identity are required")
 	}
 	if len(m.Surfaces) == 0 {
@@ -29,7 +35,7 @@ func (m AgentManifest) Validate() error {
 }
 
 func (s EgressSurface) Validate() error {
-	if s.ID == "" || s.Name == "" || s.ConfigSource == "" {
+	if !identifierPattern.MatchString(s.ID) || s.Name == "" || s.ConfigSource == "" {
 		return NewError(ErrInvalidContract, "validate surface", "id, name and config source are required")
 	}
 	if !s.Type.Valid() || !s.Protocol.Valid() {
@@ -79,8 +85,11 @@ func (a AuthStrategy) Validate() error {
 	if !a.Type.Valid() {
 		return NewError(ErrInvalidContract, "validate auth", "authentication type is invalid")
 	}
-	if a.Type != AuthPassthrough && strings.TrimSpace(a.Source) == "" {
+	if a.Type != AuthPassthrough && a.Source == "" {
 		return NewError(ErrInvalidContract, "validate auth", "non-passthrough authentication requires a credential source")
+	}
+	if a.Source != "" && !referencePattern.MatchString(a.Source) {
+		return NewError(ErrInvalidContract, "validate auth", "credential source must be an indirect reference")
 	}
 	return nil
 }
@@ -121,7 +130,7 @@ func isLoopbackHost(host string) bool {
 }
 
 func (f Finding) Validate(contentLength int) error {
-	if f.RuleID == "" || f.Category == "" || f.Detector == "" {
+	if !identifierPattern.MatchString(f.RuleID) || !identifierPattern.MatchString(f.Category) || !identifierPattern.MatchString(f.Detector) {
 		return NewError(ErrInvalidContract, "validate finding", "rule, category and detector are required")
 	}
 	if !f.Severity.Valid() || !f.SuggestedAction.Valid() || f.Confidence < 0 || f.Confidence > 1 {
