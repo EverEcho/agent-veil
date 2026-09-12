@@ -27,6 +27,7 @@ import (
 )
 
 const maxManagementBody = 64 << 10
+const defaultMaxConcurrentProxyRequests = 64
 
 type Server struct {
 	manager     *session.Manager
@@ -44,6 +45,7 @@ type Server struct {
 	auditReader interface {
 		Recent(time.Time) ([]domain.AuditEvent, error)
 	}
+	proxySlots chan struct{}
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -52,7 +54,18 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if manager == nil || len(adminToken) < 32 {
 		return nil, errors.New("manager and an admin token of at least 32 characters are required")
 	}
-	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}}, nil
+	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests)}, nil
+}
+
+func (s *Server) WithProxyConcurrency(limit int) error {
+	if limit <= 0 {
+		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit must be positive")
+	}
+	if s.listener != nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit cannot change after the server starts")
+	}
+	s.proxySlots = make(chan struct{}, limit)
+	return nil
 }
 
 func (s *Server) WithPolicy(engine policy.Engine) *Server {
@@ -341,6 +354,14 @@ func (s *Server) proxyHandler() http.Handler {
 		routeID, ok := routeIDFromPath(r.URL.Path)
 		if !ok || s.registry == nil {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
+			return
+		}
+		select {
+		case s.proxySlots <- struct{}{}:
+			defer func() { <-s.proxySlots }()
+		default:
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "CONCURRENCY_LIMIT"})
 			return
 		}
 		var selected *domain.ProtectedRoute

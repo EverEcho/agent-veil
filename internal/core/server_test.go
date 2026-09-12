@@ -185,6 +185,99 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	}
 }
 
+func TestCoreProxyConcurrencyLimitDoesNotBlockManagement(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[]}`))
+	}))
+	defer provider.Close()
+	parsed, _ := url.Parse(provider.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	s, _ := New(manager, "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	if err := s.WithProxyConcurrency(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	created, _ := manager.Create("", s.Endpoint(), []string{"route-primary"}, time.Minute)
+	newProxyRequest := func() *http.Request {
+		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/route-primary/v1/responses", strings.NewReader(`{"input":"ordinary"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Veil-Session", created.Session.ID)
+		request.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
+		return request
+	}
+	first := make(chan *http.Response, 1)
+	go func() {
+		response, _ := http.DefaultClient.Do(newProxyRequest())
+		first <- response
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first request did not reach provider")
+	}
+
+	second, err := http.DefaultClient.Do(newProxyRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.Body.Close()
+	if second.StatusCode != http.StatusTooManyRequests || second.Header.Get("Retry-After") != "1" {
+		t.Fatalf("over-limit status=%d retry-after=%q", second.StatusCode, second.Header.Get("Retry-After"))
+	}
+	management, _ := http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/health", nil)
+	management.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	health, err := http.DefaultClient.Do(management)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("management request status=%d", health.StatusCode)
+	}
+	health.Body.Close()
+	close(release)
+	completed := <-first
+	defer completed.Body.Close()
+	if completed.StatusCode != http.StatusOK {
+		t.Fatalf("first request status=%d", completed.StatusCode)
+	}
+}
+
+func TestProxyConcurrencyConfigurationRejectsInvalidOrLateChanges(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithProxyConcurrency(0); err == nil {
+		t.Fatal("zero concurrency limit accepted")
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	if err := s.WithProxyConcurrency(1); err == nil {
+		t.Fatal("late concurrency change accepted")
+	}
+}
+
 func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
