@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,9 @@ import (
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
+
+const protectedLaunchLease = 30 * time.Second
+const protectedLaunchHeartbeat = 10 * time.Second
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -97,9 +101,14 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 		return errors.New("protected Claude launch currently requires ANTHROPIC_API_KEY; OAuth mode has no verified capability-header injection")
 	}
 	var registered registry.Entry
-	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents", adminToken, manifest, &registered); err != nil {
+	registration := map[string]any{"manifest": manifest, "ttl_seconds": int64(protectedLaunchLease / time.Second)}
+	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents/leases", adminToken, registration, &registered); err != nil {
 		return err
 	}
+	defer func() {
+		target := endpoint + "/v1/agents/" + manifest.Agent.ID + "?generation=" + strconv.FormatUint(registered.Generation, 10)
+		_ = managementJSON(context.Background(), http.MethodDelete, target, adminToken, nil, nil)
+	}()
 	protectedRoute, err := singleProtectedRoute(registered)
 	if err != nil {
 		return err
@@ -122,10 +131,38 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
 		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, created.Routes[0].Token)
 	}
-	command := exec.CommandContext(ctx, launch.Executable, args...)
+	childContext, cancelChild := context.WithCancel(ctx)
+	leaseResult := make(chan error, 1)
+	go maintainIntegrationLease(childContext, cancelChild, endpoint, adminToken, manifest.Agent.ID, registered.Generation, protectedLaunchHeartbeat, protectedLaunchLease, leaseResult)
+	command := exec.CommandContext(childContext, launch.Executable, args...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
-	return command.Run()
+	runErr := command.Run()
+	cancelChild()
+	leaseErr := <-leaseResult
+	if leaseErr != nil {
+		return leaseErr
+	}
+	return runErr
+}
+
+func maintainIntegrationLease(ctx context.Context, cancel context.CancelFunc, endpoint, adminToken, agentID string, generation uint64, interval, leaseTTL time.Duration, result chan<- error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			result <- nil
+			return
+		case <-ticker.C:
+			input := map[string]any{"generation": generation, "ttl_seconds": int64(leaseTTL / time.Second)}
+			if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents/"+agentID+"/heartbeat", adminToken, input, nil); err != nil {
+				cancel()
+				result <- fmt.Errorf("protected integration lease failed: %w", err)
+				return
+			}
+		}
+	}
 }
 
 func singleProtectedRoute(entry registry.Entry) (domain.ProtectedRoute, error) {

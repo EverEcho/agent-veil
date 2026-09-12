@@ -178,4 +178,10 @@ func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
 	if err != nil || entry.Generation != 3 || entry.Plan.Routes[0].ID == oldRouteID {
 		t.Fatalf("new generation reused stale route capability: old=%q entry=%+v err=%v", oldRouteID, entry, err)
 	}
+	if registry.RemoveGeneration("native", 2) {
+		t.Fatal("stale generation removed current registration")
+	}
+	if _, ok := registry.Get("native"); !ok || !registry.RemoveGeneration("native", entry.Generation) {
+		t.Fatal("current generation could not be removed")
+	}
 }

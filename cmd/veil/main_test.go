@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,5 +74,32 @@ func TestProtectedLaunchUsesCorePublishedGenerationRoute(t *testing.T) {
 	entry.State = registry.StateBlocked
 	if _, err := singleProtectedRoute(entry); err == nil {
 		t.Fatal("blocked Core registration was accepted for launch")
+	}
+}
+
+func TestProtectedLaunchCancelsWhenLeaseHeartbeatFails(t *testing.T) {
+	requests := 0
+	requestPath := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		requestPath = r.URL.Path
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go maintainIntegrationLease(ctx, cancel, server.URL, "01234567890123456789012345678901", "codex-local", 7, time.Millisecond, time.Second, result)
+	select {
+	case err := <-result:
+		if err == nil || requests != 1 || requestPath != "/v1/agents/codex-local/heartbeat" {
+			t.Fatalf("err=%v requests=%d path=%q", err, requests, requestPath)
+		}
+		select {
+		case <-ctx.Done():
+		default:
+			t.Fatal("failed heartbeat did not cancel protected child context")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat failure did not return")
 	}
 }

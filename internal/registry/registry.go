@@ -136,6 +136,20 @@ func (r *Registry) Remove(agentID string) {
 	delete(r.entries, agentID)
 }
 
+func (r *Registry) RemoveGeneration(agentID string, generation uint64) bool {
+	if agentID == "" || generation == 0 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.entries[agentID]
+	if !ok || entry.Generation != generation {
+		return false
+	}
+	delete(r.entries, agentID)
+	return true
+}
+
 // Block invalidates any prior active protection claim while retaining the last
 // known manifest for diagnostics.
 func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {

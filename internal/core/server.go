@@ -385,7 +385,20 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
-	s.registry.Remove(r.PathValue("id"))
+	generationValue := r.URL.Query().Get("generation")
+	if generationValue != "" {
+		generation, err := strconv.ParseUint(generationValue, 10, 64)
+		if err != nil || generation == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_INTEGRATION_GENERATION"})
+			return
+		}
+		if !s.registry.RemoveGeneration(r.PathValue("id"), generation) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "STALE_INTEGRATION_GENERATION"})
+			return
+		}
+	} else {
+		s.registry.Remove(r.PathValue("id"))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

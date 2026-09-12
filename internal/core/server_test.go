@@ -180,6 +180,20 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("stale heartbeat status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+	request = httptest.NewRequest(http.MethodDelete, "/v1/agents/native?generation=2", nil)
+	request.SetPathValue("id", "native")
+	recorder = httptest.NewRecorder()
+	s.deleteAgent(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("stale delete status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodDelete, "/v1/agents/native?generation=1", nil)
+	request.SetPathValue("id", "native")
+	recorder = httptest.NewRecorder()
+	s.deleteAgent(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("current delete status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
