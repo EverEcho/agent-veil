@@ -20,6 +20,10 @@ type Document struct {
 	Rules         []Rule        `json:"rules"`
 }
 
+func DefaultDocument() Document {
+	return Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: []Rule{{Scope: Scope{FindingType: "secret.private_key"}, Action: domain.ActionBlock}}}
+}
+
 func (d Document) Engine() (Engine, error) {
 	if d.SchemaVersion != "v1" || !d.Default.Valid() {
 		return Engine{}, domain.NewError(domain.ErrInvalidContract, "load policy", "unsupported schema or default action")
@@ -57,12 +61,16 @@ func (s *Store) Save(document Document) error {
 	payload = append(payload, '\n')
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	temp := s.path + ".tmp"
-	file, err := os.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := os.CreateTemp(filepath.Dir(s.path), ".policy-*.tmp")
 	if err != nil {
 		return err
 	}
+	temp := file.Name()
 	defer os.Remove(temp)
+	if err := file.Chmod(0600); err != nil {
+		file.Close()
+		return err
+	}
 	if _, err = file.Write(payload); err != nil {
 		file.Close()
 		return err

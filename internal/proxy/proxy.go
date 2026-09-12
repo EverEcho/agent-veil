@@ -27,15 +27,15 @@ const (
 )
 
 type Route struct {
-	ID                                string
-	AgentID, SurfaceID, WorkspaceRef  string
-	Protocol                          domain.Protocol
-	Upstream                          *url.URL
-	Policy                            policy.Engine
-	MaxRequestBytes, MaxResponseBytes int64
-	VaultLimits                       redactor.Limits
-	Interactive                       bool
-	Approver                          interface {
+	ID                                          string
+	AgentID, SurfaceID, Workspace, WorkspaceRef string
+	Protocol                                    domain.Protocol
+	Upstream                                    *url.URL
+	Policy                                      policy.Engine
+	MaxRequestBytes, MaxResponseBytes           int64
+	VaultLimits                                 redactor.Limits
+	Interactive                                 bool
+	Approver                                    interface {
 		Request(context.Context, domain.Finding) (domain.Action, error)
 	}
 	Auth        domain.AuthStrategy
@@ -142,7 +142,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer vault.Destroy()
-	processed, err := pipeline.ProcessForProtocol(pipeline.Context{SurfaceID: routeID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	surfaceID := route.SurfaceID
+	if surfaceID == "" {
+		surfaceID = routeID
+	}
+	processed, err := pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.ErrorCode = errorCodeValue(err)

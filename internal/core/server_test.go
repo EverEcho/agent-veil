@@ -90,6 +90,36 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 }
 
+func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	store, _ := policy.NewStore(path)
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithPolicyStore(store); err != nil {
+		t.Fatal(err)
+	}
+	document := policy.Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{AgentID: "agent-a", Provider: "api.example", SurfaceID: "primary", FindingType: "pii.email"}, Action: domain.ActionBlock}}}
+	payload, _ := json.Marshal(document)
+	request := httptest.NewRequest(http.MethodPut, "/v1/policy", bytes.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.auth(s.updatePolicy)(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	decision, err := s.policyEngine().Decide(policy.Scope{AgentID: "agent-a", Provider: "api.example", SurfaceID: "primary", FindingType: "pii.email"}, true)
+	if err != nil || decision.Action != domain.ActionBlock {
+		t.Fatalf("decision=%+v err=%v", decision, err)
+	}
+	restarted, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := restarted.WithPolicyStore(store); err != nil {
+		t.Fatal(err)
+	}
+	decision, _ = restarted.policyEngine().Decide(policy.Scope{AgentID: "agent-a", Provider: "api.example", SurfaceID: "primary", FindingType: "pii.email"}, true)
+	if decision.Action != domain.ActionBlock {
+		t.Fatalf("persisted decision=%+v", decision)
+	}
+}
+
 func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var received string
 	var authorization string

@@ -170,6 +170,26 @@ func TestRouteProtocolCannotBeChangedByRequestPath(t *testing.T) {
 	}
 }
 
+func TestProxyEvaluatesAgentProviderAndSurfacePolicyScope(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"route-primary"}, time.Minute)
+	engine := policy.Engine{Default: domain.ActionAllow, Rules: []policy.Rule{{Scope: policy.Scope{AgentID: "agent-a", Provider: upstream.Hostname(), SurfaceID: "primary", FindingType: "pii.email"}, Action: domain.ActionBlock}}}
+	handler, _ := NewHandler(manager, []Route{{ID: "route-primary", AgentID: "agent-a", SurfaceID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: engine, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/route-primary/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || providerCalls != 0 {
+		t.Fatalf("status=%d calls=%d", recorder.Code, providerCalls)
+	}
+}
+
 func TestStreamingResponseRestoresPlaceholder(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)

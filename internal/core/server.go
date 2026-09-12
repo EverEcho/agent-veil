@@ -9,10 +9,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/audit"
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
@@ -25,14 +28,16 @@ import (
 const maxManagementBody = 64 << 10
 
 type Server struct {
-	manager    *session.Manager
-	adminToken string
-	listener   net.Listener
-	httpServer *http.Server
-	registry   *registry.Registry
-	broker     *policy.Broker
-	policy     policy.Engine
-	auditor    interface {
+	manager     *session.Manager
+	adminToken  string
+	listener    net.Listener
+	httpServer  *http.Server
+	registry    *registry.Registry
+	broker      *policy.Broker
+	policy      policy.Engine
+	policyMu    sync.RWMutex
+	policyStore *policy.Store
+	auditor     interface {
 		Append(domain.AuditEvent) error
 	}
 	auditReader interface {
@@ -49,7 +54,36 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}}, nil
 }
 
-func (s *Server) WithPolicy(engine policy.Engine) *Server { s.policy = engine; return s }
+func (s *Server) WithPolicy(engine policy.Engine) *Server {
+	s.policyMu.Lock()
+	s.policy = engine
+	s.policyMu.Unlock()
+	return s
+}
+
+func (s *Server) WithPolicyStore(store *policy.Store) error {
+	if store == nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure policy", "policy store is required")
+	}
+	document, err := store.Load()
+	if errors.Is(err, os.ErrNotExist) {
+		document = policy.DefaultDocument()
+		if err := store.Save(document); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	engine, err := document.Engine()
+	if err != nil {
+		return err
+	}
+	s.policyMu.Lock()
+	s.policyStore = store
+	s.policy = engine
+	s.policyMu.Unlock()
+	return nil
+}
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
 	s.auditor = value
 	if reader, ok := value.(interface {
@@ -78,6 +112,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
 	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
+	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
+	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -105,6 +141,43 @@ func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
 		events = events[len(events)-limit:]
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
+	engine := s.policyEngine()
+	writeJSON(w, http.StatusOK, policy.Document{SchemaVersion: "v1", Default: engine.Default, Rules: engine.Rules})
+}
+func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request) {
+	var document policy.Document
+	if err := decodeManagement(r, &document); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_POLICY"})
+		return
+	}
+	engine, err := document.Engine()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_POLICY"})
+		return
+	}
+	s.policyMu.Lock()
+	store := s.policyStore
+	if store == nil {
+		s.policyMu.Unlock()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "POLICY_STORE_UNAVAILABLE"})
+		return
+	}
+	if err := store.Save(document); err != nil {
+		s.policyMu.Unlock()
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "POLICY_SAVE_FAILED"})
+		return
+	}
+	s.policy = engine
+	s.policyMu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) policyEngine() policy.Engine {
+	s.policyMu.RLock()
+	defer s.policyMu.RUnlock()
+	return policy.Engine{Default: s.policy.Default, Rules: append([]policy.Rule(nil), s.policy.Rules...)}
 }
 func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 	var request struct {
@@ -267,6 +340,7 @@ func (s *Server) proxyHandler() http.Handler {
 		}
 		var selected *domain.ProtectedRoute
 		var selectedAgentID string
+		var selectedWorkspace string
 		for _, entry := range s.registry.List() {
 			if entry.State != registry.StateActive {
 				continue
@@ -276,6 +350,7 @@ func (s *Server) proxyHandler() http.Handler {
 				if route.ID == routeID {
 					selected = &route
 					selectedAgentID = entry.Manifest.Agent.ID
+					selectedWorkspace = entry.Manifest.Agent.Metadata["workspace"]
 					break
 				}
 			}
@@ -294,7 +369,11 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
 		}
-		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		workspaceRef := ""
+		if selectedWorkspace != "" {
+			workspaceRef = audit.WorkspaceReference(selectedWorkspace)
+		}
+		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: selectedWorkspace, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

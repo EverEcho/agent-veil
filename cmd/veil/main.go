@@ -22,6 +22,7 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/planner"
+	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
@@ -159,6 +160,21 @@ func serve() error {
 		return fmt.Errorf("VEIL_ADMIN_TOKEN must be set to a random value of at least 32 characters: %w", err)
 	}
 	server.WithRegistry(registry.New(runtimeOptions()))
+	policyPath := os.Getenv("VEIL_POLICY_PATH")
+	if policyPath == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return err
+		}
+		policyPath = filepath.Join(configDir, "agentveil", "policy.json")
+	}
+	policyStore, err := policy.NewStore(policyPath)
+	if err != nil {
+		return err
+	}
+	if err := server.WithPolicyStore(policyStore); err != nil {
+		return err
+	}
 	auditPath := os.Getenv("VEIL_AUDIT_PATH")
 	if auditPath == "" {
 		configDir, err := os.UserConfigDir()
