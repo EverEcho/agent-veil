@@ -135,7 +135,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
 		return
 	}
-	if matches := h.scanner.Scan("/response", string(responseBody)); len(matches) > 0 {
+	if matches, scanErr := h.scanner.ScanChecked("/response", string(responseBody)); scanErr != nil || len(matches) > 0 {
 		fail(w, http.StatusForbidden, "RESPONSE_DLP_BLOCKED")
 		return
 	}

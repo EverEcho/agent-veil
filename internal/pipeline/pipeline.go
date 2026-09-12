@@ -29,7 +29,10 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 	replacements := make(map[string]string)
 	result := Result{Vault: vault}
 	for _, field := range document.Fields {
-		matches := scanner.Scan(field.Path, field.Text)
+		matches, scanErr := scanner.ScanChecked(field.Path, field.Text)
+		if scanErr != nil {
+			return Result{}, scanErr
+		}
 		sort.Slice(matches, func(i, j int) bool { return matches[i].Finding.Location.Start > matches[j].Finding.Location.Start })
 		text := field.Text
 		for _, match := range matches {

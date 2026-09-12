@@ -24,7 +24,15 @@ type rule struct {
 	group        int
 }
 
-type Scanner struct{ rules []rule }
+type Semantic interface {
+	Detect(path, text string) ([]domain.Finding, error)
+}
+
+type Scanner struct {
+	rules            []rule
+	semantic         Semantic
+	semanticRequired bool
+}
 
 func NewDefault() *Scanner {
 	return &Scanner{rules: []rule{
@@ -49,7 +57,18 @@ func NewDefault() *Scanner {
 	}}
 }
 
+func (s *Scanner) WithSemantic(semantic Semantic, required bool) *Scanner {
+	s.semantic = semantic
+	s.semanticRequired = required
+	return s
+}
+
 func (s *Scanner) Scan(path, text string) []Match {
+	matches, _ := s.ScanChecked(path, text)
+	return matches
+}
+
+func (s *Scanner) ScanChecked(path, text string) ([]Match, error) {
 	var matches []Match
 	for _, rule := range s.rules {
 		for _, indices := range rule.pattern.FindAllStringSubmatchIndex(text, -1) {
@@ -65,7 +84,26 @@ func (s *Scanner) Scan(path, text string) []Match {
 				Location: domain.ContentLocation{Path: path, Start: index[0], End: index[1]}, Confidence: 1, Detector: "deterministic", SuggestedAction: rule.action}, Value: value})
 		}
 	}
-	return Merge(matches)
+	if s.semantic == nil {
+		if s.semanticRequired {
+			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "required local semantic detector is unavailable")
+		}
+		return Merge(matches), nil
+	}
+	findings, err := s.semantic.Detect(path, text)
+	if err != nil {
+		if s.semanticRequired {
+			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "required local semantic detector failed")
+		}
+		return Merge(matches), nil
+	}
+	for _, finding := range findings {
+		if err := finding.Validate(len(text)); err != nil {
+			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "semantic detector returned an invalid finding")
+		}
+		matches = append(matches, Match{Finding: finding, Value: text[finding.Location.Start:finding.Location.End]})
+	}
+	return Merge(matches), nil
 }
 
 func Merge(matches []Match) []Match {
