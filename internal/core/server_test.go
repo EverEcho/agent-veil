@@ -104,18 +104,33 @@ func TestDiscoveryAPIUsesAuthenticatedInjectedInventory(t *testing.T) {
 
 func TestSessionLifecycleAPI(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	registered, _ := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
-	routeID := registered.Plan.Routes[0].ID
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}}
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	s.WithRegistry(reg)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
-	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/sessions", bytes.NewReader(payload))
+	registrationPayload, _ := json.Marshal(manifest)
+	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/agents", bytes.NewReader(registrationPayload))
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	response, err := http.DefaultClient.Do(request)
+	if err != nil || response.StatusCode != http.StatusCreated {
+		t.Fatalf("registration failed: %v status %d", err, response.StatusCode)
+	}
+	var registered registry.Entry
+	if err := json.NewDecoder(response.Body).Decode(&registered); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	routeID := registered.Plan.Routes[0].ID
+	if routeID != "route-primary-g1" {
+		t.Fatalf("route was not generation bound: %q", routeID)
+	}
+	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
+	request, _ = http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/sessions", bytes.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response, err = http.DefaultClient.Do(request)
 	if err != nil || response.StatusCode != http.StatusCreated {
 		t.Fatalf("create failed: %v status %d", err, response.StatusCode)
 	}

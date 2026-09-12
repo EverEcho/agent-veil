@@ -96,18 +96,16 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if name == "claude" && (len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Auth.Type != domain.AuthAnthropicKey) {
 		return errors.New("protected Claude launch currently requires ANTHROPIC_API_KEY; OAuth mode has no verified capability-header injection")
 	}
-	plan, err := planner.Build(manifest, runtimeOptions())
+	var registered registry.Entry
+	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents", adminToken, manifest, &registered); err != nil {
+		return err
+	}
+	protectedRoute, err := singleProtectedRoute(registered)
 	if err != nil {
 		return err
 	}
-	if len(plan.Routes) != 1 || plan.Summary.Protected != plan.Summary.Total {
-		return errors.New("agent does not have exactly one fully protected route")
-	}
-	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents", adminToken, manifest, nil); err != nil {
-		return err
-	}
 	var created session.Created
-	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": []string{plan.Routes[0].ID}, "ttl_seconds": 86400}, &created); err != nil {
+	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": []string{protectedRoute.ID}, "ttl_seconds": 86400}, &created); err != nil {
 		return err
 	}
 	defer func() {
@@ -119,15 +117,22 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	}
 	args := childArgs
 	if name == "codex" {
-		args = protectedCodexArgs(endpoint+"/route/"+plan.Routes[0].ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
+		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
 	} else {
-		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + plan.Routes[0].ID
+		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
 		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, created.Routes[0].Token)
 	}
 	command := exec.CommandContext(ctx, launch.Executable, args...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
 	return command.Run()
+}
+
+func singleProtectedRoute(entry registry.Entry) (domain.ProtectedRoute, error) {
+	if entry.State != registry.StateActive || len(entry.Plan.Routes) != 1 || entry.Plan.Summary.Total == 0 || entry.Plan.Summary.Protected != entry.Plan.Summary.Total {
+		return domain.ProtectedRoute{}, errors.New("agent does not have exactly one fully protected route")
+	}
+	return entry.Plan.Routes[0], nil
 }
 
 func overlayEnvironment(base []string, overrides map[string]string) []string {

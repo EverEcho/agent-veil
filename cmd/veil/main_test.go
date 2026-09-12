@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
+	"github.com/agentveil/agentveil/internal/registry"
 )
 
 func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
@@ -58,5 +59,17 @@ func TestResolveCoreEndpointUsesExplicitValueOrSecureState(t *testing.T) {
 	}
 	if got, err := resolveCoreEndpoint(""); err != nil || got != "http://127.0.0.1:4321" {
 		t.Fatalf("discovered endpoint=%q err=%v", got, err)
+	}
+}
+
+func TestProtectedLaunchUsesCorePublishedGenerationRoute(t *testing.T) {
+	entry := registry.Entry{State: registry.StateActive, Generation: 7, Plan: domain.ProtectionPlan{Routes: []domain.ProtectedRoute{{ID: "route-primary-g7"}}, Summary: domain.CoverageSummary{Total: 1, Protected: 1}}}
+	route, err := singleProtectedRoute(entry)
+	if err != nil || route.ID != "route-primary-g7" {
+		t.Fatalf("route=%+v err=%v", route, err)
+	}
+	entry.State = registry.StateBlocked
+	if _, err := singleProtectedRoute(entry); err == nil {
+		t.Fatal("blocked Core registration was accepted for launch")
 	}
 }
