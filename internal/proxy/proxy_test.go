@@ -339,6 +339,81 @@ func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing
 	}
 }
 
+func TestMCPStreamableGETEndsAtProtectionSessionExpiry(t *testing.T) {
+	providerCanceled := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(providerCanceled)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, 100*time.Millisecond)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{})
+	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	select {
+	case <-providerCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("provider request survived protection session expiry")
+	}
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestActiveProtectedRequestEndsWhenSessionIsDeleted(t *testing.T) {
+	providerStarted := make(chan struct{})
+	providerCanceled := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		close(providerStarted)
+		<-r.Context().Done()
+		close(providerCanceled)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, &http.Client{})
+	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, request)
+		close(requestDone)
+	}()
+	select {
+	case <-providerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider request did not start")
+	}
+	if !manager.Delete(created.Session.ID) {
+		t.Fatal("session was not deleted")
+	}
+	select {
+	case <-providerCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("provider request survived explicit session deletion")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("proxy request survived explicit session deletion")
+	}
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestStreamingResponseClearsServerWriteDeadline(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

@@ -134,7 +134,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sessionID, routeToken = "", ""
 		}
 	}
-	secret, ok := h.sessions.AuthorizeAndSecret(sessionID, routeID, routeToken)
+	authorization, ok := h.sessions.AuthorizeRoute(sessionID, routeID, routeToken)
 	if !ok {
 		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
 		return
@@ -161,9 +161,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE")
 		return
 	}
-	vault, err := redactor.NewVault(secret, route.VaultLimits)
-	for i := range secret {
-		secret[i] = 0
+	vault, err := redactor.NewVault(authorization.Secret, route.VaultLimits)
+	for i := range authorization.Secret {
+		authorization.Secret[i] = 0
 	}
 	if err != nil {
 		auditEvent.ErrorCode = "VAULT_FAILURE"
@@ -194,7 +194,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := *route.Upstream
 	target.Path = joinBasePath(route.Upstream.Path, endpoint)
 	target.RawQuery = r.URL.RawQuery
-	upstreamRequest, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(processed.Body))
+	requestContext, cancel := context.WithDeadline(r.Context(), authorization.ExpiresAt)
+	stopRevocation := context.AfterFunc(authorization.Context, cancel)
+	defer func() {
+		stopRevocation()
+		cancel()
+	}()
+	upstreamRequest, err := http.NewRequestWithContext(requestContext, r.Method, target.String(), bytes.NewReader(processed.Body))
 	if err != nil {
 		auditEvent.ErrorCode = "UPSTREAM_REQUEST_FAILED"
 		fail(w, http.StatusBadGateway, "UPSTREAM_REQUEST_FAILED")

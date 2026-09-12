@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
@@ -22,6 +23,14 @@ type Created struct {
 type managedSession struct {
 	session domain.ProtectionSession
 	routes  []RouteCredential
+	context context.Context
+	cancel  context.CancelFunc
+}
+
+type Authorization struct {
+	Secret    []byte
+	ExpiresAt time.Time
+	Context   context.Context
 }
 
 type Manager struct {
@@ -86,7 +95,8 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 		routes = append(routes, RouteCredential{RouteID: routeID, Token: token})
 	}
 	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
-	entry := &managedSession{session: s, routes: routes}
+	sessionContext, cancel := context.WithCancel(context.Background())
+	entry := &managedSession{session: s, routes: routes, context: sessionContext, cancel: cancel}
 	m.sessions[s.ID] = entry
 	return Created{Session: publicSession(s), Routes: append([]RouteCredential(nil), routes...)}, nil
 }
@@ -112,22 +122,27 @@ func (m *Manager) Authorize(sessionID, routeID, token string) bool {
 }
 
 func (m *Manager) AuthorizeAndSecret(sessionID, routeID, token string) ([]byte, bool) {
+	authorization, ok := m.AuthorizeRoute(sessionID, routeID, token)
+	return authorization.Secret, ok
+}
+
+func (m *Manager) AuthorizeRoute(sessionID, routeID, token string) (Authorization, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	entry, ok := m.sessions[sessionID]
 	if !ok {
-		return nil, false
+		return Authorization{}, false
 	}
 	if !entry.session.ExpiresAt.After(m.now()) {
 		m.deleteCascadeLocked(sessionID)
-		return nil, false
+		return Authorization{}, false
 	}
 	for _, route := range entry.routes {
 		if route.RouteID == routeID && constantTimeStringEqual(route.Token, token) {
-			return entry.session.SessionSecret(), true
+			return Authorization{Secret: entry.session.SessionSecret(), ExpiresAt: entry.session.ExpiresAt, Context: entry.context}, true
 		}
 	}
-	return nil, false
+	return Authorization{}, false
 }
 
 func (m *Manager) Delete(id string) bool {
@@ -157,6 +172,7 @@ func (m *Manager) deleteCascadeLocked(rootID string) {
 	}
 	for id := range pending {
 		if entry, ok := m.sessions[id]; ok {
+			entry.cancel()
 			wipe(entry)
 			delete(m.sessions, id)
 		}
@@ -171,6 +187,7 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, entry := range m.sessions {
+		entry.cancel()
 		wipe(entry)
 		delete(m.sessions, id)
 	}

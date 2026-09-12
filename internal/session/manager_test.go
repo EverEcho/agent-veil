@@ -28,6 +28,26 @@ func TestRouteAuthorizationAndExpiry(t *testing.T) {
 	}
 }
 
+func TestRouteAuthorizationReturnsSessionExpiry(t *testing.T) {
+	m := NewManager()
+	created, err := m.Create("", "local", []string{"primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, ok := m.AuthorizeRoute(created.Session.ID, "primary", created.Routes[0].Token)
+	if !ok || len(authorization.Secret) != 32 || !authorization.ExpiresAt.Equal(created.Session.ExpiresAt) || authorization.Context == nil {
+		t.Fatalf("authorized=%v secret-bytes=%d expires=%v want=%v", ok, len(authorization.Secret), authorization.ExpiresAt, created.Session.ExpiresAt)
+	}
+	if !m.Delete(created.Session.ID) {
+		t.Fatal("session was not deleted")
+	}
+	select {
+	case <-authorization.Context.Done():
+	default:
+		t.Fatal("route authorization was not revoked with its session")
+	}
+}
+
 func TestChildSessionRequiresLiveParentAndCannotOutliveIt(t *testing.T) {
 	m := NewManager()
 	now := time.Now()
