@@ -37,21 +37,21 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 	for _, field := range document.Fields {
 		matches, scanErr := scanner.ScanChecked(field.Path, field.Text)
 		if scanErr != nil {
-			return Result{}, scanErr
+			return result, scanErr
 		}
 		sort.Slice(matches, func(i, j int) bool { return matches[i].Finding.Location.Start > matches[j].Finding.Location.Start })
 		text := field.Text
 		for _, match := range matches {
 			decision, err := engine.Decide(policy.Scope{AgentID: ctx.AgentID, Workspace: ctx.Workspace, Provider: ctx.Provider, SurfaceID: ctx.SurfaceID, FindingType: match.Finding.Category}, ctx.Interactive)
 			if err != nil {
-				return Result{}, err
+				return result, err
 			}
 			result.Findings = append(result.Findings, match.Finding)
 			result.Actions = append(result.Actions, decision.Action)
 			action := decision.Action
 			if action == domain.ActionAsk {
 				if !ctx.Interactive || ctx.Approver == nil {
-					return Result{}, domain.NewError(domain.ErrInteractionRequired, "process request", "interactive policy decision is required")
+					return result, domain.NewError(domain.ErrInteractionRequired, "process request", "interactive policy decision is required")
 				}
 				requestContext := ctx.RequestContext
 				if requestContext == nil {
@@ -59,17 +59,17 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 				}
 				action, err = ctx.Approver.Request(requestContext, match.Finding)
 				if err != nil {
-					return Result{}, err
+					return result, err
 				}
 				result.Actions[len(result.Actions)-1] = action
 			}
 			switch action {
 			case domain.ActionBlock:
-				return Result{}, domain.NewError(domain.ErrPolicyBlocked, "process request", "policy blocked sensitive content")
+				return result, domain.NewError(domain.ErrPolicyBlocked, "process request", "policy blocked sensitive content")
 			case domain.ActionRedact:
 				placeholder, err := vault.Store(match.Finding.Category, match.Value)
 				if err != nil {
-					return Result{}, err
+					return result, err
 				}
 				start, end := match.Finding.Location.Start, match.Finding.Location.End
 				text = text[:start] + placeholder + text[end:]

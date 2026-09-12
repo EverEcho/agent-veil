@@ -31,6 +31,9 @@ type Server struct {
 	registry   *registry.Registry
 	broker     *policy.Broker
 	policy     policy.Engine
+	auditor    interface {
+		Append(domain.AuditEvent) error
+	}
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -43,6 +46,10 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 }
 
 func (s *Server) WithPolicy(engine policy.Engine) *Server { s.policy = engine; return s }
+func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
+	s.auditor = value
+	return s
+}
 
 func (s *Server) Start() error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -233,6 +240,7 @@ func (s *Server) proxyHandler() http.Handler {
 			return
 		}
 		var selected *domain.ProtectedRoute
+		var selectedAgentID string
 		for _, entry := range s.registry.List() {
 			if entry.State != registry.StateActive {
 				continue
@@ -241,6 +249,7 @@ func (s *Server) proxyHandler() http.Handler {
 				route := entry.Plan.Routes[i]
 				if route.ID == routeID {
 					selected = &route
+					selectedAgentID = entry.Manifest.Agent.ID
 					break
 				}
 			}
@@ -254,7 +263,7 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
 		}
-		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, Upstream: upstream, Auth: selected.Auth, Network: selected.Network, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, Network: selected.Network, Auditor: s.auditor, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

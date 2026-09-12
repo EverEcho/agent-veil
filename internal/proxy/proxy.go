@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/detector"
@@ -27,6 +28,8 @@ const (
 
 type Route struct {
 	ID                                string
+	AgentID, SurfaceID, WorkspaceRef  string
+	Protocol                          domain.Protocol
 	Upstream                          *url.URL
 	Policy                            policy.Engine
 	MaxRequestBytes, MaxResponseBytes int64
@@ -38,6 +41,9 @@ type Route struct {
 	Auth        domain.AuthStrategy
 	AuthApplier veilauth.Applier
 	Network     domain.NetworkRoute
+	Auditor     interface {
+		Append(domain.AuditEvent) error
+	}
 }
 type configuredRoute struct {
 	Route
@@ -110,8 +116,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
 		return
 	}
+	started := time.Now()
+	auditEvent := domain.AuditEvent{SessionID: r.Header.Get(HeaderSession), AgentID: route.AgentID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, Action: domain.ActionAllow, WorkspaceRef: route.WorkspaceRef}
+	defer func() {
+		if route.Auditor == nil {
+			return
+		}
+		auditEvent.Timestamp = time.Now().UTC()
+		auditEvent.LatencyMS = time.Since(started).Milliseconds()
+		_ = route.Auditor.Append(auditEvent)
+	}()
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {
+		auditEvent.ErrorCode = "REQUEST_TOO_LARGE"
 		fail(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE")
 		return
 	}
@@ -120,12 +137,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		secret[i] = 0
 	}
 	if err != nil {
+		auditEvent.ErrorCode = "VAULT_FAILURE"
 		fail(w, http.StatusInternalServerError, "VAULT_FAILURE")
 		return
 	}
 	defer vault.Destroy()
 	processed, err := pipeline.Process(pipeline.Context{SurfaceID: routeID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	applyAuditResult(&auditEvent, processed)
 	if err != nil {
+		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
 	}
@@ -134,6 +154,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target.RawQuery = r.URL.RawQuery
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(processed.Body))
 	if err != nil {
+		auditEvent.ErrorCode = "UPSTREAM_REQUEST_FAILED"
 		fail(w, http.StatusBadGateway, "UPSTREAM_REQUEST_FAILED")
 		return
 	}
@@ -147,6 +168,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authStrategy.Type = domain.AuthPassthrough
 	}
 	if err := route.AuthApplier.Apply(upstreamRequest, authStrategy); err != nil {
+		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
 	}
@@ -154,21 +176,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
 	response, err := client.Do(upstreamRequest)
 	if err != nil {
+		auditEvent.ErrorCode = "UPSTREAM_FAILURE"
 		fail(w, http.StatusBadGateway, "UPSTREAM_FAILURE")
 		return
 	}
 	defer response.Body.Close()
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
-		h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol)
+		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
+			auditEvent.ErrorCode = errorCodeValue(err)
+		}
 		return
 	}
 	responseBody, err := readLimited(response.Body, route.MaxResponseBytes)
 	if err != nil {
+		auditEvent.ErrorCode = "RESPONSE_TOO_LARGE"
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
 		return
 	}
 	restored, err := pipeline.ProcessResponse(processed.Protocol, response.Header.Get("Content-Type"), responseBody, h.scanner, vault)
 	if err != nil {
+		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
 	}
@@ -179,22 +206,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(restored)
 }
 
-func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) {
+func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) error {
 	body, err := readLimited(response.Body, maxBytes)
 	if err != nil {
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
-		return
+		return err
 	}
 	processed, err := pipeline.ProcessSSE(protocolType, body, h.scanner, vault)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
-		return
+		return err
 	}
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(processed)
+	return nil
 }
 
 func splitRoutePath(path string) (string, string, bool) {
@@ -243,4 +271,36 @@ func errorCode(err error) string {
 		return string(veil.Code)
 	}
 	return "INTERNAL_ERROR"
+}
+
+func errorCodeValue(err error) domain.ErrorCode { return domain.ErrorCode(errorCode(err)) }
+
+func applyAuditResult(event *domain.AuditEvent, result pipeline.Result) {
+	if result.Protocol != "" {
+		event.Protocol = result.Protocol
+	}
+	event.FindingCount = len(result.Findings)
+	seen := map[string]struct{}{}
+	for _, finding := range result.Findings {
+		if _, ok := seen[finding.Category]; !ok {
+			event.FindingTypes = append(event.FindingTypes, finding.Category)
+			seen[finding.Category] = struct{}{}
+		}
+		if severityRank(finding.Severity) > severityRank(event.Severity) {
+			event.Severity = finding.Severity
+		}
+	}
+	for _, action := range result.Actions {
+		if actionRank(action) > actionRank(event.Action) {
+			event.Action = action
+		}
+	}
+}
+
+func severityRank(value domain.Severity) int {
+	return map[domain.Severity]int{domain.SeverityLow: 1, domain.SeverityMedium: 2, domain.SeverityHigh: 3, domain.SeverityCritical: 4}[value]
+}
+
+func actionRank(value domain.Action) int {
+	return map[domain.Action]int{domain.ActionAllow: 1, domain.ActionAsk: 2, domain.ActionRedact: 3, domain.ActionBlock: 4}[value]
 }

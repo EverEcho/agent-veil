@@ -11,10 +11,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/audit"
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -157,6 +159,26 @@ func serve() error {
 		return fmt.Errorf("VEIL_ADMIN_TOKEN must be set to a random value of at least 32 characters: %w", err)
 	}
 	server.WithRegistry(registry.New(runtimeOptions()))
+	auditPath := os.Getenv("VEIL_AUDIT_PATH")
+	if auditPath == "" {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			return err
+		}
+		auditPath = filepath.Join(configDir, "agentveil", "audit.jsonl")
+	}
+	retention := 30 * 24 * time.Hour
+	if configured := os.Getenv("VEIL_AUDIT_RETENTION"); configured != "" {
+		retention, err = time.ParseDuration(configured)
+		if err != nil || retention <= 0 {
+			return errors.New("VEIL_AUDIT_RETENTION must be a positive duration")
+		}
+	}
+	auditStore, err := audit.NewStore(auditPath, retention, nil)
+	if err != nil {
+		return err
+	}
+	server.WithAuditor(auditStore)
 	if err := server.Start(); err != nil {
 		return err
 	}
