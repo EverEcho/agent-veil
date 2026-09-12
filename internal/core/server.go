@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/audit"
@@ -48,7 +49,8 @@ type Server struct {
 	auditor     interface {
 		Append(domain.AuditEvent) error
 	}
-	auditReader interface {
+	auditMonitor *monitoredAuditor
+	auditReader  interface {
 		Recent(time.Time) ([]domain.AuditEvent, error)
 	}
 	proxySlots chan struct{}
@@ -58,6 +60,19 @@ type Server struct {
 	scanner       detector.ContentScanner
 	cleanupCancel context.CancelFunc
 	cleanupDone   chan struct{}
+}
+
+type monitoredAuditor struct {
+	target   interface{ Append(domain.AuditEvent) error }
+	failures atomic.Uint64
+}
+
+func (m *monitoredAuditor) Append(event domain.AuditEvent) error {
+	err := m.target.Append(event)
+	if err != nil {
+		m.failures.Add(1)
+	}
+	return err
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -122,7 +137,15 @@ func (s *Server) WithPolicyStore(store *policy.Store) error {
 	return nil
 }
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
-	s.auditor = value
+	if value == nil {
+		s.auditor = nil
+		s.auditMonitor = nil
+		s.auditReader = nil
+		return s
+	}
+	monitor := &monitoredAuditor{target: value}
+	s.auditor = monitor
+	s.auditMonitor = monitor
 	if reader, ok := value.(interface {
 		Recent(time.Time) ([]domain.AuditEvent, error)
 	}); ok {
@@ -512,7 +535,16 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "api_version": "v1"})
+	result := map[string]string{"status": "ok", "api_version": "v1", "audit": "disabled"}
+	if s.auditMonitor != nil {
+		result["audit"] = "ok"
+		if failures := s.auditMonitor.failures.Load(); failures > 0 {
+			result["status"] = "degraded"
+			result["audit"] = "error"
+			result["audit_failures"] = strconv.FormatUint(failures, 10)
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {

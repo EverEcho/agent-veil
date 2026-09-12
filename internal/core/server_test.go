@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +34,10 @@ type fixedInspectableDiscoverer struct {
 	manifest domain.AgentManifest
 }
 
+type failingAuditor struct{}
+
+func (failingAuditor) Append(domain.AuditEvent) error { return errors.New("disk unavailable") }
+
 func (f fixedInspectableDiscoverer) DetectAll(context.Context) []discovery.Detection {
 	return []discovery.Detection{{Agent: f.manifest.Agent.Kind, Version: f.manifest.Agent.Version}}
 }
@@ -47,6 +52,26 @@ func TestDecodeManagementRejectsDuplicateKeys(t *testing.T) {
 	}
 	if err := decodeManagement(request, &destination); err == nil {
 		t.Fatal("management request with duplicate identity was accepted")
+	}
+}
+
+func TestHealthReportsAuditPersistenceFailures(t *testing.T) {
+	s, err := New(session.NewManager(), "01234567890123456789012345678901")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WithAuditor(failingAuditor{})
+	if err := s.auditor.Append(domain.AuditEvent{}); err == nil {
+		t.Fatal("failing auditor unexpectedly succeeded")
+	}
+	recorder := httptest.NewRecorder()
+	s.health(recorder, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	var health map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &health); err != nil {
+		t.Fatal(err)
+	}
+	if health["status"] != "degraded" || health["audit"] != "error" || health["audit_failures"] != "1" {
+		t.Fatalf("health=%+v", health)
 	}
 }
 
