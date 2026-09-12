@@ -135,10 +135,12 @@ func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
 func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var received string
 	var authorization string
+	var receivedPath string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		received = string(body)
 		authorization = r.Header.Get("Authorization")
+		receivedPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}))
@@ -147,7 +149,7 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	port, _ := strconv.Atoi(parsed.Port())
 	t.Setenv("VEIL_TEST_CORE_TOKEN", "provider-token")
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:VEIL_TEST_CORE_TOKEN"}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port), Path: "/gateway/v1"}, Auth: domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:VEIL_TEST_CORE_TOKEN"}, ConfigSource: "test", Rewritable: true, Required: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +171,8 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(response.Body)
-	if response.StatusCode != http.StatusOK || strings.Contains(received, "dev@example.com") || !strings.Contains(string(body), "dev@example.com") || authorization != "Bearer provider-token" {
-		t.Fatalf("status=%d provider=%s auth=%q body=%s", response.StatusCode, received, authorization, body)
+	if response.StatusCode != http.StatusOK || strings.Contains(received, "dev@example.com") || !strings.Contains(string(body), "dev@example.com") || authorization != "Bearer provider-token" || receivedPath != "/gateway/v1/responses" {
+		t.Fatalf("status=%d provider=%s path=%q auth=%q body=%s", response.StatusCode, received, receivedPath, authorization, body)
 	}
 	auditRequest, _ := http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/audit", nil)
 	auditRequest.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")

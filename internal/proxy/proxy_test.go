@@ -325,3 +325,18 @@ func TestRedirectCannotEscapeCurrentRoute(t *testing.T) {
 		t.Fatalf("redirect escaped: calls=%d status=%d", evilCalls, recorder.Code)
 	}
 }
+
+func TestJoinBasePathAvoidsDuplicateProtocolPrefix(t *testing.T) {
+	for _, test := range []struct {
+		base, endpoint, want string
+	}{
+		{"", "/v1/responses", "/v1/responses"},
+		{"/gateway", "/v1/responses", "/gateway/v1/responses"},
+		{"/gateway/v1", "/v1/responses", "/gateway/v1/responses"},
+		{"/anthropic/", "/v1/messages", "/anthropic/v1/messages"},
+	} {
+		if got := joinBasePath(test.base, test.endpoint); got != test.want {
+			t.Fatalf("joinBasePath(%q, %q)=%q want=%q", test.base, test.endpoint, got, test.want)
+		}
+	}
+}

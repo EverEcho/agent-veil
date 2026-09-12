@@ -75,6 +75,16 @@ func (u Upstream) Validate() error {
 	if u.Port == 0 {
 		return NewError(ErrInvalidContract, "validate upstream", "port is required")
 	}
+	if u.Path != "" {
+		if !strings.HasPrefix(u.Path, "/") || strings.Contains(u.Path, "//") || strings.ContainsAny(u.Path, "\\?#\r\n\t") {
+			return NewError(ErrInvalidContract, "validate upstream", "base path is malformed")
+		}
+		for _, segment := range strings.Split(u.Path, "/") {
+			if segment == "." || segment == ".." {
+				return NewError(ErrInvalidContract, "validate upstream", "base path contains traversal")
+			}
+		}
+	}
 	if u.Scheme == "http" && !isLoopbackHost(u.Host) {
 		return NewError(ErrUpstreamDenied, "validate upstream", "plaintext HTTP is allowed only for loopback")
 	}

@@ -43,7 +43,7 @@ func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
 		var upstream *domain.Upstream
 		if slot.BaseURL != "" {
 			parsed, err := url.Parse(slot.BaseURL)
-			if err != nil || parsed.Hostname() == "" {
+			if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "inspect agent", "slot upstream is invalid")
 			}
 			port := uint16(443)
@@ -63,7 +63,7 @@ func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
 				}
 				port = uint16(value)
 			}
-			upstream = &domain.Upstream{Scheme: parsed.Scheme, Host: parsed.Hostname(), Port: port}
+			upstream = &domain.Upstream{Scheme: parsed.Scheme, Host: parsed.Hostname(), Port: port, Path: parsed.Path}
 		}
 		auth := slot.Auth
 		if auth.Type == "" {

@@ -166,7 +166,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := *route.Upstream
-	target.Path = strings.TrimSuffix(route.Upstream.Path, "/") + endpoint
+	target.Path = joinBasePath(route.Upstream.Path, endpoint)
 	target.RawQuery = r.URL.RawQuery
 	upstreamRequest, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), bytes.NewReader(processed.Body))
 	if err != nil {
@@ -220,6 +220,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(restored)
+}
+
+func joinBasePath(basePath, endpoint string) string {
+	base := strings.FieldsFunc(basePath, func(character rune) bool { return character == '/' })
+	suffix := strings.FieldsFunc(endpoint, func(character rune) bool { return character == '/' })
+	overlap := 0
+	maximum := len(base)
+	if len(suffix) < maximum {
+		maximum = len(suffix)
+	}
+	for candidate := maximum; candidate > 0; candidate-- {
+		equal := true
+		for index := 0; index < candidate; index++ {
+			if base[len(base)-candidate+index] != suffix[index] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			overlap = candidate
+			break
+		}
+	}
+	parts := append(append([]string(nil), base...), suffix[overlap:]...)
+	return "/" + strings.Join(parts, "/")
 }
 
 func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) error {

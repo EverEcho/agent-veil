@@ -15,6 +15,7 @@ type Upstream struct {
 	Scheme string `json:"scheme"`
 	Host   string `json:"host"`
 	Port   uint16 `json:"port"`
+	Path   string `json:"path,omitempty"`
 }
 
 type AuthStrategy struct {

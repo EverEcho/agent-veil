@@ -46,3 +46,23 @@ func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
 		t.Fatalf("invalid launch plan: %+v", plan)
 	}
 }
+
+func TestInspectorPreservesSafeUpstreamBasePath(t *testing.T) {
+	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{"agent": {"1.0": {}}}}
+	base := Config{AgentID: "a", Kind: "agent", Version: "1.0", ConfigSource: "fixture", Mode: domain.ModeLaunch, Slots: []Slot{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://api.example.com/gateway/v1/", Rewritable: true, Required: true}}}
+	manifest, err := inspector.Inspect(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.Surfaces[0].Upstream.Path; got != "/gateway/v1/" {
+		t.Fatalf("base path=%q", got)
+	}
+	for _, suffix := range []string{"?token=secret", "#fragment"} {
+		invalid := base
+		invalid.Slots = append([]Slot(nil), base.Slots...)
+		invalid.Slots[0].BaseURL += suffix
+		if _, err := inspector.Inspect(invalid); err == nil {
+			t.Fatalf("unsafe URL suffix %q accepted", suffix)
+		}
+	}
+}

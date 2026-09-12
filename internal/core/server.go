@@ -387,8 +387,8 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
 			return
 		}
-		upstream, err := url.Parse(selected.Upstream.Scheme + "://" + selected.Upstream.Host + ":" + strconv.Itoa(int(selected.Upstream.Port)))
-		if err != nil {
+		upstream := &url.URL{Scheme: selected.Upstream.Scheme, Host: net.JoinHostPort(selected.Upstream.Host, strconv.Itoa(int(selected.Upstream.Port))), Path: selected.Upstream.Path}
+		if err := selected.Upstream.Validate(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
 		}

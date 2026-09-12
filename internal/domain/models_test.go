@@ -55,6 +55,17 @@ func TestRemotePlaintextUpstreamFailsClosed(t *testing.T) {
 	}
 }
 
+func TestUpstreamValidatesBasePath(t *testing.T) {
+	if err := (Upstream{Scheme: "https", Host: "api.example.com", Port: 443, Path: "/gateway/v1/"}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"relative", "//other.example/v1", "/safe/../admin", `/safe\admin`, "/safe?query"} {
+		if err := (Upstream{Scheme: "https", Host: "api.example.com", Port: 443, Path: path}).Validate(); err == nil {
+			t.Fatalf("unsafe base path %q accepted", path)
+		}
+	}
+}
+
 func TestNetworkSurfaceRequiresValidAuthAndNetworkRoute(t *testing.T) {
 	surface := EgressSurface{ID: "primary", Name: "Primary", Type: SurfaceModelPrimary, Protocol: ProtocolOpenAIResponses, Upstream: &Upstream{Scheme: "https", Host: "api.example", Port: 443}, ConfigSource: "fixture", Rewritable: true}
 	if err := surface.Validate(); err == nil {
