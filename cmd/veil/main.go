@@ -27,8 +27,10 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/integration"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
+	"github.com/agentveil/agentveil/internal/protocol"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/rulestore"
@@ -37,6 +39,7 @@ import (
 
 const protectedLaunchLease = 30 * time.Second
 const protectedLaunchHeartbeat = 10 * time.Second
+const maxManagementResponseBytes = 4 << 20
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -338,6 +341,7 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept-Encoding", "identity")
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -351,7 +355,41 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 		return fmt.Errorf("core returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
 	if output != nil {
-		return json.NewDecoder(response.Body).Decode(output)
+		return decodeManagementResponse(response, output)
+	}
+	return nil
+}
+
+func decodeManagementResponse(response *http.Response, output any) error {
+	if response == nil || response.Body == nil || output == nil {
+		return errors.New("management response and destination are required")
+	}
+	contentTypes := response.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
+		return errors.New("management response requires one valid application/json content type")
+	}
+	encodings := response.Header.Values("Content-Encoding")
+	if len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") {
+		return errors.New("management response content encoding is unsupported or ambiguous")
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxManagementResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(payload) > maxManagementResponseBytes {
+		return errors.New("management response exceeds its size limit")
+	}
+	if err := jsonsafe.Validate(payload); err != nil {
+		return errors.New("management response contains invalid or ambiguous JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(output); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("management response contains trailing data")
 	}
 	return nil
 }
@@ -478,6 +516,7 @@ func status() error {
 	}
 	request, _ := http.NewRequest(http.MethodGet, endpoint+"/v1/health", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept-Encoding", "identity")
 	client := &http.Client{Timeout: 3 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
@@ -488,7 +527,7 @@ func status() error {
 		return fmt.Errorf("core returned %s", response.Status)
 	}
 	var health map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&health); err != nil {
+	if err := decodeManagementResponse(response, &health); err != nil {
 		return err
 	}
 	fmt.Printf("AgentVeil Core: %s (API %s)\n", health["status"], health["api_version"])
@@ -508,6 +547,7 @@ func diagnostics() error {
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+os.Getenv("VEIL_ADMIN_TOKEN"))
+	request.Header.Set("Accept-Encoding", "identity")
 	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
 	if err != nil {
 		return err

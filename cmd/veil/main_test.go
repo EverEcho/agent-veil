@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,5 +164,81 @@ func TestProtectedLaunchCancelsWhenLeaseHeartbeatFails(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat failure did not return")
+	}
+}
+
+func TestManagementJSONRejectsUnboundedOrAmbiguousResponses(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers func(http.Header)
+		body    string
+	}{
+		{name: "missing content type", body: `{}`},
+		{name: "duplicate content type", headers: func(header http.Header) {
+			header.Add("Content-Type", "application/json")
+			header.Add("Content-Type", "application/json")
+		}, body: `{}`},
+		{name: "unsupported encoding", headers: func(header http.Header) {
+			header.Set("Content-Type", "application/json")
+			header.Set("Content-Encoding", "br")
+		}, body: `{}`},
+		{name: "ambiguous JSON", headers: func(header http.Header) {
+			header.Set("Content-Type", "application/json")
+		}, body: `{"status":"ok","status":"forged"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if test.headers != nil {
+					test.headers(w.Header())
+				}
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			var output map[string]string
+			if err := managementJSON(context.Background(), http.MethodGet, server.URL, "01234567890123456789012345678901", nil, &output); err == nil {
+				t.Fatal("unsafe management response was accepted")
+			}
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bytes.Repeat([]byte{'x'}, maxManagementResponseBytes+1))
+	}))
+	defer server.Close()
+	var output map[string]string
+	if err := managementJSON(context.Background(), http.MethodGet, server.URL, "01234567890123456789012345678901", nil, &output); err == nil {
+		t.Fatal("oversized management response was accepted")
+	}
+}
+
+func TestManagementJSONDecodesStrictBoundedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
+	}))
+	defer server.Close()
+	var output struct {
+		Status string `json:"status"`
+	}
+	if err := managementJSON(context.Background(), http.MethodGet, server.URL, "01234567890123456789012345678901", nil, &output); err != nil || output.Status != "ok" {
+		t.Fatalf("output=%+v error=%v", output, err)
+	}
+}
+
+func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Accept-Encoding") != "identity" {
+			t.Errorf("Accept-Encoding=%q", request.Header.Get("Accept-Encoding"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+	var output map[string]string
+	if err := managementJSON(context.Background(), http.MethodGet, server.URL, "01234567890123456789012345678901", nil, &output); err != nil {
+		t.Fatal(err)
 	}
 }
