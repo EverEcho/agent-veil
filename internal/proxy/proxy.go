@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/pipeline"
@@ -33,6 +34,8 @@ type Route struct {
 	Approver                          interface {
 		Request(context.Context, domain.Finding) (domain.Action, error)
 	}
+	Auth        domain.AuthStrategy
+	AuthApplier veilauth.Applier
 }
 type configuredRoute struct {
 	Route
@@ -128,6 +131,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamRequest.Header.Del(HeaderRouteToken)
 	upstreamRequest.Header.Del("Content-Encoding")
 	upstreamRequest.ContentLength = int64(len(processed.Body))
+	authStrategy := route.Auth
+	if authStrategy.Type == "" {
+		authStrategy.Type = domain.AuthPassthrough
+	}
+	if err := route.AuthApplier.Apply(upstreamRequest, authStrategy); err != nil {
+		fail(w, http.StatusForbidden, errorCode(err))
+		return
+	}
 	client := *h.client
 	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
 	response, err := client.Do(upstreamRequest)

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/redactor"
@@ -45,6 +46,40 @@ func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	result, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || strings.Contains(providerBody, "dev@example.com") || !strings.Contains(string(result), "dev@example.com") {
 		t.Fatalf("status=%d provider=%s client=%s", response.StatusCode, providerBody, result)
+	}
+}
+
+type finalBodySigner struct{ sawOriginal bool }
+
+func (s *finalBodySigner) Apply(request *http.Request) error {
+	body, _ := io.ReadAll(request.Body)
+	request.Body = io.NopCloser(strings.NewReader(string(body)))
+	s.sawOriginal = strings.Contains(string(body), "dev@example.com")
+	request.Header.Set("X-Signed", "yes")
+	return nil
+}
+func TestAuthenticationRunsAfterRedaction(t *testing.T) {
+	signer := &finalBodySigner{}
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Signed") != "yes" {
+			t.Error("signature missing")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"ok"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Upstream: upstream, Auth: domain.AuthStrategy{Type: domain.AuthCustom}, AuthApplier: veilauth.Applier{Signers: map[domain.AuthType]veilauth.Signer{domain.AuthCustom: signer}}, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if signer.sawOriginal || recorder.Code != http.StatusOK {
+		t.Fatalf("original=%v status=%d", signer.sawOriginal, recorder.Code)
 	}
 }
 
