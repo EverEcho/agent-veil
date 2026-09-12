@@ -182,6 +182,32 @@ func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
 	}
 }
 
+func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	request := httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"contact dev@example.com"}`))
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.auth(s.testDetection)(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "dev@example.com") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var findings []domain.Finding
+	if err := json.Unmarshal(recorder.Body.Bytes(), &findings); err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Category != "pii.email" || findings[0].Location.Path != "/test-input" {
+		t.Fatalf("findings=%+v", findings)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"safe","unexpected":true}`))
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder = httptest.NewRecorder()
+	s.auth(s.testDetection)(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unknown field status=%d", recorder.Code)
+	}
+}
+
 func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var received string
 	var authorization string

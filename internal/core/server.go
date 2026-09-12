@@ -18,6 +18,7 @@ import (
 	"github.com/agentveil/agentveil/internal/audit"
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/compatibility"
+	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -130,6 +131,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
 	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
 	mux.HandleFunc("GET /v1/compatibility", s.auth(s.getCompatibility))
+	mux.HandleFunc("POST /v1/detect", s.auth(s.testDetection))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -164,6 +166,26 @@ func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) getCompatibility(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, compatibility.Current())
+}
+
+func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Text string `json:"text"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.Text == "" || len(request.Text) > 32<<10 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_DETECTION_TEST"})
+		return
+	}
+	matches, err := detector.NewDefault().ScanChecked("/test-input", request.Text)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DETECTOR_FAILURE"})
+		return
+	}
+	findings := make([]domain.Finding, len(matches))
+	for index := range matches {
+		findings[index] = matches[index].Finding
+	}
+	writeJSON(w, http.StatusOK, findings)
 }
 
 func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
