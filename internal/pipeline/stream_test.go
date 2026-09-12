@@ -198,3 +198,18 @@ func TestSSEProcessorDoesNotFlushLongUnfinishedCredentialToken(t *testing.T) {
 		t.Fatalf("completed long JWT was emitted: bytes=%d err=%v", len(output), err)
 	}
 }
+
+func TestSSEProcessorRejectsUnboundedLookbehindAndPendingEvents(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+	if _, err := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, 4096, veilstream.MaxResponseLookbehindBytes+1); err == nil {
+		t.Fatal("unbounded stream lookbehind accepted")
+	}
+	processor, err := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, veilstream.MaxSSEEventBytes, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]veilstream.Event, MaxPendingStreamEvents+1)
+	if err := processor.append(events); err == nil || len(processor.pending) != 0 {
+		t.Fatalf("unbounded pending events accepted: pending=%d err=%v", len(processor.pending), err)
+	}
+}

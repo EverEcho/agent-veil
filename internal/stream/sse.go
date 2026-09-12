@@ -42,18 +42,23 @@ type Decoder struct {
 	maxEvent int
 }
 
+const (
+	MaxSSEEventBytes    = 1 << 20
+	MaxSSEEventsPerPush = 4096
+)
+
 func NewDecoder(maxEventBytes int) (*Decoder, error) {
-	if maxEventBytes <= 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create SSE decoder", "positive event limit is required")
+	if maxEventBytes <= 0 || maxEventBytes > MaxSSEEventBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create SSE decoder", "event limit must be within its configured bounds")
 	}
 	return &Decoder{maxEvent: maxEventBytes}, nil
 }
 
 func (d *Decoder) Push(chunk []byte) ([]Event, error) {
-	d.buffer = append(d.buffer, chunk...)
-	if len(d.buffer) > d.maxEvent {
+	if len(chunk) > d.maxEvent-len(d.buffer) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "decode SSE", "event buffer limit exceeded")
 	}
+	d.buffer = append(d.buffer, chunk...)
 	var events []Event
 	for {
 		index, width := eventBoundary(d.buffer)
@@ -62,6 +67,9 @@ func (d *Decoder) Push(chunk []byte) ([]Event, error) {
 		}
 		raw := append([]byte(nil), d.buffer[:index]...)
 		d.buffer = append(d.buffer[:0], d.buffer[index+width:]...)
+		if len(events) == MaxSSEEventsPerPush {
+			return nil, domain.NewError(domain.ErrInvalidContract, "decode SSE", "event batch exceeds its limit")
+		}
 		events = append(events, parseEvent(raw))
 	}
 	return events, nil

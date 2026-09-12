@@ -19,18 +19,23 @@ type Guard struct {
 	vault      *redactor.Vault
 }
 
+const (
+	MaxResponseLookbehindBytes = 64 << 10
+	MaxResponseBufferBytes     = 1 << 20
+)
+
 func NewGuard(scanner detector.ContentScanner, vault *redactor.Vault, lookbehind, maxBuffer int) (*Guard, error) {
-	if scanner == nil || vault == nil || lookbehind < 128 || maxBuffer < lookbehind {
+	if scanner == nil || vault == nil || lookbehind < 128 || lookbehind > MaxResponseLookbehindBytes || maxBuffer < lookbehind || maxBuffer > MaxResponseBufferBytes {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create response guard", "invalid detector, vault or buffer limits")
 	}
 	return &Guard{scanner: scanner, vault: vault, lookbehind: lookbehind, maxBuffer: maxBuffer}, nil
 }
 
 func (g *Guard) Push(text string) (string, error) {
-	g.pending += text
-	if len(g.pending) > g.maxBuffer {
+	if len(text) > g.maxBuffer-len(g.pending) {
 		return "", domain.NewError(domain.ErrInvalidContract, "guard response", "response safety buffer limit exceeded")
 	}
+	g.pending += text
 	if matches, err := g.scanner.ScanChecked("/response", g.pending); err != nil {
 		return "", err
 	} else if len(matches) > 0 {

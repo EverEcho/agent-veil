@@ -61,3 +61,27 @@ func TestGuardRestoresSplitPlaceholderAndBlocksSplitSecret(t *testing.T) {
 		t.Fatal("split credential was not blocked")
 	}
 }
+
+func TestStreamingPrimitivesRejectUnboundedConfiguration(t *testing.T) {
+	if _, err := NewDecoder(MaxSSEEventBytes + 1); err == nil {
+		t.Fatal("unbounded SSE event limit accepted")
+	}
+	decoder, err := NewDecoder(16 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.Push([]byte(strings.Repeat("\n\n", MaxSSEEventsPerPush+1))); err == nil {
+		t.Fatal("unbounded SSE event batch accepted")
+	}
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+	if _, err := NewGuard(detector.NewDefault(), vault, MaxResponseLookbehindBytes+1, MaxResponseBufferBytes); err == nil {
+		t.Fatal("unbounded response lookbehind accepted")
+	}
+	if _, err := NewGuard(detector.NewDefault(), vault, 128, MaxResponseBufferBytes+1); err == nil {
+		t.Fatal("unbounded response buffer accepted")
+	}
+	guard, _ := NewGuard(detector.NewDefault(), vault, 128, 256)
+	if _, err := guard.Push(strings.Repeat("x", 257)); err == nil || len(guard.pending) != 0 {
+		t.Fatalf("oversized push was buffered: pending=%d err=%v", len(guard.pending), err)
+	}
+}

@@ -11,6 +11,7 @@ import (
 )
 
 const defaultStreamLookbehind = 512
+const MaxPendingStreamEvents = 4096
 
 type streamDocument struct {
 	event    veilstream.Event
@@ -28,7 +29,7 @@ type SSEProcessor struct {
 }
 
 func NewSSEProcessor(protocolType domain.Protocol, scanner detector.ContentScanner, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
-	if scanner == nil || vault == nil || lookbehind < 128 {
+	if scanner == nil || vault == nil || lookbehind < 128 || lookbehind > veilstream.MaxResponseLookbehindBytes {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create SSE processor", "scanner, vault and a safe lookbehind are required")
 	}
 	decoder, err := veilstream.NewDecoder(maxEventBytes)
@@ -64,6 +65,9 @@ func (p *SSEProcessor) Close() ([]byte, error) {
 }
 
 func (p *SSEProcessor) append(events []veilstream.Event) error {
+	if len(events) > MaxPendingStreamEvents-len(p.pending) {
+		return domain.NewError(domain.ErrInvalidContract, "process SSE", "pending event count exceeds its limit")
+	}
 	for _, event := range events {
 		item := streamDocument{event: event}
 		if event.Data != "" && strings.TrimSpace(event.Data) != "[DONE]" {
