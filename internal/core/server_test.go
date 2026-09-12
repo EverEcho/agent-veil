@@ -104,14 +104,15 @@ func TestDiscoveryAPIUsesAuthenticatedInjectedInventory(t *testing.T) {
 
 func TestSessionLifecycleAPI(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, _ = reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	registered, _ := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	routeID := registered.Plan.Routes[0].ID
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	s.WithRegistry(reg)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	payload, _ := json.Marshal(createRequest{RouteIDs: []string{"route-primary"}, TTLSeconds: int64(time.Minute / time.Second)})
+	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
 	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/sessions", bytes.NewReader(payload))
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	response, err := http.DefaultClient.Do(request)
@@ -168,16 +169,17 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 
 func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	routeID := registered.Plan.Routes[0].ID
 	manager := session.NewManager()
-	parent, err := manager.Create("", "http://127.0.0.1:1", []string{"route-primary"}, time.Minute)
+	parent, err := manager.Create("", "http://127.0.0.1:1", []string{routeID}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := manager.Create(parent.Session.ID, "http://127.0.0.1:1", []string{"route-primary"}, 30*time.Second)
+	child, err := manager.Create(parent.Session.ID, "http://127.0.0.1:1", []string{routeID}, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,10 +286,11 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	port, _ := strconv.Atoi(parsed.Port())
 	t.Setenv("VEIL_TEST_CORE_TOKEN", "provider-token")
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port), Path: "/gateway/v1"}, Auth: domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:VEIL_TEST_CORE_TOKEN"}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port), Path: "/gateway/v1"}, Auth: domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:VEIL_TEST_CORE_TOKEN"}, ConfigSource: "test", Rewritable: true, Required: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	routeID := registered.Plan.Routes[0].ID
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")
 	auditStore, _ := audit.NewStore(filepath.Join(t.TempDir(), "audit.jsonl"), time.Hour, nil)
@@ -296,8 +299,8 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	created, _ := manager.Create("", s.Endpoint(), []string{"route-primary"}, time.Minute)
-	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/route-primary/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
+	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
+	request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/"+routeID+"/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Veil-Session", created.Session.ID)
 	request.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
@@ -342,10 +345,11 @@ func TestCoreProxyConcurrencyLimitDoesNotBlockManagement(t *testing.T) {
 	parsed, _ := url.Parse(provider.URL)
 	port, _ := strconv.Atoi(parsed.Port())
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	routeID := registered.Plan.Routes[0].ID
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")
 	s.WithRegistry(reg)
@@ -356,9 +360,9 @@ func TestCoreProxyConcurrencyLimitDoesNotBlockManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	created, _ := manager.Create("", s.Endpoint(), []string{"route-primary"}, time.Minute)
+	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
 	newProxyRequest := func() *http.Request {
-		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/route-primary/v1/responses", strings.NewReader(`{"input":"ordinary"}`))
+		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/"+routeID+"/v1/responses", strings.NewReader(`{"input":"ordinary"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Veil-Session", created.Session.ID)
 		request.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)
@@ -425,7 +429,8 @@ func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
 	parsed, _ := url.Parse(provider.URL)
 	port, _ := strconv.Atoi(parsed.Port())
 	reg := registry.New(planner.Options{DefaultPolicy: "ask", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	_, _ = reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	registered, _ := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port)}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	routeID := registered.Plan.Routes[0].ID
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")
 	s.WithRegistry(reg).WithPolicy(policy.Engine{Default: domain.ActionAsk})
@@ -433,10 +438,10 @@ func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	created, _ := manager.Create("", s.Endpoint(), []string{"route-primary"}, time.Minute)
+	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
 	result := make(chan *http.Response, 1)
 	go func() {
-		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/route-primary/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
+		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/"+routeID+"/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Veil-Session", created.Session.ID)
 		request.Header.Set("X-Veil-Route-Token", created.Routes[0].Token)

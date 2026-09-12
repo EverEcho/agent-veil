@@ -157,6 +157,7 @@ func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
 	if err != nil || entry.ExpiresAt != now.Add(time.Minute) {
 		t.Fatalf("lease registration: entry=%+v err=%v", entry, err)
 	}
+	oldRouteID := entry.Plan.Routes[0].ID
 	now = now.Add(30 * time.Second)
 	entry, err = registry.Heartbeat("native", entry.Generation, time.Minute)
 	if err != nil || entry.ExpiresAt != now.Add(time.Minute) || entry.Generation != 1 {
@@ -172,5 +173,9 @@ func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
 	}
 	if _, err := registry.Heartbeat("native", 1, time.Minute); err == nil {
 		t.Fatal("expired generation renewed lease")
+	}
+	entry, err = registry.ReconcileLeased(manifest, time.Minute)
+	if err != nil || entry.Generation != 3 || entry.Plan.Routes[0].ID == oldRouteID {
+		t.Fatalf("new generation reused stale route capability: old=%q entry=%+v err=%v", oldRouteID, entry, err)
 	}
 }

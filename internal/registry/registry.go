@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -61,6 +62,7 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 	r.expireLocked(now)
 	previous := r.entries[manifest.Agent.ID]
 	generation := previous.Generation + 1
+	bindPlanGeneration(&plan, generation)
 	if err != nil {
 		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}
 		r.entries[manifest.Agent.ID] = cloneEntry(blocked)
@@ -79,6 +81,18 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 	}
 	r.entries[manifest.Agent.ID] = cloneEntry(entry)
 	return cloneEntry(entry), nil
+}
+
+func bindPlanGeneration(plan *domain.ProtectionPlan, generation uint64) {
+	suffix := fmt.Sprintf("-g%d", generation)
+	for index := range plan.Routes {
+		plan.Routes[index].ID += suffix
+	}
+	for index := range plan.Coverage {
+		if plan.Coverage[index].RouteID != "" {
+			plan.Coverage[index].RouteID += suffix
+		}
+	}
 }
 
 func (r *Registry) Get(agentID string) (Entry, bool) {
