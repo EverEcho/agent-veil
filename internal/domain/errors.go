@@ -17,6 +17,7 @@ const (
 	ErrUnauthorizedRoute    ErrorCode = "UNAUTHORIZED_ROUTE"
 	ErrPolicyBlocked        ErrorCode = "POLICY_BLOCKED"
 	ErrInteractionRequired  ErrorCode = "INTERACTION_REQUIRED"
+	ErrCoreAlreadyRunning   ErrorCode = "CORE_ALREADY_RUNNING"
 )
 
 type VeilError struct {

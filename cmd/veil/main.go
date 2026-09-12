@@ -22,6 +22,7 @@ import (
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
@@ -181,6 +182,16 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 
 func serve() error {
 	token := os.Getenv("VEIL_ADMIN_TOKEN")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	configDir = filepath.Join(configDir, "agentveil")
+	coreLock, err := instance.Acquire(filepath.Join(configDir, "core.lock"))
+	if err != nil {
+		return err
+	}
+	defer coreLock.Close()
 	manager := session.NewManager()
 	server, err := core.New(manager, token)
 	if err != nil {
@@ -189,11 +200,7 @@ func serve() error {
 	server.WithRegistry(registry.New(runtimeOptions()))
 	policyPath := os.Getenv("VEIL_POLICY_PATH")
 	if policyPath == "" {
-		configDir, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		policyPath = filepath.Join(configDir, "agentveil", "policy.json")
+		policyPath = filepath.Join(configDir, "policy.json")
 	}
 	policyStore, err := policy.NewStore(policyPath)
 	if err != nil {
@@ -204,11 +211,7 @@ func serve() error {
 	}
 	auditPath := os.Getenv("VEIL_AUDIT_PATH")
 	if auditPath == "" {
-		configDir, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		auditPath = filepath.Join(configDir, "agentveil", "audit.jsonl")
+		auditPath = filepath.Join(configDir, "audit.jsonl")
 	}
 	retention := 30 * 24 * time.Hour
 	if configured := os.Getenv("VEIL_AUDIT_RETENTION"); configured != "" {
