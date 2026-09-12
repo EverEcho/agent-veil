@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -97,6 +98,51 @@ func TestStoreRejectsBadSignatureSizeAndTampering(t *testing.T) {
 	}
 	if _, err := store.List(); err == nil {
 		t.Fatal("tampered installed model was omitted from inventory")
+	}
+}
+
+func TestStoreDeactivatesWithoutDeletingVerifiedModels(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("verified-model")
+	if err := store.Install(signedManifest(t, private, "1.0.0", payload), bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Deactivate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Deactivate(); err != nil {
+		t.Fatalf("idempotent deactivation failed: %v", err)
+	}
+	if file, _, err := store.OpenActive(); !errors.Is(err, os.ErrNotExist) {
+		if file != nil {
+			file.Close()
+		}
+		t.Fatalf("deactivated model remained active: %v", err)
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.0.0" {
+		t.Fatalf("deactivation removed installed versions: versions=%+v error=%v", versions, err)
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatalf("verified model could not be reactivated: %v", err)
+	}
+	file, manifest, err := store.OpenActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	if manifest.Version != "1.0.0" {
+		t.Fatalf("active manifest=%+v", manifest)
 	}
 }
 
