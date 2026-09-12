@@ -45,7 +45,7 @@ func ForAgent(agent, version, platform string) []Record {
 func VerifiedVersions(platform string) map[string]map[string]struct{} {
 	result := map[string]map[string]struct{}{}
 	for _, record := range records {
-		if record.Platform != platform {
+		if record.Platform != platform || record.Verification != VerificationLaunchSmoke || record.Coverage != domain.CoverageProtected {
 			continue
 		}
 		if result[record.Agent] == nil {
