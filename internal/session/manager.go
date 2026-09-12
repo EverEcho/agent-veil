@@ -25,9 +25,14 @@ type Created struct {
 
 type managedSession struct {
 	session domain.ProtectionSession
-	routes  []RouteCredential
+	routes  []managedRouteCredential
 	context context.Context
 	cancel  context.CancelFunc
+}
+
+type managedRouteCredential struct {
+	routeID string
+	token   []byte
 }
 
 type Authorization struct {
@@ -125,19 +130,26 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "secure randomness is unavailable")
 	}
 	routes := make([]RouteCredential, 0, len(routeIDs))
+	managedRoutes := make([]managedRouteCredential, 0, len(routeIDs))
 	for _, routeID := range routeIDs {
 		token, err := randomHex(32)
 		if err != nil {
 			for i := range secret {
 				secret[i] = 0
 			}
+			for i := range managedRoutes {
+				for index := range managedRoutes[i].token {
+					managedRoutes[i].token[index] = 0
+				}
+			}
 			return Created{}, err
 		}
 		routes = append(routes, RouteCredential{RouteID: routeID, Token: token})
+		managedRoutes = append(managedRoutes, managedRouteCredential{routeID: routeID, token: []byte(token)})
 	}
 	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
 	sessionContext, cancel := context.WithCancel(context.Background())
-	entry := &managedSession{session: s, routes: routes, context: sessionContext, cancel: cancel}
+	entry := &managedSession{session: s, routes: managedRoutes, context: sessionContext, cancel: cancel}
 	m.sessions[s.ID] = entry
 	return Created{Session: publicSession(s), Routes: append([]RouteCredential(nil), routes...)}, nil
 }
@@ -179,7 +191,7 @@ func (m *Manager) AuthorizeRoute(sessionID, routeID, token string) (Authorizatio
 		return Authorization{}, false
 	}
 	for _, route := range entry.routes {
-		if route.RouteID == routeID && constantTimeStringEqual(route.Token, token) {
+		if route.routeID == routeID && constantTimeBytesStringEqual(route.token, token) {
 			return Authorization{Secret: entry.session.SessionSecret(), ExpiresAt: entry.session.ExpiresAt, Context: entry.context}, true
 		}
 	}
@@ -273,13 +285,18 @@ func (m *Manager) Close() {
 
 func randomHex(bytes int) (string, error) {
 	value := make([]byte, bytes)
+	defer func() {
+		for index := range value {
+			value[index] = 0
+		}
+	}()
 	if _, err := rand.Read(value); err != nil {
 		return "", domain.NewError(domain.ErrInvalidContract, "generate capability", "secure randomness is unavailable")
 	}
 	return hex.EncodeToString(value), nil
 }
 
-func constantTimeStringEqual(a, b string) bool {
+func constantTimeBytesStringEqual(a []byte, b string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -293,6 +310,9 @@ func constantTimeStringEqual(a, b string) bool {
 func wipe(entry *managedSession) {
 	entry.session.DestroySecret()
 	for i := range entry.routes {
-		entry.routes[i].Token = ""
+		for index := range entry.routes[i].token {
+			entry.routes[i].token[index] = 0
+		}
+		entry.routes[i].token = nil
 	}
 }

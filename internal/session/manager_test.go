@@ -112,6 +112,28 @@ func TestRouteAuthorizationReturnsSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestDeletingSessionOverwritesInternalRouteCapabilities(t *testing.T) {
+	m := NewManager()
+	created, err := m.Create("", "local", []string{"primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.RLock()
+	internalToken := m.sessions[created.Session.ID].routes[0].token
+	m.mu.RUnlock()
+	if len(internalToken) == 0 {
+		t.Fatal("internal route capability was not retained")
+	}
+	if !m.Delete(created.Session.ID) {
+		t.Fatal("session was not deleted")
+	}
+	for _, value := range internalToken {
+		if value != 0 {
+			t.Fatal("internal route capability bytes survived deletion")
+		}
+	}
+}
+
 func TestChildSessionRequiresLiveParentAndCannotOutliveIt(t *testing.T) {
 	m := NewManager()
 	now := time.Now()
