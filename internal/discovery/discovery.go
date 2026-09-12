@@ -150,13 +150,34 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		} else {
 			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 		}
-	case "cursor", "opencode", "zed", "cline":
+	case "opencode":
+		config.ConfigSource = filepath.Join(home, ".config", "opencode", "opencode.json")
+		if value, ok := d.System.LookupEnv("OPENCODE_CONFIG"); ok && strings.TrimSpace(value) != "" {
+			config.ConfigSource = strings.TrimSpace(value)
+		}
+		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
+			config.Observed, config.LocalMCP, err = integration.ParseOpenCodeConfig(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Observed = append(config.Observed, openCodeUnknownSlot("configuration-file", "configured file could not be inspected"))
+		}
+		if _, ok := d.System.LookupEnv("OPENCODE_CONFIG_CONTENT"); ok {
+			config.Observed = append(config.Observed, openCodeUnknownSlot("inline-config-overrides", "OPENCODE_CONFIG_CONTENT may override file configuration"))
+		}
+		config.Observed = append(config.Observed, openCodeUnknownSlot("workspace-config-overrides", "project and managed configuration precedence is not resolved"))
+	case "cursor", "zed", "cline":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 	default:
 		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "agent has no integration")
 	}
 	return (integration.Inspector{VerifiedVersions: d.Verified}).Inspect(config)
+}
+
+func openCodeUnknownSlot(id, reason string) integration.Slot {
+	return integration.Slot{ID: id, Name: "Unresolved OpenCode egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
 }
 
 func containsTOMLKey(content []byte, key string) bool {

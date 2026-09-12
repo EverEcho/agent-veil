@@ -124,7 +124,7 @@ func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
 }
 
 func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
-	for _, name := range []string{"opencode", "cursor", "zed", "cline"} {
+	for _, name := range []string{"cursor", "zed", "cline"} {
 		d := Discoverer{System: fakeSystem{version: name + " 9.9.9"}, Verified: map[string]map[string]struct{}{}}
 		manifest, err := d.Inspect(context.Background(), name)
 		if err != nil {
@@ -133,6 +133,58 @@ func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
 		if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Type != domain.SurfaceUnknown || manifest.Agent.Metadata["compatibility"] != "unverified" {
 			t.Fatalf("%s manifest=%+v", name, manifest)
 		}
+	}
+}
+
+func TestOpenCodeDiscoveryEnumeratesConfigAndKeepsOverrideRisksExplicit(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "opencode 1.2.3", config: `{
+  "model": "corp/main",
+  "small_model": "anthropic/haiku",
+  "provider": { "corp": { "npm": "@ai-sdk/openai-compatible", "options": { "baseURL": "https://models.example/v1", "apiKey": "secret-value" } } },
+  "mcp": {
+    "local": { "type": "local", "command": ["server"] },
+    "remote": { "type": "remote", "url": "https://mcp.example/rpc", "headers": { "Authorization": "secret-value" } }
+  }
+}`}, Verified: map[string]map[string]struct{}{"opencode": {"1.2.3": {}}}}
+	manifest, err := d.Inspect(context.Background(), "opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 5 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	byID := make(map[string]domain.EgressSurface, len(manifest.Surfaces))
+	for _, surface := range manifest.Surfaces {
+		byID[surface.ID] = surface
+		if surface.Rewritable || strings.Contains(surface.Name, "secret-value") || strings.Contains(surface.ConfigSource, "secret-value") {
+			t.Fatalf("surface overstated or retained credentials: %+v", surface)
+		}
+	}
+	if byID["primary"].Protocol != domain.ProtocolOpenAIChat || byID["mcp-remote"].Protocol != domain.ProtocolMCPStreamable || byID["mcp-local"].Protocol != domain.ProtocolLocalStdio {
+		t.Fatalf("enumerated surfaces=%+v", manifest.Surfaces)
+	}
+	if byID["workspace-config-overrides"].Type != domain.SurfaceUnknown || !byID["workspace-config-overrides"].Required {
+		t.Fatalf("workspace override risk missing: %+v", byID["workspace-config-overrides"])
+	}
+}
+
+func TestOpenCodeInlineConfigOverrideIsExplicitlyUnknown(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "opencode 1.2.3", config: `{"model":"anthropic/main"}`, environment: map[string]string{"OPENCODE_CONFIG_CONTENT": `{"model":"private/secret"}`}}, Verified: map[string]map[string]struct{}{"opencode": {"1.2.3": {}}}}
+	manifest, err := d.Inspect(context.Background(), "opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, surface := range manifest.Surfaces {
+		if surface.ID == "inline-config-overrides" {
+			found = surface.Type == domain.SurfaceUnknown && surface.Required
+		}
+		if strings.Contains(surface.Name, "private/secret") || strings.Contains(surface.ConfigSource, "private/secret") {
+			t.Fatalf("inline config content retained: %+v", surface)
+		}
+	}
+	if !found {
+		t.Fatalf("inline override risk missing: %+v", manifest.Surfaces)
 	}
 }
 
