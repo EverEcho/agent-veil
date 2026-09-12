@@ -5,11 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/session"
 )
+
+func TestDashboardContainsNoProtectedData(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	recorder := httptest.NewRecorder()
+	s.dashboard(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "01234567890123456789012345678901") {
+		t.Fatal("dashboard leaked management data")
+	}
+}
 
 func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	s, err := New(session.NewManager(), "01234567890123456789012345678901")

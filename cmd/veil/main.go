@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/core"
+	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/planner"
+	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -38,10 +41,16 @@ func run(args []string) error {
 
 func serve() error {
 	token := os.Getenv("VEIL_ADMIN_TOKEN")
-	server, err := core.New(session.NewManager(), token)
+	manager := session.NewManager()
+	server, err := core.New(manager, token)
 	if err != nil {
 		return fmt.Errorf("VEIL_ADMIN_TOKEN must be set to a random value of at least 32 characters: %w", err)
 	}
+	capabilities := map[domain.Protocol]planner.Capability{}
+	for _, protocol := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP} {
+		capabilities[protocol] = planner.Capability{Protocol: protocol, RequestInspection: true, ResponseInspection: true, StreamInspection: false, Observable: true}
+	}
+	server.WithRegistry(registry.New(planner.Options{Capabilities: capabilities, DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}}))
 	if err := server.Start(); err != nil {
 		return err
 	}

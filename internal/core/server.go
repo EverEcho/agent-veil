@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -21,7 +23,10 @@ type Server struct {
 	adminToken string
 	listener   net.Listener
 	httpServer *http.Server
+	registry   *registry.Registry
 }
+
+func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
 
 func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if manager == nil || len(adminToken) < 32 {
@@ -41,11 +46,82 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v1/sessions", s.auth(s.createSession))
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.auth(s.deleteSession))
+	mux.HandleFunc("GET /v1/agents", s.auth(s.listAgents))
+	mux.HandleFunc("GET /v1/agents/{id}", s.auth(s.getAgent))
+	mux.HandleFunc("POST /v1/agents", s.auth(s.registerAgent))
+	mux.HandleFunc("DELETE /v1/agents/{id}", s.auth(s.deleteAgent))
+	mux.HandleFunc("GET /", s.dashboard)
 	s.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() { _ = s.httpServer.Serve(listener) }()
 	return nil
 }
+
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, dashboardHTML)
+}
+
+func (s *Server) listAgents(w http.ResponseWriter, _ *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.registry.List())
+}
+
+func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	entry, ok := s.registry.Get(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "NOT_FOUND"})
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
+func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	var manifest domain.AgentManifest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxManagementBody+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MANIFEST"})
+		return
+	}
+	entry, err := s.registry.Reconcile(manifest)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, entry)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	s.registry.Remove(r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+const dashboardHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AgentVeil</title><style>
+:root{color-scheme:dark;font-family:ui-sans-serif,system-ui;background:#0b0e14;color:#e8edf5}body{max-width:1100px;margin:0 auto;padding:40px 24px}h1{letter-spacing:-.04em}.muted{color:#8c98aa}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{background:#141925;border:1px solid #273044;border-radius:14px;padding:18px}.status{font-weight:700;text-transform:uppercase}.active,.protected,.local{color:#55d89b}.blocked,.unprotected{color:#ff6b76}.partial,.observed{color:#f2bd5a}button,input{background:#1e2635;color:inherit;border:1px solid #35415a;border-radius:8px;padding:10px}button{cursor:pointer}</style></head><body>
+<h1>AgentVeil</h1><p class="muted">Local privacy control plane</p><div><input id="token" type="password" placeholder="Management token"><button id="load">Load status</button></div><p id="message" class="muted"></p><div id="agents" class="grid"></div>
+<script>const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));document.querySelector('#load').onclick=async()=>{const token=document.querySelector('#token').value;const m=document.querySelector('#message');try{const r=await fetch('/v1/agents',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error(r.status);const rows=await r.json();m.textContent=rows.length+' agents discovered';document.querySelector('#agents').innerHTML=rows.map(x=>'<section class="card"><div class="status '+e(x.state)+'">'+e(x.state)+'</div><h2>'+e(x.manifest.agent.kind)+'</h2><p class="muted">'+e(x.manifest.agent.version||'unknown version')+'</p><p>Protected '+x.plan.summary.protected+' · Local '+x.plan.summary.local+' · Partial '+x.plan.summary.partial+' · Observed '+x.plan.summary.observed+' · Unprotected '+x.plan.summary.unprotected+'</p></section>').join('')}catch(err){m.textContent='Unable to load protected status';document.querySelector('#agents').textContent=''}}</script></body></html>`
 
 func (s *Server) Endpoint() string {
 	if s.listener == nil {
