@@ -572,6 +572,17 @@ func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
 	if strings.Contains(string(encoded), "api.example") || strings.Contains(string(encoded), "443") {
 		t.Fatalf("egress audit retained target metadata: %s", encoded)
 	}
+	diagnosticRecorder := httptest.NewRecorder()
+	server.diagnostics(diagnosticRecorder, httptest.NewRequest(http.MethodGet, "/v1/diagnostics", nil))
+	diagnosticPayload := diagnosticRecorder.Body.String()
+	if diagnosticRecorder.Code != http.StatusOK || !strings.Contains(diagnosticRecorder.Header().Get("Content-Disposition"), "agentveil-diagnostics.json") {
+		t.Fatalf("diagnostic status=%d headers=%v body=%s", diagnosticRecorder.Code, diagnosticRecorder.Header(), diagnosticPayload)
+	}
+	for _, forbidden := range []string{"api.example", created.Session.ID, "\"agent\""} {
+		if strings.Contains(diagnosticPayload, forbidden) {
+			t.Fatalf("diagnostic export leaked %q: %s", forbidden, diagnosticPayload)
+		}
+	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/egress-events", strings.NewReader(strings.Replace(body, fmt.Sprintf(`"generation":%d`, registered.Generation), `"generation":999`, 1)))
 	recorder = httptest.NewRecorder()

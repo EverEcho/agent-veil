@@ -24,6 +24,8 @@ conservatively than discovered traffic.
   versioned rule-pack and semantic-model artifact stores with rollback;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
   coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
+- an authenticated, bounded diagnostics export that omits routes and paths,
+  hashes runtime identities, and applies field-level plus final-payload scans;
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
 - atomic Native/Managed registry reconciliation plus revision-aware monitoring
@@ -93,6 +95,7 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
 go run ./cmd/veil status
+go run ./cmd/veil diagnostics
 go run ./cmd/veil discover
 go run ./cmd/veil inspect codex
 go run ./cmd/veil inspect claude

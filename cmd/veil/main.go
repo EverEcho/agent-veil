@@ -55,13 +55,18 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <discover|inspect|run|serve|status>")
+		return errors.New("usage: veil <diagnostics|discover|inspect|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
 		return serve()
 	case "status":
 		return status()
+	case "diagnostics":
+		if len(args) != 1 {
+			return errors.New("usage: veil diagnostics")
+		}
+		return diagnostics()
 	case "discover":
 		if len(args) != 1 {
 			return errors.New("usage: veil discover")
@@ -488,6 +493,39 @@ func status() error {
 	}
 	fmt.Printf("AgentVeil Core: %s (API %s)\n", health["status"], health["api_version"])
 	return nil
+}
+
+func diagnostics() error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodGet, endpoint+"/v1/diagnostics", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+os.Getenv("VEIL_ADMIN_TOKEN"))
+	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("core returned %s", response.Status)
+	}
+	const maxDiagnosticBytes = 4 << 20
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxDiagnosticBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(payload) > maxDiagnosticBytes {
+		return errors.New("diagnostic export exceeds its size limit")
+	}
+	_, err = os.Stdout.Write(payload)
+	return err
 }
 
 func resolveCoreEndpoint(explicit string) (string, error) {

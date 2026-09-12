@@ -20,6 +20,7 @@ import (
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/detector"
+	"github.com/agentveil/agentveil/internal/diagnostic"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/egress"
@@ -205,6 +206,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
 	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
+	mux.HandleFunc("GET /v1/diagnostics", s.auth(s.diagnostics))
 	mux.HandleFunc("POST /v1/egress-events", s.auth(s.reportUnexpectedEgress))
 	mux.HandleFunc("GET /v1/call-tree", s.auth(s.getCallTree))
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
@@ -264,6 +266,47 @@ func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
 		events = events[len(events)-limit:]
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {
+	status := "ok"
+	if s.auditMonitor != nil && s.auditMonitor.failures.Load() > 0 {
+		status = "degraded"
+	}
+	agents := make([]diagnostic.Agent, 0)
+	if s.registry != nil {
+		entries := s.registry.List()
+		agents = make([]diagnostic.Agent, 0, len(entries))
+		for _, entry := range entries {
+			agents = append(agents, diagnostic.Agent{Reference: entry.Manifest.Agent.ID, Kind: entry.Manifest.Agent.Kind, Version: entry.Manifest.Agent.Version, State: string(entry.State), Generation: entry.Generation, Coverage: entry.Plan.Summary, ErrorCode: entry.ErrorCode})
+		}
+	}
+	var events []domain.AuditEvent
+	if s.auditReader != nil {
+		var err error
+		events, err = s.auditReader.Recent(time.Now().UTC())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DIAGNOSTIC_AUDIT_READ_FAILED"})
+			return
+		}
+		if len(events) > 500 {
+			events = events[len(events)-500:]
+		}
+	}
+	report, err := diagnostic.Build(s.scanner, time.Now().UTC(), status, len(s.manager.List()), agents, events)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DIAGNOSTIC_SANITIZE_FAILED"})
+		return
+	}
+	payload, err := diagnostic.Marshal(s.scanner, report)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DIAGNOSTIC_SECONDARY_SCAN_FAILED"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="agentveil-diagnostics.json"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
 }
 
 type unexpectedEgressReport struct {
