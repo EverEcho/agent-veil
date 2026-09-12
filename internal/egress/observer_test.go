@@ -8,18 +8,30 @@ import (
 type fixedProcessSnapshotter struct {
 	snapshot []Process
 	err      error
+	calls    *int
 }
 
-func (f fixedProcessSnapshotter) Snapshot() ([]Process, error) { return f.snapshot, f.err }
+func (f fixedProcessSnapshotter) Snapshot() ([]Process, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	return f.snapshot, f.err
+}
 
 type recordingConnectionSnapshotter struct {
 	processes []Process
 	result    []Connection
 	err       error
+	errors    []error
+	calls     int
 }
 
 func (r *recordingConnectionSnapshotter) Connections(processes []Process) ([]Connection, error) {
+	r.calls++
 	r.processes = append([]Process(nil), processes...)
+	if len(r.errors) >= r.calls {
+		return nil, r.errors[r.calls-1]
+	}
 	return r.result, r.err
 }
 
@@ -93,5 +105,32 @@ func TestObserverClassifiesExactLoopbackHopAsLocal(t *testing.T) {
 	}
 	if len(assessments) != 1 || assessments[0].Status != StatusLocal || assessments[0].Risk != nil {
 		t.Fatalf("assessments=%+v", assessments)
+	}
+}
+
+func TestObserverRetriesOneCompleteCycleAfterProcessChurn(t *testing.T) {
+	root := identity(10, 100)
+	processCalls := 0
+	collector := &recordingConnectionSnapshotter{errors: []error{processSnapshotChanged()}, result: []Connection{{ProcessIdentity: root, Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}}}
+	observer, err := NewObserver(root, 8, fixedProcessSnapshotter{snapshot: []Process{{ProcessIdentity: root, ParentID: 1}}, calls: &processCalls}, collector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessments, err := observer.ObserveWithLocalEndpoints(nil, []LocalEndpoint{{Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}})
+	if err != nil || len(assessments) != 1 || assessments[0].Status != StatusLocal || processCalls != 2 || collector.calls != 2 {
+		t.Fatalf("assessments=%+v process_calls=%d connection_calls=%d err=%v", assessments, processCalls, collector.calls, err)
+	}
+}
+
+func TestObserverFailsClosedAfterRepeatedProcessChurn(t *testing.T) {
+	root := identity(10, 100)
+	collector := &recordingConnectionSnapshotter{errors: []error{processSnapshotChanged(), processSnapshotChanged()}}
+	observer, err := NewObserver(root, 8, fixedProcessSnapshotter{snapshot: []Process{{ProcessIdentity: root, ParentID: 1}}}, collector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessments, err := observer.Observe(nil)
+	if assessments != nil || !IsProcessSnapshotChanged(err) || collector.calls != 2 {
+		t.Fatalf("assessments=%+v calls=%d err=%v", assessments, collector.calls, err)
 	}
 }

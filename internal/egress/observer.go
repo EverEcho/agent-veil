@@ -1,10 +1,24 @@
 package egress
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
+
+type processSnapshotChangedError struct{}
+
+func (processSnapshotChangedError) Error() string {
+	return "process snapshot changed during connection collection"
+}
+
+func processSnapshotChanged() error { return processSnapshotChangedError{} }
+
+func IsProcessSnapshotChanged(err error) bool {
+	var changed processSnapshotChangedError
+	return errors.As(err, &changed)
+}
 
 type ProcessSnapshotter interface {
 	Snapshot() ([]Process, error)
@@ -41,16 +55,22 @@ func (o *Observer) Observe(expected []Expected) ([]Assessment, error) {
 func (o *Observer) ObserveWithLocalEndpoints(expected []Expected, localEndpoints []LocalEndpoint) ([]Assessment, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	snapshot, err := o.processes.Snapshot()
-	if err != nil {
-		return nil, err
+	for attempt := 0; attempt < 2; attempt++ {
+		snapshot, err := o.processes.Snapshot()
+		if err != nil {
+			return nil, err
+		}
+		if err := o.tree.Update(snapshot); err != nil {
+			return nil, err
+		}
+		connections, err := o.connections.Connections(o.tree.Descendants())
+		if err != nil {
+			if attempt == 0 && IsProcessSnapshotChanged(err) {
+				continue
+			}
+			return nil, err
+		}
+		return AssessWithLocalEndpoints(connections, expected, localEndpoints), nil
 	}
-	if err := o.tree.Update(snapshot); err != nil {
-		return nil, err
-	}
-	connections, err := o.connections.Connections(o.tree.Descendants())
-	if err != nil {
-		return nil, err
-	}
-	return AssessWithLocalEndpoints(connections, expected, localEndpoints), nil
+	return nil, processSnapshotChanged()
 }

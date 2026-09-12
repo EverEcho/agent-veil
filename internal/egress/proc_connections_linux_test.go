@@ -70,8 +70,8 @@ func TestLinuxConnectionCollectorRejectsPIDReuseAndLimits(t *testing.T) {
 	root := t.TempDir()
 	writeProcFixture(t, root, 10, 1, "agent", 1000)
 	addSocketFD(t, root, 10, "3", "12345")
-	if _, err := (LinuxConnectionCollector{Root: root}).Connections([]Process{{ProcessIdentity: identity(10, 999), ParentID: 1}}); err == nil {
-		t.Fatal("PID reuse was accepted")
+	if _, err := (LinuxConnectionCollector{Root: root}).Connections([]Process{{ProcessIdentity: identity(10, 999), ParentID: 1}}); !IsProcessSnapshotChanged(err) {
+		t.Fatalf("PID reuse was not reported as snapshot churn: %v", err)
 	}
 	writeTCPTable(t, root, 10, "tcp", "   0: 0100007F:C001 08080808:01BB 01 00000000:00000000 00:00000000 00000000 1000 0 12345\n")
 	if _, err := (LinuxConnectionCollector{Root: root, MaxConnections: 0}).Connections(nil); err == nil {

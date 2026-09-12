@@ -72,6 +72,9 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 		}
 
 		entries, err := readBoundedDir(filepath.Join(processRoot, "fd"), connectionLimit)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, processSnapshotChanged()
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +122,7 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 			return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "network connection tables are unavailable")
 		}
 		if err := verifyProcessIdentity(processRoot, process.ProcessIdentity); err != nil {
-			return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "process identity changed during collection")
+			return nil, err
 		}
 	}
 
@@ -143,8 +146,11 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 
 func verifyProcessIdentity(processRoot string, expected ProcessIdentity) error {
 	current, err := readProcStat(filepath.Join(processRoot, "stat"), expected.ProcessID)
-	if err != nil || current.StartedAt != expected.StartedAt {
-		return domain.NewError(domain.ErrInvalidContract, "collect process connections", "process exited or its PID was reused")
+	if errors.Is(err, os.ErrNotExist) || err == nil && current.StartedAt != expected.StartedAt {
+		return processSnapshotChanged()
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }
