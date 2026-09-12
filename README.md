@@ -55,9 +55,10 @@ conservatively than discovered traffic.
   project/nested MCP, extension registrations, and closed model backends kept as
   explicit unknown risks;
 - scoped transparent-mode CA with private atomic activation, local signing
-  revocation and restart recovery; bounded Linux process-tree/TCP egress
-  collection and process-egress assessment primitives. These are not yet a
-  complete transparent interception product or OS enforcement layer.
+  revocation, restart recovery, and a rollback-capable Linux trust-store file
+  adapter; bounded Linux process-tree/TCP egress collection and process-egress
+  assessment primitives. These are not yet a complete transparent interception
+  product or OS enforcement layer.
 
 ## Commands
 
