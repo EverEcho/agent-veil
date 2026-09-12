@@ -65,21 +65,42 @@ func (s *LocalSemantic) Detect(path, text string) ([]domain.Finding, error) {
 	if len(tokens) == 0 {
 		return nil, nil
 	}
-	if len(tokens) > s.maxTokens {
-		return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "semantic token limit exceeded")
+	overlap := s.maxTokens / 4
+	if overlap == 0 && s.maxTokens > 1 {
+		overlap = 1
 	}
-	scores, err := s.model.Predict(tokens)
-	if err != nil {
-		return nil, err
+	var matches []Match
+	for start := 0; start < len(tokens); {
+		end := start + s.maxTokens
+		if end > len(tokens) {
+			end = len(tokens)
+		}
+		window := tokens[start:end]
+		scores, err := s.model.Predict(window)
+		if err != nil {
+			return nil, err
+		}
+		if len(scores) != len(window) {
+			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "model score count does not match tokens")
+		}
+		labels, confidences, err := decodeBIES(scores, s.entities)
+		if err != nil {
+			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "model returned invalid BIES scores")
+		}
+		for _, finding := range semanticFindings(path, window, labels, confidences, s.entities) {
+			matches = append(matches, Match{Finding: finding, Value: text[finding.Location.Start:finding.Location.End]})
+		}
+		if end == len(tokens) {
+			break
+		}
+		start = end - overlap
 	}
-	if len(scores) != len(tokens) {
-		return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "model score count does not match tokens")
+	merged := Merge(matches)
+	findings := make([]domain.Finding, len(merged))
+	for index := range merged {
+		findings[index] = merged[index].Finding
 	}
-	labels, confidences, err := decodeBIES(scores, s.entities)
-	if err != nil {
-		return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "model returned invalid BIES scores")
-	}
-	return semanticFindings(path, tokens, labels, confidences, s.entities), nil
+	return findings, nil
 }
 
 type biesLabel struct {

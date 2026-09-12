@@ -10,6 +10,22 @@ type fixedSemanticModel []map[string]float64
 
 func (m fixedSemanticModel) Predict([]SemanticToken) ([]map[string]float64, error) { return m, nil }
 
+type nameSemanticModel struct{}
+
+func (nameSemanticModel) Predict(tokens []SemanticToken) ([]map[string]float64, error) {
+	result := make([]map[string]float64, len(tokens))
+	for index := range tokens {
+		label := "O"
+		if tokens[index].Text == "张" && index+1 < len(tokens) && tokens[index+1].Text == "三" {
+			label = "B-name"
+		} else if tokens[index].Text == "三" && index > 0 && tokens[index-1].Text == "张" {
+			label = "E-name"
+		}
+		result[index] = map[string]float64{"O": -4, "B-name": -4, "I-name": -4, "E-name": -4, "S-name": -4, label: 4}
+	}
+	return result, nil
+}
+
 func TestLocalSemanticDecodesBIESWithUTF8ByteOffsets(t *testing.T) {
 	text := "联系张三。"
 	scores := make([]map[string]float64, len([]rune(text)))
@@ -38,7 +54,7 @@ func TestBIESDecoderRejectsInvalidOnlyPath(t *testing.T) {
 	}
 }
 
-func TestLocalSemanticRejectsInvalidUTF8AndTokenOverflow(t *testing.T) {
+func TestLocalSemanticRejectsInvalidUTF8AndModelShape(t *testing.T) {
 	model := fixedSemanticModel{{"O": 1}}
 	detector, err := NewLocalSemantic(model, map[string]SemanticEntity{"name": {Category: "pii.name", Severity: domain.SeverityHigh, Action: domain.ActionRedact}}, 1)
 	if err != nil {
@@ -47,7 +63,31 @@ func TestLocalSemanticRejectsInvalidUTF8AndTokenOverflow(t *testing.T) {
 	if _, err := detector.Detect("/input", string([]byte{0xff})); err == nil {
 		t.Fatal("invalid UTF-8 was accepted")
 	}
-	if _, err := detector.Detect("/input", "ab"); err == nil {
-		t.Fatal("semantic token overflow was accepted")
+	shapeDetector, err := NewLocalSemantic(fixedSemanticModel(nil), map[string]SemanticEntity{"name": {Category: "pii.name", Severity: domain.SeverityHigh, Action: domain.ActionRedact}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shapeDetector.Detect("/input", "a"); err == nil {
+		t.Fatal("model score shape mismatch was accepted")
+	}
+}
+
+func TestLocalSemanticWindowsLongTextWithOverlap(t *testing.T) {
+	semantic, err := NewLocalSemantic(nameSemanticModel{}, map[string]SemanticEntity{"name": {Category: "pii.name", Severity: domain.SeverityHigh, Action: domain.ActionRedact}}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "abc张三def张三"
+	findings, err := semantic.Detect("/input", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("boundary entities=%+v", findings)
+	}
+	for _, finding := range findings {
+		if text[finding.Location.Start:finding.Location.End] != "张三" {
+			t.Fatalf("finding=%+v", finding)
+		}
 	}
 }
