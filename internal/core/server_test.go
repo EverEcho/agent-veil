@@ -15,12 +15,19 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/audit"
+	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
+
+type fixedDiscoverer []discovery.Detection
+
+func (f fixedDiscoverer) DetectAll(context.Context) []discovery.Detection {
+	return append([]discovery.Detection(nil), f...)
+}
 
 func TestDashboardContainsNoProtectedData(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
@@ -74,6 +81,25 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 		t.Fatalf("compatibility records=%v err=%v", records, err)
 	}
 	response.Body.Close()
+}
+
+func TestDiscoveryAPIUsesAuthenticatedInjectedInventory(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.WithDiscoverer(fixedDiscoverer{{Agent: "codex", Executable: "/bin/codex", Version: "1.2.3", Status: discovery.DetectionUnverified}})
+	request := httptest.NewRequest(http.MethodGet, "/v1/discovery", nil)
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.auth(s.getDiscovery)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var detections []discovery.Detection
+	if err := json.Unmarshal(recorder.Body.Bytes(), &detections); err != nil {
+		t.Fatal(err)
+	}
+	if len(detections) != 1 || detections[0].Agent != "codex" || detections[0].Status != discovery.DetectionUnverified {
+		t.Fatalf("detections=%+v", detections)
+	}
 }
 
 func TestSessionLifecycleAPI(t *testing.T) {

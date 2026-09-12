@@ -19,6 +19,7 @@ import (
 	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/detector"
+	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -47,6 +48,9 @@ type Server struct {
 		Recent(time.Time) ([]domain.AuditEvent, error)
 	}
 	proxySlots chan struct{}
+	discoverer interface {
+		DetectAll(context.Context) []discovery.Detection
+	}
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -55,7 +59,14 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if manager == nil || len(adminToken) < 32 {
 		return nil, errors.New("manager and an admin token of at least 32 characters are required")
 	}
-	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests)}, nil
+	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default()}, nil
+}
+
+func (s *Server) WithDiscoverer(value interface {
+	DetectAll(context.Context) []discovery.Detection
+}) *Server {
+	s.discoverer = value
+	return s
 }
 
 func (s *Server) WithProxyConcurrency(limit int) error {
@@ -131,6 +142,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
 	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
 	mux.HandleFunc("GET /v1/compatibility", s.auth(s.getCompatibility))
+	mux.HandleFunc("GET /v1/discovery", s.auth(s.getDiscovery))
 	mux.HandleFunc("POST /v1/detect", s.auth(s.testDetection))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
@@ -166,6 +178,14 @@ func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) getCompatibility(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, compatibility.Current())
+}
+
+func (s *Server) getDiscovery(w http.ResponseWriter, r *http.Request) {
+	if s.discoverer == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "DISCOVERY_UNAVAILABLE"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.discoverer.DetectAll(r.Context()))
 }
 
 func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
