@@ -60,7 +60,10 @@ func WriteState(path string, state State) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporary, path)
+	if err := os.Rename(temporary, path); err != nil {
+		return err
+	}
+	return syncStateDirectory(filepath.Dir(path))
 }
 
 func LoadState(path string) (State, error) {
@@ -79,6 +82,13 @@ func LoadState(path string) (State, error) {
 		return State{}, err
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return State{}, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return State{}, domain.NewError(domain.ErrInvalidContract, "load core state", "state file changed during validation")
+	}
 	payload, err := io.ReadAll(io.LimitReader(file, maxStateBytes+1))
 	if err != nil {
 		return State{}, err
@@ -110,7 +120,19 @@ func RemoveState(path string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return syncStateDirectory(filepath.Dir(path))
+}
+
+func syncStateDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func validateState(state State) error {

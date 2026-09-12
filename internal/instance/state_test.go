@@ -51,3 +51,28 @@ func TestCoreStateRejectsRemoteMalformedAndOversizedData(t *testing.T) {
 		}
 	}
 }
+
+func TestCoreStateRejectsUnsafeFileTypesAndPermissions(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "core.json")
+	payload := []byte(`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:43123","process_id":42,"started_at":"2026-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadState(path); err == nil {
+		t.Fatal("world-readable state file was accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(directory, "target.json")
+	if err := os.WriteFile(target, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := LoadState(path); err == nil {
+		t.Fatal("symlinked state file was accepted")
+	}
+}
