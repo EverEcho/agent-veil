@@ -29,6 +29,17 @@ func (f fixedDiscoverer) DetectAll(context.Context) []discovery.Detection {
 	return append([]discovery.Detection(nil), f...)
 }
 
+type fixedInspectableDiscoverer struct {
+	manifest domain.AgentManifest
+}
+
+func (f fixedInspectableDiscoverer) DetectAll(context.Context) []discovery.Detection {
+	return []discovery.Detection{{Agent: f.manifest.Agent.Kind, Version: f.manifest.Agent.Version}}
+}
+func (f fixedInspectableDiscoverer) Inspect(context.Context, string) (domain.AgentManifest, error) {
+	return f.manifest, nil
+}
+
 func TestDashboardContainsNoProtectedData(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -37,7 +48,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "01234567890123456789012345678901") {
 		t.Fatal("dashboard leaked management data")
 	}
-	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "unknown version"} {
+	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
@@ -99,6 +110,30 @@ func TestDiscoveryAPIUsesAuthenticatedInjectedInventory(t *testing.T) {
 	}
 	if len(detections) != 1 || detections[0].Agent != "codex" || detections[0].Status != discovery.DetectionUnverified {
 		t.Fatalf("detections=%+v", detections)
+	}
+}
+
+func TestInspectionPreviewReturnsManifestAndTruthfulCoverage(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "openclaw", Kind: "openclaw", Version: "9.9.9", Mode: domain.ModeManaged, Metadata: map[string]string{"compatibility": "unverified"}}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: false, Required: true}}}
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {Observable: true}}})
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.WithRegistry(reg).WithDiscoverer(fixedInspectableDiscoverer{manifest: manifest})
+	request := httptest.NewRequest(http.MethodGet, "/v1/discovery/openclaw", nil)
+	request.SetPathValue("id", "openclaw")
+	recorder := httptest.NewRecorder()
+	s.getInspection(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var result struct {
+		Manifest domain.AgentManifest  `json:"manifest"`
+		Plan     domain.ProtectionPlan `json:"protection_plan"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Manifest.Agent.Metadata["compatibility"] != "unverified" || result.Plan.Summary.Observed != 1 || result.Plan.Summary.Protected != 0 || len(reg.List()) != 0 {
+		t.Fatalf("preview mutated registry or overstated coverage: %+v", result)
 	}
 }
 

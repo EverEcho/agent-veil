@@ -37,6 +37,10 @@ func New(options planner.Options) *Registry {
 	return &Registry{entries: map[string]Entry{}, capabilities: options, now: time.Now}
 }
 
+func (r *Registry) Preview(manifest domain.AgentManifest) (domain.ProtectionPlan, error) {
+	return planner.Build(manifest, r.capabilities)
+}
+
 // Reconcile atomically replaces a registration only after its manifest and plan
 // validate. A failed change marks the agent blocked instead of retaining a stale
 // "protected" claim.

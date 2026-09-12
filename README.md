@@ -21,6 +21,8 @@ conservatively than discovered traffic.
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
 - persistent policy and privacy-safe audit stores with retention;
+- an authenticated local dashboard for discovery, risk-only surface inspection,
+  coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
 - atomic Native/Managed registry reconciliation plus revision-aware monitoring
