@@ -22,6 +22,7 @@ const (
 	ErrInteractionRequired  ErrorCode = "INTERACTION_REQUIRED"
 	ErrCoreAlreadyRunning   ErrorCode = "CORE_ALREADY_RUNNING"
 	ErrIntegrationExpired   ErrorCode = "INTEGRATION_EXPIRED"
+	ErrUnexpectedEgress     ErrorCode = "UNEXPECTED_EGRESS"
 )
 
 type VeilError struct {

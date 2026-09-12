@@ -92,3 +92,23 @@ func TestReadProcStatRejectsPIDMismatchAndOversizedRecord(t *testing.T) {
 		t.Fatal("oversized stat record was accepted")
 	}
 }
+
+func TestLinuxProcessIdentityBindsPIDToKernelStartTime(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixture(t, root, 42, 1, "worker", 777)
+	identity, err := LinuxProcessIdentity(root, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ProcessID != 42 || identity.StartedAt != 777 {
+		t.Fatalf("identity=%+v", identity)
+	}
+	for _, test := range []struct {
+		root string
+		pid  int
+	}{{"relative", 42}, {root, 0}} {
+		if identity, err := LinuxProcessIdentity(test.root, test.pid); err == nil || identity != (ProcessIdentity{}) {
+			t.Fatalf("invalid identity request accepted: identity=%+v err=%v", identity, err)
+		}
+	}
+}

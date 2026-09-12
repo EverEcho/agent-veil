@@ -24,6 +24,22 @@ type LinuxProcCollector struct {
 	MaxEntries   int
 }
 
+// LinuxProcessIdentity reads the kernel start time for a PID so callers can
+// bind later observations to this exact process rather than to a reusable PID.
+func LinuxProcessIdentity(procRoot string, processID int) (ProcessIdentity, error) {
+	if procRoot == "" {
+		procRoot = "/proc"
+	}
+	if !filepath.IsAbs(procRoot) || processID <= 0 {
+		return ProcessIdentity{}, domain.NewError(domain.ErrInvalidContract, "read process identity", "absolute proc root and positive process id are required")
+	}
+	process, err := readProcStat(filepath.Join(procRoot, strconv.Itoa(processID), "stat"), processID)
+	if err != nil {
+		return ProcessIdentity{}, err
+	}
+	return process.ProcessIdentity, nil
+}
+
 func (c LinuxProcCollector) Snapshot() ([]Process, error) {
 	root := c.Root
 	if root == "" {

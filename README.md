@@ -59,8 +59,10 @@ conservatively than discovered traffic.
   trust-store file adapter; bounded Linux process-tree and TCP/connected-UDP
   egress collection plus fail-closed, serialized process-egress assessment and
   watch primitives. Exact loopback hops are reported as `Local`, never as
-  content-protected. These are not yet a complete transparent interception
-  product or OS enforcement layer.
+  content-protected. Linux protected launches terminate their isolated process
+  group after unexpected observed egress or an observation failure. This is not
+  pre-connect blocking and these components are not yet a complete transparent
+  interception product or OS enforcement layer.
 
 ## Commands
 

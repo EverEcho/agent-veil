@@ -161,11 +161,27 @@ func runProtected(ctx context.Context, name string, childArgs []string) (resultE
 	configureProtectedCommand(command)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
-	runErr := command.Run()
+	if err := command.Start(); err != nil {
+		cancelChild()
+		<-leaseResult
+		return err
+	}
+	egressResult, err := startProtectedEgressWatch(childContext, cancelChild, command.Process.Pid, endpoint)
+	if err != nil {
+		cancelChild()
+		_ = command.Wait()
+		<-leaseResult
+		return fmt.Errorf("start process egress observation: %w", err)
+	}
+	runErr := command.Wait()
 	cancelChild()
 	leaseErr := <-leaseResult
+	egressErr := <-egressResult
 	if leaseErr != nil {
 		return leaseErr
+	}
+	if egressErr != nil {
+		return egressErr
 	}
 	return runErr
 }
