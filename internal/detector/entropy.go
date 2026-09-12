@@ -11,17 +11,17 @@ const entropyContextBytes = 48
 
 var (
 	entropyCandidatePattern = regexp.MustCompile(`[A-Za-z0-9_~+./=-]{20,}`)
-	entropyContextPattern   = regexp.MustCompile(`(?i)(?:api[_-]?key|client[_-]?secret|access[_-]?token|secret|token|password|credential|authorization|auth)`)
+	entropyContextTerms     = []string{"api_key", "api-key", "apikey", "client_secret", "client-secret", "clientsecret", "access_token", "access-token", "accesstoken", "secret", "token", "password", "credential", "authorization", "auth"}
 )
 
 func scanEntropyCandidates(path, text string) []Match {
-	if !entropyContextPattern.MatchString(text) {
+	if !hasEntropyContext(text) {
 		return nil
 	}
 	var matches []Match
 	for _, location := range entropyCandidatePattern.FindAllStringIndex(text, -1) {
 		value := text[location[0]:location[1]]
-		if strings.HasPrefix(value, "VEIL_") || entropyContextPattern.MatchString(value) || !hasCharacterDiversity(value) || !highEntropy(value) {
+		if strings.HasPrefix(value, "VEIL_") || hasEntropyContext(value) || !hasCharacterDiversity(value) || !highEntropy(value) {
 			continue
 		}
 		contextStart := location[0] - entropyContextBytes
@@ -33,7 +33,7 @@ func scanEntropyCandidates(path, text string) []Match {
 			contextEnd = len(text)
 		}
 		context := text[contextStart:location[0]] + text[location[1]:contextEnd]
-		if !entropyContextPattern.MatchString(context) {
+		if !hasEntropyContext(context) {
 			continue
 		}
 		matches = append(matches, Match{
@@ -50,6 +50,16 @@ func scanEntropyCandidates(path, text string) []Match {
 		})
 	}
 	return matches
+}
+
+func hasEntropyContext(value string) bool {
+	value = strings.ToLower(value)
+	for _, term := range entropyContextTerms {
+		if strings.Contains(value, term) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasCharacterDiversity(value string) bool {

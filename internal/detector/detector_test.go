@@ -1,6 +1,9 @@
 package detector
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidatedPIIAndSecrets(t *testing.T) {
 	s := NewDefault()
@@ -41,6 +44,13 @@ func TestContextualSecretsPreserveSyntax(t *testing.T) {
 	}
 }
 
+func TestCaseInsensitiveBearerPrefixRemainsDetectable(t *testing.T) {
+	matches := scan(t, NewDefault(), "authorization: bEaReR Abcdefghijklmnop123456")
+	if len(matches) != 1 || matches[0].Finding.Category != "secret.bearer" || matches[0].Value != "Abcdefghijklmnop123456" {
+		t.Fatalf("matches=%+v", matches)
+	}
+}
+
 func TestEncryptedAndDSAPrivateKeysAreBlocked(t *testing.T) {
 	for _, marker := range []string{"-----BEGIN ENCRYPTED PRIVATE KEY-----", "-----BEGIN DSA PRIVATE KEY-----"} {
 		matches := scan(t, NewDefault(), marker)
@@ -54,9 +64,10 @@ func TestFeatureAndPrefixPrefilterSkipsImpossibleRegexes(t *testing.T) {
 	scanner := NewDefault()
 	text := "ordinary prose without structured identifiers"
 	features := scanFeatures(text)
+	prefixCandidates := scanner.scanPrefixCandidates(text)
 	candidates := 0
 	for _, rule := range scanner.rules {
-		if scanner.isCandidate(rule, text, features) {
+		if scanner.isCandidate(rule, features, prefixCandidates) {
 			candidates++
 		}
 	}
@@ -141,4 +152,17 @@ func scan(t *testing.T, scanner *Scanner, text string) []Match {
 		t.Fatal(err)
 	}
 	return matches
+}
+
+func BenchmarkScannerOrdinaryText(b *testing.B) {
+	scanner := NewDefault()
+	text := strings.Repeat("ordinary prose without structured identifiers\n", 1024)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(text)))
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := scanner.ScanChecked("/benchmark", text); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

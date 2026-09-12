@@ -32,7 +32,9 @@ type Semantic interface {
 type Scanner struct {
 	rules            []rule
 	requiredFeatures map[string]featureSet
-	prefixes         map[string][]string
+	requiredAny      map[string]featureSet
+	prefixIndex      [256][]prefixCandidate
+	prefixRules      map[string]struct{}
 	semantic         Semantic
 	semanticRequired bool
 }
@@ -78,6 +80,9 @@ func NewDefault() *Scanner {
 		"secret.aws_secret_key": featureUnderscore | featureEqual,
 		"secret.assignment":     featureEqual,
 		"pii.email":             featureAt | featureDot,
+		"pii.cn.phone":          featureDigit,
+		"pii.cn.landline":       featureDigit,
+		"pii.cn.id_card":        featureDigit,
 		"pii.us.ssn":            featureDash | featureDigit,
 		"pii.iban":              featureDigit,
 		"pii.bank_card":         featureDigit,
@@ -85,7 +90,10 @@ func NewDefault() *Scanner {
 		"pii.ipv6":              featureColon,
 		"pii.mac":               featureColon,
 	}
-	scanner.prefixes = map[string][]string{
+	scanner.requiredAny = map[string]featureSet{
+		"pii.cn.uscc": featureDigit | featureUpper,
+	}
+	prefixes := map[string][]string{
 		"secret.private_key":    {"-----BEGIN "},
 		"secret.github_pat":     {"ghp_", "github_pat_"},
 		"secret.openai_key":     {"sk-"},
@@ -98,7 +106,17 @@ func NewDefault() *Scanner {
 		"secret.jwt":            {"eyJ"},
 		"secret.database_url":   {"postgres://", "postgresql://", "mysql://", "mongodb://", "mongodb+srv://", "redis://"},
 	}
+	foldedPrefixes := map[string][]string{
+		"secret.bearer": {"bearer"},
+	}
+	scanner.prefixIndex, scanner.prefixRules = buildPrefixIndex(prefixes, foldedPrefixes)
 	return scanner
+}
+
+type prefixCandidate struct {
+	ruleID   string
+	value    string
+	foldCase bool
 }
 
 type featureSet uint16
@@ -112,6 +130,7 @@ const (
 	featureSlash
 	featureEqual
 	featureColon
+	featureUpper
 )
 
 func (s *Scanner) WithSemantic(semantic Semantic, required bool) *Scanner {
@@ -128,8 +147,9 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 		}
 	}()
 	features := scanFeatures(text)
+	prefixCandidates := s.scanPrefixCandidates(text)
 	for _, rule := range s.rules {
-		if !s.isCandidate(rule, text, features) {
+		if !s.isCandidate(rule, features, prefixCandidates) {
 			continue
 		}
 		for _, indices := range rule.pattern.FindAllStringSubmatchIndex(text, -1) {
@@ -168,21 +188,66 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 	return Merge(matches), nil
 }
 
-func (s *Scanner) isCandidate(candidate rule, text string, features featureSet) bool {
+func (s *Scanner) isCandidate(candidate rule, features featureSet, prefixCandidates map[string]struct{}) bool {
 	required := s.requiredFeatures[candidate.id]
 	if features&required != required {
 		return false
 	}
-	prefixes := s.prefixes[candidate.id]
-	if len(prefixes) == 0 {
+	if required := s.requiredAny[candidate.id]; required != 0 && features&required == 0 {
+		return false
+	}
+	if _, indexed := prefixCandidates[candidate.id]; indexed {
 		return true
 	}
-	for _, prefix := range prefixes {
-		if strings.Contains(text, prefix) {
-			return true
+	_, indexed := s.prefixRules[candidate.id]
+	return !indexed
+}
+
+func buildPrefixIndex(prefixes, foldedPrefixes map[string][]string) ([256][]prefixCandidate, map[string]struct{}) {
+	var index [256][]prefixCandidate
+	rules := make(map[string]struct{}, len(prefixes)+len(foldedPrefixes))
+	for ruleID, values := range prefixes {
+		for _, value := range values {
+			if value == "" {
+				continue
+			}
+			index[value[0]] = append(index[value[0]], prefixCandidate{ruleID: ruleID, value: value})
+			rules[ruleID] = struct{}{}
 		}
 	}
-	return false
+	for ruleID, values := range foldedPrefixes {
+		for _, value := range values {
+			if value == "" {
+				continue
+			}
+			candidate := prefixCandidate{ruleID: ruleID, value: value, foldCase: true}
+			index[value[0]] = append(index[value[0]], candidate)
+			if value[0] >= 'a' && value[0] <= 'z' {
+				index[value[0]-'a'+'A'] = append(index[value[0]-'a'+'A'], candidate)
+			}
+			rules[ruleID] = struct{}{}
+		}
+	}
+	return index, rules
+}
+
+func (s *Scanner) scanPrefixCandidates(text string) map[string]struct{} {
+	matches := make(map[string]struct{})
+	for offset := 0; offset < len(text); offset++ {
+		for _, candidate := range s.prefixIndex[text[offset]] {
+			if _, matched := matches[candidate.ruleID]; matched {
+				continue
+			}
+			if len(text)-offset < len(candidate.value) {
+				continue
+			}
+			value := text[offset : offset+len(candidate.value)]
+			if value == candidate.value || candidate.foldCase && strings.EqualFold(value, candidate.value) {
+				matches[candidate.ruleID] = struct{}{}
+			}
+		}
+	}
+	return matches
 }
 
 func scanFeatures(text string) featureSet {
@@ -205,6 +270,8 @@ func scanFeatures(text string) featureSet {
 			result |= featureEqual
 		case character == ':':
 			result |= featureColon
+		case character >= 'A' && character <= 'Z':
+			result |= featureUpper
 		}
 	}
 	return result
