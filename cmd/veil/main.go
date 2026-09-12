@@ -75,7 +75,9 @@ func run(args []string) error {
 		if len(childArgs) > 0 && childArgs[0] == "--" {
 			childArgs = childArgs[1:]
 		}
-		return runProtected(context.Background(), args[1], childArgs)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runProtected(ctx, args[1], childArgs)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -138,6 +140,7 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	leaseResult := make(chan error, 1)
 	go maintainIntegrationLease(childContext, cancelChild, endpoint, adminToken, manifest.Agent.ID, registered.Generation, protectedLaunchHeartbeat, protectedLaunchLease, leaseResult)
 	command := exec.CommandContext(childContext, launch.Executable, args...)
+	configureProtectedCommand(command)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
 	runErr := command.Run()
