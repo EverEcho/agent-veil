@@ -185,6 +185,58 @@ func TestStreamingResponseRestoresPlaceholder(t *testing.T) {
 	}
 }
 
+func TestStreamingResponseFlushesSafeEventsBeforeProviderCloses(t *testing.T) {
+	providerReady := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 7; i++ {
+			event, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": strings.Repeat(string(rune('a'+i)), 100)})
+			_, _ = w.Write([]byte("data: " + string(event) + "\n\n"))
+		}
+		w.(http.Flusher).Flush()
+		close(providerReady)
+		<-releaseProvider
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 8192, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	responses := make(chan *http.Response, 1)
+	errors := make(chan error, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			errors <- err
+			return
+		}
+		responses <- response
+	}()
+	<-providerReady
+	select {
+	case err := <-errors:
+		close(releaseProvider)
+		t.Fatal(err)
+	case response := <-responses:
+		close(releaseProvider)
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if !strings.Contains(string(body), strings.Repeat("a", 100)) {
+			t.Fatalf("safe prefix missing: %s", body)
+		}
+	case <-time.After(time.Second):
+		close(releaseProvider)
+		t.Fatal("proxy buffered the stream until provider completion")
+	}
+}
+
 func TestRedirectCannotEscapeCurrentRoute(t *testing.T) {
 	evilCalls := 0
 	evil := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { evilCalls++ }))

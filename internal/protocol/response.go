@@ -57,6 +57,10 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 	if err := decoder.Decode(&root); err != nil {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data is not valid JSON")
 	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data contains trailing JSON")
+	}
 	document := &Document{Protocol: protocol, root: root}
 	switch protocol {
 	case domain.ProtocolOpenAIChat:

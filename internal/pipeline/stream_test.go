@@ -38,3 +38,44 @@ func TestSSEPlaceholderCrossesEventsWithoutTouchingSignature(t *testing.T) {
 		t.Fatalf("combined=%q stream=%s", combined, result)
 	}
 }
+
+func TestSSEProcessorEmitsSafeEventsBeforeClose(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	processor, err := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, 4096, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := func(value string) []byte {
+		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": value})
+		return []byte("data: " + string(payload) + "\n\n")
+	}
+	if output, err := processor.Push(event(strings.Repeat("a", 100))); err != nil || len(output) != 0 {
+		t.Fatalf("first push output=%q err=%v", output, err)
+	}
+	if output, err := processor.Push(event(strings.Repeat("b", 100))); err != nil || len(output) != 0 {
+		t.Fatalf("second push output=%q err=%v", output, err)
+	}
+	output, err := processor.Push(event(strings.Repeat("c", 100)))
+	if err != nil || !strings.Contains(string(output), strings.Repeat("a", 100)) || strings.Contains(string(output), strings.Repeat("b", 100)) {
+		t.Fatalf("safe prefix was not emitted incrementally: %q %v", output, err)
+	}
+	tail, err := processor.Close()
+	if err != nil || !strings.Contains(string(tail), strings.Repeat("b", 100)) || !strings.Contains(string(tail), strings.Repeat("c", 100)) {
+		t.Fatalf("tail=%q err=%v", tail, err)
+	}
+}
+
+func TestSSEProcessorBlocksCredentialSplitAcrossEvents(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	processor, _ := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, 4096, 128)
+	event := func(value string) []byte {
+		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": value})
+		return []byte("data: " + string(payload) + "\n\n")
+	}
+	if output, err := processor.Push(event("leak ghp_abcdefghij")); err != nil || len(output) != 0 {
+		t.Fatalf("first fragment output=%q err=%v", output, err)
+	}
+	if output, err := processor.Push(event("klmnopqrstuvwxyz" + strings.Repeat("x", 200))); err == nil || len(output) != 0 {
+		t.Fatalf("split credential was emitted: %q err=%v", output, err)
+	}
+}

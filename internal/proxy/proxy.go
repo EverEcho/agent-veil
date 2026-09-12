@@ -207,21 +207,82 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) error {
-	body, err := readLimited(response.Body, maxBytes)
-	if err != nil {
-		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
-		return err
+	maxEventBytes := int64(1 << 20)
+	if maxBytes < maxEventBytes {
+		maxEventBytes = maxBytes
 	}
-	processed, err := pipeline.ProcessSSE(protocolType, body, h.scanner, vault)
+	processor, err := pipeline.NewSSEProcessor(protocolType, h.scanner, vault, int(maxEventBytes), 512)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
 		return err
 	}
-	copyHeaders(w.Header(), response.Header)
-	w.Header().Del("Content-Length")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(processed)
+	wroteHeader := false
+	writeChunk := func(chunk []byte) error {
+		if len(chunk) == 0 {
+			return nil
+		}
+		if !wroteHeader {
+			copyHeaders(w.Header(), response.Header)
+			w.Header().Del("Content-Length")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(response.StatusCode)
+			wroteHeader = true
+		}
+		if _, err := w.Write(chunk); err != nil {
+			return err
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return nil
+	}
+	failBeforeWrite := func(status int, code string) {
+		if !wroteHeader {
+			fail(w, status, code)
+		}
+	}
+	buffer := make([]byte, 32<<10)
+	var total int64
+	for {
+		read, readErr := response.Body.Read(buffer)
+		if read > 0 {
+			total += int64(read)
+			if total > maxBytes {
+				err := domain.NewError(domain.ErrInvalidContract, "read stream", "response body limit exceeded")
+				failBeforeWrite(http.StatusBadGateway, "RESPONSE_TOO_LARGE")
+				return err
+			}
+			processed, processErr := processor.Push(buffer[:read])
+			if processErr != nil {
+				failBeforeWrite(http.StatusForbidden, errorCode(processErr))
+				return processErr
+			}
+			if err := writeChunk(processed); err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			failBeforeWrite(http.StatusBadGateway, "UPSTREAM_FAILURE")
+			return readErr
+		}
+	}
+	tail, err := processor.Close()
+	if err != nil {
+		failBeforeWrite(http.StatusForbidden, errorCode(err))
+		return err
+	}
+	if err := writeChunk(tail); err != nil {
+		return err
+	}
+	if !wroteHeader {
+		copyHeaders(w.Header(), response.Header)
+		w.Header().Del("Content-Length")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(response.StatusCode)
+	}
 	return nil
 }
 

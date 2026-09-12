@@ -115,6 +115,12 @@ func TestExcessiveContentNestingFailsClosed(t *testing.T) {
 	}
 }
 
+func TestStreamEventRejectsTrailingJSON(t *testing.T) {
+	if _, err := ParseStreamEvent(domain.ProtocolOpenAIResponses, []byte(`{"delta":"safe"}{"delta":"ignored"}`)); err == nil {
+		t.Fatal("stream event accepted trailing JSON")
+	}
+}
+
 func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
 	f.Add([]byte(`{"input":"hello"}`))
 	f.Add([]byte(`{"input":"hello"}{"second":true}`))
