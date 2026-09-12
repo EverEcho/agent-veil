@@ -167,7 +167,22 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			config.Observed = append(config.Observed, openCodeUnknownSlot("inline-config-overrides", "OPENCODE_CONFIG_CONTENT may override file configuration"))
 		}
 		config.Observed = append(config.Observed, openCodeUnknownSlot("workspace-config-overrides", "project and managed configuration precedence is not resolved"))
-	case "cursor", "zed", "cline":
+	case "zed":
+		config.ConfigSource = filepath.Join(home, ".config", "zed", "settings.json")
+		if value, ok := d.System.LookupEnv("XDG_CONFIG_HOME"); ok && strings.TrimSpace(value) != "" {
+			config.ConfigSource = filepath.Join(strings.TrimSpace(value), "zed", "settings.json")
+		}
+		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
+			config.Observed, config.LocalMCP, err = integration.ParseZedConfig(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Observed = append(config.Observed, zedUnknownSlot("configuration-file", "configured file could not be inspected"))
+		}
+		config.Observed = append(config.Observed, zedUnknownSlot("dynamic-model-selection", "keychain providers and runtime model selection are not statically resolved"))
+		config.Observed = append(config.Observed, zedUnknownSlot("workspace-config-overrides", "project .zed/settings.json configuration is not resolved"))
+	case "cursor", "cline":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 	default:
@@ -178,6 +193,10 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 
 func openCodeUnknownSlot(id, reason string) integration.Slot {
 	return integration.Slot{ID: id, Name: "Unresolved OpenCode egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
+}
+
+func zedUnknownSlot(id, reason string) integration.Slot {
+	return integration.Slot{ID: id, Name: "Unresolved Zed egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
 }
 
 func containsTOMLKey(content []byte, key string) bool {

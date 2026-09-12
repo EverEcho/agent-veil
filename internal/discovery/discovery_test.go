@@ -124,7 +124,7 @@ func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
 }
 
 func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
-	for _, name := range []string{"cursor", "zed", "cline"} {
+	for _, name := range []string{"cursor", "cline"} {
 		d := Discoverer{System: fakeSystem{version: name + " 9.9.9"}, Verified: map[string]map[string]struct{}{}}
 		manifest, err := d.Inspect(context.Background(), name)
 		if err != nil {
@@ -133,6 +133,30 @@ func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
 		if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Type != domain.SurfaceUnknown || manifest.Agent.Metadata["compatibility"] != "unverified" {
 			t.Fatalf("%s manifest=%+v", name, manifest)
 		}
+	}
+}
+
+func TestZedDiscoveryEnumeratesExplicitSurfacesAndUnknownDynamicRoutes(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "Zed 1.2.3", config: `{
+  "language_models": { "openai_compatible": { "corp": { "api_url": "https://models.example/v1", "available_models": [{ "name": "main" }], "custom_headers": { "Authorization": "secret-value" } } } },
+  "context_servers": { "local": { "command": "server" }, "remote": { "url": "https://mcp.example/mcp", "headers": { "Authorization": "secret-value" } } }
+}`}, Verified: map[string]map[string]struct{}{"zed": {"1.2.3": {}}}}
+	manifest, err := d.Inspect(context.Background(), "zed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 5 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	counts := map[domain.SurfaceType]int{}
+	for _, surface := range manifest.Surfaces {
+		counts[surface.Type]++
+		if surface.Rewritable || strings.Contains(surface.Name, "secret-value") || strings.Contains(surface.ConfigSource, "secret-value") {
+			t.Fatalf("surface overstated or retained credentials: %+v", surface)
+		}
+	}
+	if counts[domain.SurfaceModelPrimary] != 1 || counts[domain.SurfaceMCPHTTP] != 1 || counts[domain.SurfaceMCPStdio] != 1 || counts[domain.SurfaceUnknown] != 2 {
+		t.Fatalf("surface counts=%+v manifest=%+v", counts, manifest.Surfaces)
 	}
 }
 

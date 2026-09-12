@@ -44,6 +44,9 @@ conservatively than discovered traffic.
 - conservative OpenCode JSONC enumeration of primary/small models and local or
   remote MCP surfaces, with inline, project, and managed override gaps reported
   explicitly; no OpenCode release is yet marked as verified or protected;
+- conservative Zed JSONC enumeration of explicit custom model endpoints, local
+  and remote MCP servers, and ACP agent processes, while dynamic/keychain and
+  project-level routes remain explicit unknown risks;
 - scoped transparent-mode CA and process-egress assessment primitives. These are
   not yet a complete transparent interception product.
 
@@ -68,6 +71,7 @@ go run ./cmd/veil inspect claude
 go run ./cmd/veil inspect hermes
 go run ./cmd/veil inspect openclaw
 go run ./cmd/veil inspect opencode
+go run ./cmd/veil inspect zed
 go run ./cmd/veil run codex -- --help
 ```
 
