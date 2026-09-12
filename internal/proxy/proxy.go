@@ -30,9 +30,13 @@ type Route struct {
 	MaxRequestBytes, MaxResponseBytes int64
 	VaultLimits                       redactor.Limits
 }
+type configuredRoute struct {
+	Route
+	allowlist *security.UpstreamAllowlist
+}
 type Handler struct {
 	sessions *session.Manager
-	routes   map[string]Route
+	routes   map[string]configuredRoute
 	client   *http.Client
 	scanner  *detector.Scanner
 }
@@ -41,7 +45,7 @@ func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) 
 	if sessions == nil || client == nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "session manager and HTTP client are required")
 	}
-	h := &Handler{sessions: sessions, routes: make(map[string]Route, len(routes)), client: client, scanner: detector.NewDefault()}
+	h := &Handler{sessions: sessions, routes: make(map[string]configuredRoute, len(routes)), client: client, scanner: detector.NewDefault()}
 	for _, route := range routes {
 		if route.ID == "" || route.Upstream == nil || route.MaxRequestBytes <= 0 || route.MaxResponseBytes <= 0 {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "route is incomplete")
@@ -67,7 +71,7 @@ func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) 
 		if _, exists := h.routes[route.ID]; exists {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "duplicate route id")
 		}
-		h.routes[route.ID] = route
+		h.routes[route.ID] = configuredRoute{Route: route, allowlist: allowlist}
 	}
 	return h, nil
 }
@@ -120,7 +124,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamRequest.Header.Del(HeaderRouteToken)
 	upstreamRequest.Header.Del("Content-Encoding")
 	upstreamRequest.ContentLength = int64(len(processed.Body))
-	response, err := h.client.Do(upstreamRequest)
+	client := *h.client
+	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
+	response, err := client.Do(upstreamRequest)
 	if err != nil {
 		fail(w, http.StatusBadGateway, "UPSTREAM_FAILURE")
 		return
