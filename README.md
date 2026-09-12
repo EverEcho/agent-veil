@@ -20,7 +20,8 @@ conservatively than discovered traffic.
   policies, session-stable placeholders, and request-scoped bounded Vaults;
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
-- persistent policy and privacy-safe audit stores with retention;
+- persistent policy and privacy-safe audit stores with retention, plus signed,
+  versioned rule-pack and semantic-model artifact stores with rollback;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
   coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
 - capability-based coverage planning that cannot label incomplete inspection as
