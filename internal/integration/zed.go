@@ -54,7 +54,7 @@ func ParseZedConfig(content []byte) ([]Slot, []string, error) {
 	if len(content) == 0 || len(content) > maxZedConfigBytes {
 		return nil, nil, zedConfigError("configuration is empty or too large")
 	}
-	cleaned, err := stripJSON5Comments(content)
+	cleaned, err := validateJSONC(content)
 	if err != nil {
 		return nil, nil, zedConfigError("configuration is invalid JSONC")
 	}

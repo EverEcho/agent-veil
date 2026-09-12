@@ -144,7 +144,7 @@ func parseClineJSON(content []byte, destination any, kind string) error {
 	if len(content) == 0 || len(content) > maxClineConfigBytes {
 		return clineConfigError(kind + " configuration is empty or too large")
 	}
-	cleaned, err := stripJSON5Comments(content)
+	cleaned, err := validateJSONC(content)
 	if err != nil {
 		return clineConfigError(kind + " configuration is invalid JSON")
 	}

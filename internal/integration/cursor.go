@@ -72,7 +72,7 @@ func parseCursorJSON(content []byte, destination any) error {
 	if len(content) == 0 || len(content) > maxCursorConfigBytes {
 		return cursorConfigError("configuration is empty or too large")
 	}
-	cleaned, err := stripJSON5Comments(content)
+	cleaned, err := validateJSONC(content)
 	if err != nil {
 		return cursorConfigError("configuration is invalid JSON")
 	}
