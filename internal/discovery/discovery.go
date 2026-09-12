@@ -216,8 +216,18 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		}
 		config.Observed = append(config.Observed, clineUnknownSlot("host-and-workspace-overrides", "IDE host and project configuration are not resolved"))
 	case "cursor":
-		config.ConfigSource = "unsupported-versioned-config"
-		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
+		config.ConfigSource = filepath.Join(home, ".cursor", "mcp.json")
+		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
+			config.Observed, config.LocalMCP, err = integration.ParseCursorMCP(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Observed = append(config.Observed, cursorUnknownSlot("global-mcp-configuration", "global MCP settings could not be inspected"))
+		}
+		config.Observed = append(config.Observed, cursorUnknownSlot("model-egress", "Cursor model and specialized feature backends are not statically resolved"))
+		config.Observed = append(config.Observed, cursorUnknownSlot("workspace-mcp-overrides", "project and nested .cursor/mcp.json configuration is not resolved"))
+		config.Observed = append(config.Observed, cursorUnknownSlot("dynamic-mcp-registrations", "extension API MCP registrations are not statically resolved"))
 	default:
 		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "agent has no integration")
 	}
@@ -234,6 +244,10 @@ func zedUnknownSlot(id, reason string) integration.Slot {
 
 func clineUnknownSlot(id, reason string) integration.Slot {
 	return integration.Slot{ID: id, Name: "Unresolved Cline egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
+}
+
+func cursorUnknownSlot(id, reason string) integration.Slot {
+	return integration.Slot{ID: id, Name: "Unresolved Cursor egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
 }
 
 func containsTOMLKey(content []byte, key string) bool {

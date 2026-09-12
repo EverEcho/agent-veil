@@ -50,6 +50,9 @@ conservatively than discovered traffic.
 - conservative Cline CLI enumeration across its provider and MCP stores,
   including legacy SSE versus Streamable HTTP, while IDE-host and workspace
   configuration remain explicit unknown risks;
+- conservative Cursor global MCP enumeration, with ambiguous remote transports,
+  project/nested MCP, extension registrations, and closed model backends kept as
+  explicit unknown risks;
 - scoped transparent-mode CA and process-egress assessment primitives. These are
   not yet a complete transparent interception product.
 
@@ -76,6 +79,7 @@ go run ./cmd/veil inspect openclaw
 go run ./cmd/veil inspect opencode
 go run ./cmd/veil inspect zed
 go run ./cmd/veil inspect cline
+go run ./cmd/veil inspect cursor
 go run ./cmd/veil run codex -- --help
 ```
 

@@ -129,19 +129,6 @@ func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
 	}
 }
 
-func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
-	for _, name := range []string{"cursor"} {
-		d := Discoverer{System: fakeSystem{version: name + " 9.9.9"}, Verified: map[string]map[string]struct{}{}}
-		manifest, err := d.Inspect(context.Background(), name)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Type != domain.SurfaceUnknown || manifest.Agent.Metadata["compatibility"] != "unverified" {
-			t.Fatalf("%s manifest=%+v", name, manifest)
-		}
-	}
-}
-
 func TestClineDiscoveryCombinesProviderAndMCPStoresConservatively(t *testing.T) {
 	dataDir := "/home/test/.cline/data"
 	d := Discoverer{System: fakeSystem{version: "cline 3.0.21", files: map[string]string{
@@ -163,6 +150,32 @@ func TestClineDiscoveryCombinesProviderAndMCPStoresConservatively(t *testing.T) 
 		}
 	}
 	if counts[domain.SurfaceModelPrimary] != 1 || counts[domain.SurfaceMCPHTTP] != 1 || counts[domain.SurfaceMCPStdio] != 1 || counts[domain.SurfaceUnknown] != 1 {
+		t.Fatalf("surface counts=%+v", counts)
+	}
+}
+
+func TestCursorDiscoveryEnumeratesGlobalMCPAndKeepsOtherRoutesUnknown(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "Cursor 3.19.19", config: `{
+  "mcpServers": {
+    "local": { "command": "server", "env": { "TOKEN": "secret-value" } },
+    "remote": { "type": "streamableHttp", "url": "https://mcp.example/mcp", "headers": { "Authorization": "secret-value" } }
+  }
+}`}, Verified: map[string]map[string]struct{}{"cursor": {"3.19.19": {}}}}
+	manifest, err := d.Inspect(context.Background(), "cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 5 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	counts := map[domain.SurfaceType]int{}
+	for _, surface := range manifest.Surfaces {
+		counts[surface.Type]++
+		if surface.Rewritable || strings.Contains(surface.Name, "secret-value") || strings.Contains(surface.ConfigSource, "secret-value") {
+			t.Fatalf("surface overstated or retained credentials: %+v", surface)
+		}
+	}
+	if counts[domain.SurfaceMCPHTTP] != 1 || counts[domain.SurfaceMCPStdio] != 1 || counts[domain.SurfaceUnknown] != 3 {
 		t.Fatalf("surface counts=%+v", counts)
 	}
 }
