@@ -1,0 +1,60 @@
+package protocol
+
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/agentveil/agentveil/internal/domain"
+)
+
+func TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip(t *testing.T) {
+	tests := []struct {
+		endpoint, body string
+		wantFields     int
+		protected      string
+	}{
+		{"/v1/chat/completions", `{"messages":[{"role":"user","content":"secret"},{"role":"assistant","tool_calls":[{"function":{"name":"x","arguments":"{\"token\":\"secret\"}"}}]}],"model":"gpt"}`, 2, ""},
+		{"/v1/responses", `{"instructions":"secret","input":[{"type":"function_call","arguments":"secret","signature":"do-not-scan"}],"model":"gpt"}`, 2, "do-not-scan"},
+		{"/v1/messages", `{"system":"secret","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"do-not-scan","signature":"signed"},{"type":"tool_use","input":{"token":"secret"}}]}]}`, 2, "do-not-scan"},
+	}
+	for _, test := range tests {
+		document, err := Parse(test.endpoint, "application/json; charset=utf-8", "", []byte(test.body))
+		if err != nil {
+			t.Fatalf("%s: %v", test.endpoint, err)
+		}
+		if len(document.Fields) != test.wantFields {
+			t.Fatalf("%s fields=%+v", test.endpoint, document.Fields)
+		}
+		replacements := map[string]string{}
+		for _, field := range document.Fields {
+			replacements[field.Path] = "[[VEIL_TEST_0123456789ABCDEF]]"
+		}
+		result, err := document.Replace(replacements)
+		if err != nil || !json.Valid(result) {
+			t.Fatalf("round trip: %s %v", result, err)
+		}
+		if test.protected != "" && !contains(string(result), test.protected) {
+			t.Fatalf("integrity field changed: %s", result)
+		}
+	}
+}
+
+func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
+	for _, item := range []struct{ endpoint, contentType, encoding string }{{"/unknown", "application/json", ""}, {"/v1/responses", "text/plain", ""}, {"/v1/responses", "application/json", "gzip"}} {
+		_, err := Parse(item.endpoint, item.contentType, item.encoding, []byte(`{}`))
+		var veilErr *domain.VeilError
+		if !errors.As(err, &veilErr) {
+			t.Fatalf("expected fail-closed error for %+v", item)
+		}
+	}
+}
+
+func contains(text, part string) bool {
+	for i := 0; i+len(part) <= len(text); i++ {
+		if text[i:i+len(part)] == part {
+			return true
+		}
+	}
+	return false
+}
