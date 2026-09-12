@@ -197,6 +197,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
+		auditEvent.ErrorCode = domain.ErrUnsupportedEncoding
+		fail(w, http.StatusBadGateway, string(domain.ErrUnsupportedEncoding))
+		return
+	}
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
 			auditEvent.ErrorCode = errorCodeValue(err)

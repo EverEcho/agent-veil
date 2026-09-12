@@ -251,6 +251,39 @@ func TestStreamingResponseRestoresPlaceholder(t *testing.T) {
 	}
 }
 
+func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testing.T) {
+	for _, contentType := range []string{"application/json", "text/event-stream"} {
+		t.Run(contentType, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", contentType)
+				w.Header().Set("Content-Encoding", "br")
+				_, _ = w.Write([]byte("compressed-secret-shaped-bytes"))
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			auditor := &recordingAuditor{}
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 8192, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), string(domain.ErrUnsupportedEncoding)) || strings.Contains(recorder.Body.String(), "compressed-secret-shaped-bytes") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedEncoding {
+				t.Fatalf("audit=%+v", auditor.events)
+			}
+		})
+	}
+}
+
 func TestStreamingResponseFlushesSafeEventsBeforeProviderCloses(t *testing.T) {
 	providerReady := make(chan struct{})
 	releaseProvider := make(chan struct{})
