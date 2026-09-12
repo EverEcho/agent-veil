@@ -46,6 +46,7 @@ var structuredRuleIDs = map[string]struct{}{
 
 type Scanner struct {
 	rules            []rule
+	packRuleIDs      map[string]struct{}
 	requiredFeatures map[string]featureSet
 	requiredAny      map[string]featureSet
 	prefixIndex      [256][]prefixCandidate
@@ -172,11 +173,17 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 			if rule.group > 0 && rule.group*2+1 < len(indices) {
 				index = indices[rule.group*2 : rule.group*2+2]
 			}
+			if index[0] < 0 || index[1] <= index[0] {
+				continue
+			}
 			value := text[index[0]:index[1]]
 			if rule.validate != nil && !rule.validate(value) {
 				continue
 			}
 			detectorName := "deterministic"
+			if _, packed := s.packRuleIDs[rule.id]; packed {
+				detectorName = "rule_pack"
+			}
 			if _, structured := structuredRuleIDs[rule.id]; structured {
 				detectorName = "structured"
 			}
