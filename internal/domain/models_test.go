@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -119,5 +120,32 @@ func TestPersistedIdentifiersAndCredentialSourcesRejectSensitiveText(t *testing.
 	finding := Finding{RuleID: "pii.email", Category: "dev@example.com", Detector: "semantic", Severity: SeverityHigh, SuggestedAction: ActionBlock, Confidence: 1, Location: ContentLocation{Start: 0, End: 1}}
 	if err := finding.Validate(1); err == nil {
 		t.Fatal("sensitive finding category was accepted for audit")
+	}
+}
+
+func TestManifestRejectsUnboundedOrInvalidAgentMetadata(t *testing.T) {
+	surface := EgressSurface{ID: "primary", Name: "Primary", Type: SurfaceModelPrimary, Protocol: ProtocolOpenAIResponses, Upstream: &Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: AuthStrategy{Type: AuthPassthrough}, ConfigSource: "fixture", Rewritable: true}
+	manifest := AgentManifest{SchemaVersion: "v1", Agent: AgentInstance{ID: "agent", Kind: "test", Mode: IntegrationMode("invalid")}, Surfaces: []EgressSurface{surface}}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("invalid integration mode was accepted")
+	}
+	manifest.Agent.Mode = ModeNative
+	manifest.Surfaces = make([]EgressSurface, MaxManifestSurfaces+1)
+	for index := range manifest.Surfaces {
+		candidate := surface
+		candidate.ID = fmt.Sprintf("surface-%d", index)
+		manifest.Surfaces[index] = candidate
+	}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("unbounded surface set was accepted")
+	}
+	manifest.Surfaces = []EgressSurface{surface}
+	manifest.Agent.Metadata = map[string]string{"unsafe/key": "value"}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("unsafe metadata key was accepted")
+	}
+	manifest.Agent.Metadata = map[string]string{"safe": strings.Repeat("x", maxReferenceBytes+1)}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("oversized metadata value was accepted")
 	}
 }

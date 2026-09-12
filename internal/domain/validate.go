@@ -7,6 +7,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+)
+
+const (
+	MaxManifestSurfaces = 256
+	MaxMetadataEntries  = 64
+	maxDisplayTextBytes = 256
+	maxReferenceBytes   = 4096
 )
 
 var (
@@ -18,8 +26,11 @@ func (m AgentManifest) Validate() error {
 	if m.SchemaVersion != "v1" || !identifierPattern.MatchString(m.Agent.ID) || !identifierPattern.MatchString(m.Agent.Kind) {
 		return NewError(ErrInvalidContract, "validate manifest", "schema version and agent identity are required")
 	}
-	if len(m.Surfaces) == 0 {
-		return NewError(ErrInvalidContract, "validate manifest", "at least one egress surface is required")
+	if m.Agent.Mode != "" && !m.Agent.Mode.Valid() || len(m.Agent.Version) > 128 || !utf8.ValidString(m.Agent.Version) || len(m.Agent.Executable) > maxReferenceBytes || !utf8.ValidString(m.Agent.Executable) || strings.ContainsRune(m.Agent.Executable, 0) || !validMetadata(m.Agent.Metadata) {
+		return NewError(ErrInvalidContract, "validate manifest", "agent mode, version, executable, or metadata is invalid")
+	}
+	if len(m.Surfaces) == 0 || len(m.Surfaces) > MaxManifestSurfaces {
+		return NewError(ErrInvalidContract, "validate manifest", "surface count must be within its configured bounds")
 	}
 	seen := make(map[string]struct{}, len(m.Surfaces))
 	for i, surface := range m.Surfaces {
@@ -35,7 +46,7 @@ func (m AgentManifest) Validate() error {
 }
 
 func (s EgressSurface) Validate() error {
-	if !identifierPattern.MatchString(s.ID) || s.Name == "" || s.ConfigSource == "" {
+	if !identifierPattern.MatchString(s.ID) || s.Name == "" || len(s.Name) > maxDisplayTextBytes || !utf8.ValidString(s.Name) || s.ConfigSource == "" || len(s.ConfigSource) > maxReferenceBytes || !utf8.ValidString(s.ConfigSource) || strings.ContainsRune(s.ConfigSource, 0) || !validMetadata(s.Metadata) {
 		return NewError(ErrInvalidContract, "validate surface", "id, name and config source are required")
 	}
 	if !s.Type.Valid() || !s.Protocol.Valid() {
@@ -77,11 +88,14 @@ func (u Upstream) Validate() error {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return NewError(ErrInvalidContract, "validate upstream", "scheme must be https or http")
 	}
-	if strings.TrimSpace(u.Host) == "" || strings.TrimSpace(u.Host) != u.Host || strings.ContainsAny(u.Host, "/@?# \t\r\n") {
+	if strings.TrimSpace(u.Host) == "" || len(u.Host) > 253 || !utf8.ValidString(u.Host) || strings.TrimSpace(u.Host) != u.Host || strings.ContainsAny(u.Host, "/@?# \t\r\n") {
 		return NewError(ErrInvalidContract, "validate upstream", "host is empty or malformed")
 	}
 	if u.Port == 0 {
 		return NewError(ErrInvalidContract, "validate upstream", "port is required")
+	}
+	if len(u.Path) > maxReferenceBytes || !utf8.ValidString(u.Path) {
+		return NewError(ErrInvalidContract, "validate upstream", "base path exceeds its limit")
 	}
 	if u.Path != "" {
 		if !strings.HasPrefix(u.Path, "/") || strings.Contains(u.Path, "//") || strings.ContainsAny(u.Path, "\\?#\r\n\t") {
@@ -122,6 +136,9 @@ func (n NetworkRoute) Validate() error {
 		}
 		return nil
 	}
+	if len(n.Endpoint) > maxReferenceBytes || !utf8.ValidString(n.Endpoint) {
+		return NewError(ErrInvalidContract, "validate network route", "proxy endpoint exceeds its limit")
+	}
 	endpoint, err := url.Parse(n.Endpoint)
 	if err != nil || endpoint.Hostname() == "" || endpoint.Port() == "" || endpoint.User != nil || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
 		return NewError(ErrInvalidContract, "validate network route", "proxy endpoint must be an origin without embedded credentials")
@@ -136,6 +153,18 @@ func (n NetworkRoute) Validate() error {
 		return NewError(ErrInvalidContract, "validate network route", "SOCKS5 endpoint scheme is invalid")
 	}
 	return nil
+}
+
+func validMetadata(metadata map[string]string) bool {
+	if len(metadata) > MaxMetadataEntries {
+		return false
+	}
+	for key, value := range metadata {
+		if !identifierPattern.MatchString(key) || len(value) > maxReferenceBytes || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
+			return false
+		}
+	}
+	return true
 }
 
 func isLoopbackHost(host string) bool {

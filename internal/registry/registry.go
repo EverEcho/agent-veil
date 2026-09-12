@@ -33,6 +33,8 @@ type Registry struct {
 	now          func() time.Time
 }
 
+const maxRegistryEntries = 1024
+
 func New(options planner.Options) *Registry {
 	return &Registry{entries: map[string]Entry{}, capabilities: options, now: time.Now}
 }
@@ -65,6 +67,9 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 	now := r.now()
 	r.expireLocked(now)
 	previous := r.entries[manifest.Agent.ID]
+	if _, exists := r.entries[manifest.Agent.ID]; !exists && len(r.entries) >= maxRegistryEntries {
+		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "reconcile integration", "registry capacity is exhausted")
+	}
 	generation := previous.Generation + 1
 	bindPlanGeneration(&plan, generation)
 	if err != nil {
@@ -162,12 +167,17 @@ func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.now()
+	r.expireLocked(now)
+	if _, exists := r.entries[agentID]; !exists && len(r.entries) >= maxRegistryEntries {
+		return Entry{State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "block integration", "registry capacity is exhausted")
+	}
 	previous := r.entries[agentID]
 	manifest := previous.Manifest
 	if manifest.Agent.ID == "" {
 		manifest = domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: agentID, Kind: "managed", Mode: domain.ModeManaged}}
 	}
-	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: previous.Generation + 1, UpdatedAt: r.now(), ErrorCode: code}
+	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: previous.Generation + 1, UpdatedAt: now, ErrorCode: code}
 	r.entries[agentID] = cloneEntry(entry)
 	return cloneEntry(entry), domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
 }

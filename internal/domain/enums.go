@@ -158,3 +158,12 @@ const (
 	ModeNative      IntegrationMode = "native"
 	ModeTransparent IntegrationMode = "transparent"
 )
+
+func (v IntegrationMode) Valid() bool {
+	switch v {
+	case ModeLaunch, ModeAttach, ModeManaged, ModeNative, ModeTransparent:
+		return true
+	default:
+		return false
+	}
+}

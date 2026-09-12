@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +15,23 @@ type snapshotResult struct {
 	revision string
 	manifest domain.AgentManifest
 	err      error
+}
+
+func TestRegistryRejectsNewAgentsAtCapacityButAllowsUpdates(t *testing.T) {
+	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
+	registry := New(options)
+	for index := 0; index < maxRegistryEntries; index++ {
+		id := fmt.Sprintf("agent-%d", index)
+		registry.entries[id] = Entry{Manifest: domain.AgentManifest{Agent: domain.AgentInstance{ID: id}}, State: StateBlocked}
+	}
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "overflow", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	if _, err := registry.Reconcile(manifest); err == nil || len(registry.entries) != maxRegistryEntries {
+		t.Fatalf("new agent exceeded registry capacity: entries=%d err=%v", len(registry.entries), err)
+	}
+	manifest.Agent.ID = "agent-0"
+	if entry, err := registry.Reconcile(manifest); err != nil || entry.State != StateActive || len(registry.entries) != maxRegistryEntries {
+		t.Fatalf("existing agent update failed at capacity: entry=%+v entries=%d err=%v", entry, len(registry.entries), err)
+	}
 }
 
 type sequenceSource struct {
