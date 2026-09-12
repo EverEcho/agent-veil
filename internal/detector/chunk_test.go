@@ -14,8 +14,22 @@ func (failedSemantic) Detect(string, string) ([]domain.Finding, error) {
 	return nil, errors.New("model unavailable")
 }
 
+type panickingSemantic struct{}
+
+func (panickingSemantic) Detect(string, string) ([]domain.Finding, error) {
+	panic("model runtime fault")
+}
+
 func TestRequiredSemanticDetectorFailsClosed(t *testing.T) {
 	_, err := NewDefault().WithSemantic(failedSemantic{}, true).ScanChecked("/x", "ordinary text")
+	var veil *domain.VeilError
+	if !errors.As(err, &veil) || veil.Code != domain.ErrDetectorFailure {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestDetectorPanicIsRecoveredAndFailsClosed(t *testing.T) {
+	_, err := NewDefault().WithSemantic(panickingSemantic{}, false).ScanChecked("/x", "ordinary text")
 	var veil *domain.VeilError
 	if !errors.As(err, &veil) || veil.Code != domain.ErrDetectorFailure {
 		t.Fatalf("error=%v", err)

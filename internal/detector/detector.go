@@ -66,13 +66,13 @@ func (s *Scanner) WithSemantic(semantic Semantic, required bool) *Scanner {
 	return s
 }
 
-func (s *Scanner) Scan(path, text string) []Match {
-	matches, _ := s.ScanChecked(path, text)
-	return matches
-}
-
-func (s *Scanner) ScanChecked(path, text string) ([]Match, error) {
-	var matches []Match
+func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
+	defer func() {
+		if recover() != nil {
+			matches = nil
+			err = domain.NewError(domain.ErrDetectorFailure, "scan content", "detector panicked")
+		}
+	}()
 	for _, rule := range s.rules {
 		for _, indices := range rule.pattern.FindAllStringSubmatchIndex(text, -1) {
 			index := indices[:2]
