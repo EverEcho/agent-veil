@@ -93,6 +93,7 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		received = string(body)
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}))
 	defer provider.Close()
@@ -126,7 +127,11 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 }
 
 func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { body, _ := io.ReadAll(r.Body); _, _ = w.Write(body) }))
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
 	defer provider.Close()
 	parsed, _ := url.Parse(provider.URL)
 	port, _ := strconv.Atoi(parsed.Port())

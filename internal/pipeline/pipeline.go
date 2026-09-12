@@ -21,6 +21,7 @@ type Context struct {
 }
 type Result struct {
 	Body     []byte
+	Protocol domain.Protocol
 	Findings []domain.Finding
 	Actions  []domain.Action
 	Vault    *redactor.Vault
@@ -32,7 +33,7 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 		return Result{}, err
 	}
 	replacements := make(map[string]string)
-	result := Result{Vault: vault}
+	result := Result{Vault: vault, Protocol: document.Protocol}
 	for _, field := range document.Fields {
 		matches, scanErr := scanner.ScanChecked(field.Path, field.Text)
 		if scanErr != nil {

@@ -146,11 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
 		return
 	}
-	if matches, scanErr := h.scanner.ScanChecked("/response", string(responseBody)); scanErr != nil || len(matches) > 0 {
-		fail(w, http.StatusForbidden, "RESPONSE_DLP_BLOCKED")
-		return
-	}
-	restored, err := vault.Restore(string(responseBody))
+	restored, err := pipeline.ProcessResponse(processed.Protocol, response.Header.Get("Content-Type"), responseBody, h.scanner, vault)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
@@ -159,7 +155,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Content-Length")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.WriteString(w, restored)
+	_, _ = w.Write(restored)
 }
 
 func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64) {
