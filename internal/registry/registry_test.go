@@ -33,6 +33,13 @@ func TestNestedCallTree(t *testing.T) {
 	}
 }
 
+func TestNestedCallTreeRejectsCycles(t *testing.T) {
+	_, err := CallTree([]CallNode{{SessionID: "a", ParentSessionID: "b", AgentID: "one"}, {SessionID: "b", ParentSessionID: "a", AgentID: "two"}})
+	if err == nil {
+		t.Fatal("cyclic session ancestry was accepted")
+	}
+}
+
 func TestMalformedAnonymousManifestDoesNotPolluteRegistry(t *testing.T) {
 	registry := New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}})
 	if _, err := registry.Reconcile(domain.AgentManifest{SchemaVersion: "v1"}); err == nil {

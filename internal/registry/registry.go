@@ -96,6 +96,7 @@ type CallNode struct{ SessionID, ParentSessionID, AgentID, SurfaceID string }
 
 func CallTree(nodes []CallNode) (map[string][]CallNode, error) {
 	known := map[string]struct{}{}
+	parents := map[string]string{}
 	result := map[string][]CallNode{}
 	for _, node := range nodes {
 		if node.SessionID == "" || node.AgentID == "" {
@@ -105,6 +106,7 @@ func CallTree(nodes []CallNode) (map[string][]CallNode, error) {
 			return nil, domain.NewError(domain.ErrInvalidContract, "build call tree", "duplicate session id")
 		}
 		known[node.SessionID] = struct{}{}
+		parents[node.SessionID] = node.ParentSessionID
 	}
 	for _, node := range nodes {
 		if node.ParentSessionID != "" {
@@ -113,6 +115,29 @@ func CallTree(nodes []CallNode) (map[string][]CallNode, error) {
 			}
 		}
 		result[node.ParentSessionID] = append(result[node.ParentSessionID], node)
+	}
+	state := map[string]uint8{}
+	var visit func(string) error
+	visit = func(id string) error {
+		if state[id] == 1 {
+			return domain.NewError(domain.ErrInvalidContract, "build call tree", "session ancestry contains a cycle")
+		}
+		if state[id] == 2 {
+			return nil
+		}
+		state[id] = 1
+		if parent := parents[id]; parent != "" {
+			if err := visit(parent); err != nil {
+				return err
+			}
+		}
+		state[id] = 2
+		return nil
+	}
+	for id := range known {
+		if err := visit(id); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }

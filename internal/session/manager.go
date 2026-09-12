@@ -38,15 +38,6 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 	if ttl <= 0 || len(routeIDs) == 0 {
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "positive ttl and at least one route are required")
 	}
-	id, err := randomHex(16)
-	if err != nil {
-		return Created{}, err
-	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "secure randomness is unavailable")
-	}
-	routes := make([]RouteCredential, 0, len(routeIDs))
 	seen := make(map[string]struct{}, len(routeIDs))
 	for _, routeID := range routeIDs {
 		if routeID == "" {
@@ -56,19 +47,48 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "duplicate route id")
 		}
 		seen[routeID] = struct{}{}
+	}
+	now := m.now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if parentID != "" {
+		parent, ok := m.sessions[parentID]
+		if !ok || !parent.session.ExpiresAt.After(now) {
+			if ok {
+				m.deleteCascadeLocked(parentID)
+			}
+			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "parent session is missing or expired")
+		}
+		if now.Add(ttl).After(parent.session.ExpiresAt) {
+			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
+		}
+	}
+	id, err := randomHex(16)
+	if err != nil {
+		return Created{}, err
+	}
+	if _, exists := m.sessions["session-"+id]; exists {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "session capability collision")
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "secure randomness is unavailable")
+	}
+	routes := make([]RouteCredential, 0, len(routeIDs))
+	for _, routeID := range routeIDs {
 		token, err := randomHex(32)
 		if err != nil {
+			for i := range secret {
+				secret[i] = 0
+			}
 			return Created{}, err
 		}
 		routes = append(routes, RouteCredential{RouteID: routeID, Token: token})
 	}
-	now := m.now()
 	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
 	entry := &managedSession{session: s, routes: routes}
-	m.mu.Lock()
 	m.sessions[s.ID] = entry
-	m.mu.Unlock()
-	return Created{Session: s, Routes: append([]RouteCredential(nil), routes...)}, nil
+	return Created{Session: publicSession(s), Routes: append([]RouteCredential(nil), routes...)}, nil
 }
 
 func (m *Manager) List() []domain.ProtectionSession {
@@ -78,11 +98,10 @@ func (m *Manager) List() []domain.ProtectionSession {
 	result := make([]domain.ProtectionSession, 0, len(m.sessions))
 	for id, entry := range m.sessions {
 		if !entry.session.ExpiresAt.After(now) {
-			wipe(entry)
-			delete(m.sessions, id)
+			m.deleteCascadeLocked(id)
 			continue
 		}
-		result = append(result, entry.session)
+		result = append(result, publicSession(entry.session))
 	}
 	return result
 }
@@ -93,10 +112,14 @@ func (m *Manager) Authorize(sessionID, routeID, token string) bool {
 }
 
 func (m *Manager) AuthorizeAndSecret(sessionID, routeID, token string) ([]byte, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	entry, ok := m.sessions[sessionID]
-	if !ok || !entry.session.ExpiresAt.After(m.now()) {
+	if !ok {
+		return nil, false
+	}
+	if !entry.session.ExpiresAt.After(m.now()) {
+		m.deleteCascadeLocked(sessionID)
 		return nil, false
 	}
 	for _, route := range entry.routes {
@@ -110,13 +133,38 @@ func (m *Manager) AuthorizeAndSecret(sessionID, routeID, token string) ([]byte, 
 func (m *Manager) Delete(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	entry, ok := m.sessions[id]
+	_, ok := m.sessions[id]
 	if !ok {
 		return false
 	}
-	wipe(entry)
-	delete(m.sessions, id)
+	m.deleteCascadeLocked(id)
 	return true
+}
+
+func (m *Manager) deleteCascadeLocked(rootID string) {
+	pending := map[string]struct{}{rootID: {}}
+	for changed := true; changed; {
+		changed = false
+		for id, entry := range m.sessions {
+			if _, selected := pending[id]; selected {
+				continue
+			}
+			if _, parentSelected := pending[entry.session.ParentSessionID]; parentSelected {
+				pending[id] = struct{}{}
+				changed = true
+			}
+		}
+	}
+	for id := range pending {
+		if entry, ok := m.sessions[id]; ok {
+			wipe(entry)
+			delete(m.sessions, id)
+		}
+	}
+}
+
+func publicSession(session domain.ProtectionSession) domain.ProtectionSession {
+	return domain.NewProtectionSession(session.ID, session.ParentSessionID, session.CoreEndpoint, session.StartedAt, session.ExpiresAt, session.RouteIDs, nil)
 }
 
 func (m *Manager) Close() {
