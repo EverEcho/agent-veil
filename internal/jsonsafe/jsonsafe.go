@@ -9,7 +9,10 @@ import (
 	"unicode/utf8"
 )
 
-const MaxNestingDepth = 64
+const (
+	MaxNestingDepth = 64
+	MaxJSONTokens   = 256 << 10
+)
 
 // Validate accepts exactly one strict JSON value and rejects duplicate object
 // keys. This prevents review/runtime ambiguity caused by last-key-wins decoders.
@@ -19,7 +22,8 @@ func Validate(content []byte) error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.UseNumber()
-	if err := validateValue(decoder, 0); err != nil {
+	tokens := 0
+	if err := validateValue(decoder, 0, &tokens); err != nil {
 		return err
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -28,11 +32,11 @@ func Validate(content []byte) error {
 	return nil
 }
 
-func validateValue(decoder *json.Decoder, depth int) error {
+func validateValue(decoder *json.Decoder, depth int, tokens *int) error {
 	if depth > MaxNestingDepth {
 		return errors.New("JSON nesting limit exceeded")
 	}
-	token, err := decoder.Token()
+	token, err := nextToken(decoder, tokens)
 	if err != nil {
 		return err
 	}
@@ -44,7 +48,7 @@ func validateValue(decoder *json.Decoder, depth int) error {
 	case '{':
 		keys := map[string]struct{}{}
 		for decoder.More() {
-			keyToken, err := decoder.Token()
+			keyToken, err := nextToken(decoder, tokens)
 			if err != nil {
 				return err
 			}
@@ -56,21 +60,21 @@ func validateValue(decoder *json.Decoder, depth int) error {
 				return fmt.Errorf("duplicate JSON object key %q", key)
 			}
 			keys[key] = struct{}{}
-			if err := validateValue(decoder, depth+1); err != nil {
+			if err := validateValue(decoder, depth+1, tokens); err != nil {
 				return err
 			}
 		}
-		closing, err := decoder.Token()
+		closing, err := nextToken(decoder, tokens)
 		if err != nil || closing != json.Delim('}') {
 			return errors.New("JSON object is not closed")
 		}
 	case '[':
 		for decoder.More() {
-			if err := validateValue(decoder, depth+1); err != nil {
+			if err := validateValue(decoder, depth+1, tokens); err != nil {
 				return err
 			}
 		}
-		closing, err := decoder.Token()
+		closing, err := nextToken(decoder, tokens)
 		if err != nil || closing != json.Delim(']') {
 			return errors.New("JSON array is not closed")
 		}
@@ -78,4 +82,16 @@ func validateValue(decoder *json.Decoder, depth int) error {
 		return errors.New("unexpected JSON delimiter")
 	}
 	return nil
+}
+
+func nextToken(decoder *json.Decoder, tokens *int) (json.Token, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	(*tokens)++
+	if *tokens > MaxJSONTokens {
+		return nil, errors.New("JSON token limit exceeded")
+	}
+	return token, nil
 }

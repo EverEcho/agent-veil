@@ -13,12 +13,14 @@ func TestValidateAcceptsStrictJSON(t *testing.T) {
 
 func TestValidateRejectsAmbiguousAndInvalidJSON(t *testing.T) {
 	deep := strings.Repeat("[", MaxNestingDepth+2) + strings.Repeat("]", MaxNestingDepth+2)
+	unbounded := "[" + strings.Repeat("0,", MaxJSONTokens) + "0]"
 	for _, content := range [][]byte{
 		[]byte(`{"route":"safe","route":"unsafe"}`),
 		[]byte(`{"outer":{"token":1,"token":2}}`),
 		[]byte(`{"value":NaN}`),
 		[]byte(`{} {}`),
 		[]byte(deep),
+		[]byte(unbounded),
 		{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'},
 	} {
 		if err := Validate(content); err == nil {
