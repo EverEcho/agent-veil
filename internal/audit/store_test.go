@@ -42,7 +42,7 @@ func TestStoreUsesPrivatePermissionsRetentionAndLeakScan(t *testing.T) {
 }
 
 func TestOpeningStorePrunesEventsOutsideRetention(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	path := filepath.Join(t.TempDir(), "private", "audit.jsonl")
 	store, err := NewStore(path, 24*time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestOpeningStorePrunesEventsOutsideRetention(t *testing.T) {
 }
 
 func TestStoreDefaultLeakScanPreventsSensitivePersistence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	path := filepath.Join(t.TempDir(), "private", "audit.jsonl")
 	store, err := NewStore(path, time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +85,9 @@ func TestStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
 		t.Fatal("relative audit path was accepted")
 	}
 	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(directory, "audit.jsonl")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
@@ -117,7 +120,7 @@ func TestStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
 }
 
 func TestStoreCompactsOldestEventsBeforeCapacity(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	path := filepath.Join(t.TempDir(), "private", "audit.jsonl")
 	store, err := NewStore(path, time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -146,13 +149,38 @@ func TestStoreCompactsOldestEventsBeforeCapacity(t *testing.T) {
 }
 
 func TestStoreRejectsDuplicateAuditKeys(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "audit.jsonl")
 	payload := `{"timestamp":"2026-01-01T00:00:00Z","agent_id":"visible","agent_id":"hidden","action":"allow"}` + "\n"
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewStore(path, time.Hour, nil); err == nil {
 		t.Fatal("audit event with duplicate identity was accepted")
+	}
+}
+
+func TestStoreRejectsUnsafeAuditDirectories(t *testing.T) {
+	wide := filepath.Join(t.TempDir(), "wide")
+	if err := os.Mkdir(wide, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(filepath.Join(wide, "audit.jsonl"), time.Hour, nil); err == nil {
+		t.Fatal("world-accessible audit directory was accepted")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(target, linked); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := NewStore(filepath.Join(linked, "audit.jsonl"), time.Hour, nil); err == nil {
+		t.Fatal("symlinked audit directory was accepted")
 	}
 }
 

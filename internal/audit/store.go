@@ -32,6 +32,10 @@ func NewStore(path string, retention time.Duration, forbidden func() []string) (
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
+	directory, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !directory.IsDir() || directory.Mode().Perm()&0o077 != 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create audit store", "audit directory permissions or type are unsafe")
+	}
 	store := &Store{path: path, retention: retention, forbidden: forbidden, maxBytes: maxAuditFileBytes}
 	if err := store.Prune(time.Now().UTC()); err != nil {
 		return nil, err

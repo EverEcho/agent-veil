@@ -503,7 +503,7 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	routeID := registered.Plan.Routes[0].ID
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")
-	auditStore, _ := audit.NewStore(filepath.Join(t.TempDir(), "audit.jsonl"), time.Hour, nil)
+	auditStore, _ := audit.NewStore(filepath.Join(t.TempDir(), "private", "audit.jsonl"), time.Hour, nil)
 	s.WithRegistry(reg).WithAuditor(auditStore)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
@@ -547,7 +547,7 @@ func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.jsonl"), time.Hour, nil)
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "private", "audit.jsonl"), time.Hour, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
