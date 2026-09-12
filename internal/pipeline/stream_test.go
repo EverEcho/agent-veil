@@ -99,6 +99,15 @@ func TestSSEProtocolErrorsCannotEchoSensitiveContent(t *testing.T) {
 	}
 }
 
+func TestUnknownSSEEnvelopeIsNeverEmitted(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+	body := []byte("data: {\"future_output\":\"dev@example.com\"}\n\n")
+	result, err := ProcessSSE(domain.ProtocolOpenAIResponses, body, detector.NewDefault(), vault)
+	if err == nil || len(result) != 0 {
+		t.Fatalf("unknown stream envelope emitted: result=%q err=%v", result, err)
+	}
+}
+
 func TestSSEPlaceholderCrossesEventsWithoutTouchingSignature(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	placeholder, _ := vault.Store("email", "dev@example.com")

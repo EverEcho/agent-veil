@@ -97,6 +97,9 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data contains trailing JSON")
 	}
+	if !validStreamEnvelope(protocol, root) {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data does not match the protected protocol envelope")
+	}
 	document := &Document{Protocol: protocol, root: root}
 	extractProtocolError(document, root)
 	switch protocol {
@@ -128,6 +131,34 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+func validStreamEnvelope(protocolType domain.Protocol, root any) bool {
+	object, ok := root.(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, hasError := object["error"]; hasError {
+		return true
+	}
+	switch protocolType {
+	case domain.ProtocolOpenAIChat:
+		_, ok = object["choices"].([]any)
+		return ok
+	case domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic:
+		typeName, ok := object["type"].(string)
+		return ok && strings.TrimSpace(typeName) != ""
+	case domain.ProtocolGemini:
+		_, ok = object["candidates"].([]any)
+		return ok
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+		version, versionOK := object["jsonrpc"].(string)
+		_, hasResult := object["result"]
+		method, hasMethod := object["method"].(string)
+		return versionOK && version == "2.0" && (hasResult || hasMethod && strings.TrimSpace(method) != "")
+	default:
+		return false
+	}
 }
 
 func extractProtocolError(document *Document, root any) {

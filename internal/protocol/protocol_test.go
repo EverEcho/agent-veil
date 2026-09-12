@@ -179,6 +179,24 @@ func TestStreamEventRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestMalformedStreamEnvelopesFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		protocol domain.Protocol
+		body     string
+	}{
+		{domain.ProtocolOpenAIChat, `{"delta":"safe"}`},
+		{domain.ProtocolOpenAIResponses, `{"delta":"safe"}`},
+		{domain.ProtocolAnthropic, `{"delta":{"text":"safe"}}`},
+		{domain.ProtocolGemini, `{"text":"safe"}`},
+		{domain.ProtocolMCPHTTP, `{"jsonrpc":"2.0","value":"safe"}`},
+		{domain.ProtocolMCPStreamable, `[]`},
+	} {
+		if _, err := ParseStreamEvent(test.protocol, []byte(test.body)); err == nil {
+			t.Fatalf("protocol %s accepted malformed stream envelope %s", test.protocol, test.body)
+		}
+	}
+}
+
 func TestExpectedRouteProtocolPreventsEndpointConfusion(t *testing.T) {
 	if _, err := ParseExpected(domain.ProtocolAnthropic, "/v1/responses", "application/json", "", []byte(`{"input":"safe"}`)); err == nil {
 		t.Fatal("route accepted an endpoint from another protocol")

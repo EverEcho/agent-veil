@@ -455,7 +455,7 @@ func TestActiveProtectedRequestEndsWhenSessionIsDeleted(t *testing.T) {
 func TestStreamingResponseClearsServerWriteDeadline(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"delta\":\"safe\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"safe\"}\n\n"))
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
