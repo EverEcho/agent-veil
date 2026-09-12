@@ -1,8 +1,11 @@
 package integration
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -25,7 +28,7 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 	if err != nil || !info.IsDir() {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home is not an accessible directory")
 	}
-	entries, err := os.ReadDir(sourceHome)
+	entries, err := readHermesHomeEntries(sourceHome, maxHermesHomeEntries+1)
 	if err != nil {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home could not be enumerated")
 	}
@@ -76,4 +79,21 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 		return cleanupErr
 	}
 	return temporaryHome, cleanup, nil
+}
+
+func readHermesHomeEntries(path string, limit int) ([]os.DirEntry, error) {
+	directory, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := directory.ReadDir(limit)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
 }

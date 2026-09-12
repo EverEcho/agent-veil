@@ -113,19 +113,25 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 }
 
 func storedCAEntryCount(root string, limit int) (int, error) {
+	entries, err := readCADirectoryEntries(root, limit)
+	return len(entries), err
+}
+
+func readCADirectoryEntries(root string, limit int) ([]os.DirEntry, error) {
 	directory, err := os.Open(root)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	entries, readErr := directory.ReadDir(limit)
 	closeErr := directory.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return 0, readErr
+		return nil, readErr
 	}
 	if closeErr != nil {
-		return 0, closeErr
+		return nil, closeErr
 	}
-	return len(entries), nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
 }
 
 // OpenCA reconstructs a removable CA handle after a process restart. It only
@@ -138,7 +144,7 @@ func OpenCA(directory string) (CA, error) {
 	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o077 != 0 {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA directory permissions or type are unsafe")
 	}
-	entries, err := os.ReadDir(directory)
+	entries, err := readCADirectoryEntries(directory, 3)
 	if err != nil || len(entries) != 2 || entries[0].Name() != "ca-cert.pem" || entries[1].Name() != "ca-key.pem" {
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA directory contents are invalid")
 	}

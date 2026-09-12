@@ -279,19 +279,25 @@ func (s *Store) OpenActive() (*os.File, Manifest, error) {
 }
 
 func installedEntryCount(path string, limit int) (int, error) {
+	entries, err := readDirectoryEntries(path, limit)
+	return len(entries), err
+}
+
+func readDirectoryEntries(path string, limit int) ([]os.DirEntry, error) {
 	directory, err := os.Open(path)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	entries, readErr := directory.ReadDir(limit)
 	closeErr := directory.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return 0, readErr
+		return nil, readErr
 	}
 	if closeErr != nil {
-		return 0, closeErr
+		return nil, closeErr
 	}
-	return len(entries), nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
 }
 
 func (s *Store) verifyManifest(manifest Manifest) error {
@@ -354,7 +360,7 @@ func validateVersionDirectory(path, artifactName string) error {
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return domain.NewError(domain.ErrInvalidContract, "open model version", "model version directory permissions or type are unsafe")
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := readDirectoryEntries(path, 3)
 	if err != nil || len(entries) != 2 || entries[0].Name() != "manifest.json" || entries[1].Name() != artifactName {
 		return domain.NewError(domain.ErrInvalidContract, "open model version", "model version directory contents are invalid")
 	}

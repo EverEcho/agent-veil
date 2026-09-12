@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,5 +85,17 @@ func TestPrepareHermesHomeRejectsUnsafeInputs(t *testing.T) {
 				t.Fatalf("unsafe input accepted: cleanup=%v err=%v", cleanup != nil, err)
 			}
 		})
+	}
+}
+
+func TestPrepareHermesHomeRejectsEntryCapacityBeforeCreatingTemporaryState(t *testing.T) {
+	home := t.TempDir()
+	for index := 0; index <= maxHermesHomeEntries; index++ {
+		if err := os.WriteFile(filepath.Join(home, fmt.Sprintf("entry-%04d", index)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, cleanup, err := PrepareHermesHome(home, []byte("model: protected\n")); err == nil || cleanup != nil {
+		t.Fatalf("oversized Hermes home accepted: cleanup=%v error=%v", cleanup != nil, err)
 	}
 }
