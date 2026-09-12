@@ -171,7 +171,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		surfaceID = routeID
 	}
 	processed := pipeline.Result{Body: body, Protocol: route.Protocol, Vault: vault}
-	if r.Method == http.MethodGet {
+	if r.Method != http.MethodPost {
 		if len(body) != 0 {
 			auditEvent.ErrorCode = domain.ErrUnknownProtocol
 			fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
@@ -233,6 +233,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		auditEvent.ErrorCode = "RESPONSE_TOO_LARGE"
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
+		return
+	}
+	if len(responseBody) == 0 {
+		copyHeaders(w.Header(), response.Header)
+		w.Header().Del("Content-Length")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(response.StatusCode)
 		return
 	}
 	restored, err := pipeline.ProcessResponse(processed.Protocol, response.Header.Get("Content-Type"), responseBody, h.scanner, vault)
@@ -366,12 +373,12 @@ func splitRoutePath(path string) (string, string, bool) {
 }
 
 func routeAllowsMethod(protocolType domain.Protocol, method string) bool {
-	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && method == http.MethodGet
+	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && (method == http.MethodGet || method == http.MethodDelete)
 }
 
 func allowedMethods(protocolType domain.Protocol) string {
 	if protocolType == domain.ProtocolMCPStreamable {
-		return http.MethodGet + ", " + http.MethodPost
+		return http.MethodDelete + ", " + http.MethodGet + ", " + http.MethodPost
 	}
 	return http.MethodPost
 }

@@ -289,6 +289,30 @@ func TestMCPStreamableGETRejectsRequestBody(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableDELETEForwardsSessionAndEmptyResponse(t *testing.T) {
+	providerMethod, providerSession := "", ""
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerMethod = r.Method
+		providerSession = r.Header.Get("Mcp-Session-Id")
+		w.Header().Set("Mcp-Session-Id", providerSession)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodDelete, "/route/mcp/mcp", nil)
+	request.Header.Set("Mcp-Session-Id", "mcp-session-1")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent || providerMethod != http.MethodDelete || providerSession != "mcp-session-1" || recorder.Header().Get("Mcp-Session-Id") != "mcp-session-1" || recorder.Body.Len() != 0 {
+		t.Fatalf("status=%d method=%q provider-session=%q response-session=%q body=%q", recorder.Code, providerMethod, providerSession, recorder.Header().Get("Mcp-Session-Id"), recorder.Body.String())
+	}
+}
+
 func TestProxyEvaluatesAgentProviderAndSurfacePolicyScope(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
