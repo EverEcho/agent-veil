@@ -21,6 +21,15 @@ func (panickingSemantic) Detect(string, string) ([]domain.Finding, error) {
 	panic("model runtime fault")
 }
 
+type pathSemantic struct{}
+
+func (pathSemantic) Detect(path, text string) ([]domain.Finding, error) {
+	if path != "/sensitive" || text == "" {
+		return nil, nil
+	}
+	return []domain.Finding{{RuleID: "pii.semantic_name", Category: "pii.semantic_name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: path, Start: 0, End: 1}, Confidence: 0.8, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
+}
+
 func TestRequiredSemanticDetectorFailsClosed(t *testing.T) {
 	_, err := NewDefault().WithSemantic(failedSemantic{}, true).ScanChecked("/x", "ordinary text")
 	var veil *domain.VeilError
@@ -85,5 +94,19 @@ func TestChunkCacheEvictsOldestEntryAtLimit(t *testing.T) {
 func TestChunkCacheRejectsInvalidLimit(t *testing.T) {
 	if _, err := NewChunkedWithCacheLimit(NewDefault(), 256, 64, 0); err == nil {
 		t.Fatal("expected zero cache limit to be rejected")
+	}
+}
+
+func TestChunkCacheKeyIncludesSemanticFieldPath(t *testing.T) {
+	scanner, err := NewChunked(NewDefault().WithSemantic(pathSemantic{}, true), 256, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("a", 128)
+	if matches, err := scanner.ScanChecked("/sensitive", text); err != nil || len(matches) != 1 {
+		t.Fatalf("sensitive scan matches=%+v err=%v", matches, err)
+	}
+	if matches, err := scanner.ScanChecked("/ordinary", text); err != nil || len(matches) != 0 {
+		t.Fatalf("path-dependent finding was reused: matches=%+v err=%v", matches, err)
 	}
 }

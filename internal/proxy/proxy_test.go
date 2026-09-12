@@ -49,6 +49,35 @@ func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	}
 }
 
+func TestProxyChunkedScannerFindsEntityAcrossLongContextBoundary(t *testing.T) {
+	var providerBody string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		providerBody = string(payload)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 128 << 10, MaxResponseBytes: 128 << 10, VaultLimits: redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := strings.Repeat("a", defaultChunkBytes-7) + " " + "dev@example.com"
+	payload, _ := json.Marshal(map[string]any{"input": input})
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(string(payload)))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(providerBody, "dev@example.com") || !strings.Contains(recorder.Body.String(), "dev@example.com") {
+		t.Fatalf("status=%d provider contains email=%v response contains email=%v body=%s", recorder.Code, strings.Contains(providerBody, "dev@example.com"), strings.Contains(recorder.Body.String(), "dev@example.com"), recorder.Body.String())
+	}
+}
+
 type finalBodySigner struct{ sawOriginal bool }
 
 func (s *finalBodySigner) Apply(request *http.Request) error {

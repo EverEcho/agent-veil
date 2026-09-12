@@ -51,7 +51,7 @@ func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
 			}
 		}
 		chunk := text[start:end]
-		hash := sha256.Sum256([]byte(chunk))
+		hash := chunkCacheKey(path, chunk)
 		findings, ok := s.cached(hash)
 		if !ok {
 			matches, err := s.Scanner.ScanChecked(path, chunk)
@@ -81,6 +81,20 @@ func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
 		}
 	}
 	return Merge(all), nil
+}
+
+func (s *ChunkedScanner) ScanChecked(path, text string) ([]Match, error) {
+	return s.Scan(path, text)
+}
+
+func chunkCacheKey(path, chunk string) [32]byte {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(path))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(chunk))
+	var result [32]byte
+	copy(result[:], hash.Sum(nil))
+	return result
 }
 
 func (s *ChunkedScanner) cached(hash [32]byte) ([]domain.Finding, bool) {

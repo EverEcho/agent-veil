@@ -22,9 +22,11 @@ import (
 )
 
 const (
-	HeaderSession    = "X-Veil-Session"
-	HeaderRouteToken = "X-Veil-Route-Token"
-	CapabilityPrefix = "veil-v1:"
+	HeaderSession       = "X-Veil-Session"
+	HeaderRouteToken    = "X-Veil-Route-Token"
+	CapabilityPrefix    = "veil-v1:"
+	defaultChunkBytes   = 64 << 10
+	defaultOverlapBytes = 4 << 10
 )
 
 type Route struct {
@@ -56,14 +58,18 @@ type Handler struct {
 	sessions *session.Manager
 	routes   map[string]configuredRoute
 	client   *http.Client
-	scanner  *detector.Scanner
+	scanner  detector.ContentScanner
 }
 
 func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) (*Handler, error) {
 	if sessions == nil || client == nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "session manager and HTTP client are required")
 	}
-	h := &Handler{sessions: sessions, routes: make(map[string]configuredRoute, len(routes)), client: client, scanner: detector.NewDefault()}
+	scanner, err := detector.NewChunked(detector.NewDefault(), defaultChunkBytes, defaultOverlapBytes)
+	if err != nil {
+		return nil, err
+	}
+	h := &Handler{sessions: sessions, routes: make(map[string]configuredRoute, len(routes)), client: client, scanner: scanner}
 	for _, route := range routes {
 		if route.ID == "" || route.Upstream == nil || route.MaxRequestBytes <= 0 || route.MaxResponseBytes <= 0 {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "route is incomplete")

@@ -15,11 +15,11 @@ type Guard struct {
 	pending    string
 	lookbehind int
 	maxBuffer  int
-	scanner    *detector.Scanner
+	scanner    detector.ContentScanner
 	vault      *redactor.Vault
 }
 
-func NewGuard(scanner *detector.Scanner, vault *redactor.Vault, lookbehind, maxBuffer int) (*Guard, error) {
+func NewGuard(scanner detector.ContentScanner, vault *redactor.Vault, lookbehind, maxBuffer int) (*Guard, error) {
 	if scanner == nil || vault == nil || lookbehind < 128 || maxBuffer < lookbehind {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create response guard", "invalid detector, vault or buffer limits")
 	}

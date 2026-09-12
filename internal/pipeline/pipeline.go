@@ -27,11 +27,11 @@ type Result struct {
 	Vault    *redactor.Vault
 }
 
-func Process(ctx Context, endpoint, contentType, encoding string, body []byte, scanner *detector.Scanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
+func Process(ctx Context, endpoint, contentType, encoding string, body []byte, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
 	return ProcessForProtocol(ctx, "", endpoint, contentType, encoding, body, scanner, engine, vault)
 }
 
-func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, contentType, encoding string, body []byte, scanner *detector.Scanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
+func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, contentType, encoding string, body []byte, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
 	document, err := protocol.ParseExpected(expected, endpoint, contentType, encoding, body)
 	if err != nil {
 		return Result{}, err

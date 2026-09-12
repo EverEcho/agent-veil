@@ -19,7 +19,7 @@ type streamDocument struct {
 
 type SSEProcessor struct {
 	protocol   domain.Protocol
-	scanner    *detector.Scanner
+	scanner    detector.ContentScanner
 	vault      *redactor.Vault
 	decoder    *veilstream.Decoder
 	lookbehind int
@@ -27,7 +27,7 @@ type SSEProcessor struct {
 	closed     bool
 }
 
-func NewSSEProcessor(protocolType domain.Protocol, scanner *detector.Scanner, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
+func NewSSEProcessor(protocolType domain.Protocol, scanner detector.ContentScanner, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
 	if scanner == nil || vault == nil || lookbehind < 128 {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create SSE processor", "scanner, vault and a safe lookbehind are required")
 	}
@@ -201,7 +201,7 @@ func streamText(items []streamDocument) string {
 	return text.String()
 }
 
-func ProcessSSE(protocolType domain.Protocol, body []byte, scanner *detector.Scanner, vault *redactor.Vault) ([]byte, error) {
+func ProcessSSE(protocolType domain.Protocol, body []byte, scanner detector.ContentScanner, vault *redactor.Vault) ([]byte, error) {
 	processor, err := NewSSEProcessor(protocolType, scanner, vault, len(body)+1, defaultStreamLookbehind)
 	if err != nil {
 		return nil, err

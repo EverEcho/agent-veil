@@ -16,6 +16,10 @@ type Match struct {
 	Finding domain.Finding
 	Value   string `json:"-"`
 }
+
+type ContentScanner interface {
+	ScanChecked(path, text string) ([]Match, error)
+}
 type rule struct {
 	id, category string
 	severity     domain.Severity

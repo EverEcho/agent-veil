@@ -7,7 +7,7 @@ import (
 	"github.com/agentveil/agentveil/internal/redactor"
 )
 
-func ProcessResponse(protocolType domain.Protocol, contentType string, body []byte, scanner *detector.Scanner, vault *redactor.Vault) ([]byte, error) {
+func ProcessResponse(protocolType domain.Protocol, contentType string, body []byte, scanner detector.ContentScanner, vault *redactor.Vault) ([]byte, error) {
 	document, err := protocol.ParseResponse(protocolType, contentType, body)
 	if err != nil {
 		return nil, err
