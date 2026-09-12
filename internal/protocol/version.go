@@ -1,6 +1,10 @@
 package protocol
 
-import "github.com/agentveil/agentveil/internal/domain"
+import (
+	"encoding/json"
+
+	"github.com/agentveil/agentveil/internal/domain"
+)
 
 const (
 	HeaderMCPProtocolVersion = "MCP-Protocol-Version"
@@ -26,6 +30,27 @@ func ResolveMCPStreamableVersion(values []string) (string, error) {
 	default:
 		return "", unsupportedMCPVersion()
 	}
+}
+
+// ValidateMCPStreamableBodyVersion rejects modern per-request version metadata
+// that disagrees with the HTTP envelope. Callers pass a body that has already
+// passed the strict MCP JSON envelope parser.
+func ValidateMCPStreamableBodyVersion(version string, body []byte) error {
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return unsupportedMCPVersion()
+	}
+	params, _ := request["params"].(map[string]any)
+	metadata, _ := params["_meta"].(map[string]any)
+	bodyVersion, exists := metadata["io.modelcontextprotocol/protocolVersion"]
+	if !exists {
+		return nil
+	}
+	value, ok := bodyVersion.(string)
+	if !ok || value != version {
+		return unsupportedMCPVersion()
+	}
+	return nil
 }
 
 func unsupportedMCPVersion() error {

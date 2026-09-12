@@ -76,6 +76,28 @@ func TestResolveMCPStreamableVersionAllowsOnlyImplementedRevisions(t *testing.T)
 	}
 }
 
+func TestValidateMCPStreamableBodyVersionRejectsHeaderMismatch(t *testing.T) {
+	matching := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-11-25"}}}`)
+	if err := ValidateMCPStreamableBodyVersion(MCPVersion20251125, matching); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	if err := ValidateMCPStreamableBodyVersion(MCPVersion20250326, legacy); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range [][]byte{
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`),
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":1}}}`),
+		[]byte(`not-json`),
+	} {
+		var veilErr *domain.VeilError
+		err := ValidateMCPStreamableBodyVersion(MCPVersion20250326, body)
+		if !errors.As(err, &veilErr) || veilErr.Code != domain.ErrUnknownProtocol {
+			t.Fatalf("body=%s error=%v", body, err)
+		}
+	}
+}
+
 func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	for _, item := range []struct{ endpoint, contentType, encoding string }{{"/unknown", "application/json", ""}, {"/v1/responses", "text/plain", ""}, {"/v1/responses", "application/json", "gzip"}} {
 		_, err := Parse(item.endpoint, item.contentType, item.encoding, []byte(`{}`))

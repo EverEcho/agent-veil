@@ -172,8 +172,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
 		return
 	}
+	mcpVersion := ""
 	if route.Protocol == domain.ProtocolMCPStreamable {
-		if _, err := protocol.ResolveMCPStreamableVersion(r.Header.Values(protocol.HeaderMCPProtocolVersion)); err != nil {
+		var err error
+		if mcpVersion, err = protocol.ResolveMCPStreamableVersion(r.Header.Values(protocol.HeaderMCPProtocolVersion)); err != nil {
 			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = domain.ErrUnknownProtocol
 			fail(w, http.StatusBadRequest, string(domain.ErrUnknownProtocol))
@@ -203,6 +205,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		surfaceID = routeID
 	}
 	processed := pipeline.Result{Body: body, Protocol: route.Protocol, Vault: vault}
+	mcpVersionMismatch := false
 	if r.Method != http.MethodPost {
 		if len(body) != 0 {
 			auditEvent.Action = domain.ActionBlock
@@ -212,12 +215,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+		if err == nil && route.Protocol == domain.ProtocolMCPStreamable {
+			err = protocol.ValidateMCPStreamableBodyVersion(mcpVersion, processed.Body)
+			mcpVersionMismatch = err != nil
+		}
 	}
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
-		fail(w, http.StatusForbidden, errorCode(err))
+		status := http.StatusForbidden
+		if mcpVersionMismatch {
+			status = http.StatusBadRequest
+		}
+		fail(w, status, errorCode(err))
 		return
 	}
 	target := *route.Upstream
