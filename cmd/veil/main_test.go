@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/instance"
 )
 
 func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
@@ -40,5 +43,20 @@ func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing
 	joined := strings.Join(environment, "\n")
 	if strings.Contains(joined, "real-provider-key") || strings.Count(joined, "ANTHROPIC_API_KEY=") != 1 || !strings.Contains(joined, "ANTHROPIC_API_KEY=veil-v1:session:route") {
 		t.Fatalf("environment=%v", environment)
+	}
+}
+
+func TestResolveCoreEndpointUsesExplicitValueOrSecureState(t *testing.T) {
+	if got, err := resolveCoreEndpoint("http://127.0.0.1:1234"); err != nil || got != "http://127.0.0.1:1234" {
+		t.Fatalf("explicit endpoint=%q err=%v", got, err)
+	}
+	configDirectory := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDirectory)
+	path := filepath.Join(configDirectory, "agentveil", "core.json")
+	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:4321", ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveCoreEndpoint(""); err != nil || got != "http://127.0.0.1:4321" {
+		t.Fatalf("discovered endpoint=%q err=%v", got, err)
 	}
 }

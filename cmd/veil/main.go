@@ -74,7 +74,11 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if name != "codex" && name != "claude" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
-	endpoint, adminToken := os.Getenv("VEIL_CORE_ENDPOINT"), os.Getenv("VEIL_ADMIN_TOKEN")
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	adminToken := os.Getenv("VEIL_ADMIN_TOKEN")
 	if _, err := core.ListenAddress(endpoint); err != nil {
 		return err
 	}
@@ -228,6 +232,12 @@ func serve() error {
 	if err := server.Start(); err != nil {
 		return err
 	}
+	statePath := filepath.Join(configDir, "core.json")
+	if err := instance.WriteState(statePath, instance.State{SchemaVersion: "v1", APIEndpoint: server.Endpoint(), ProcessID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
+		_ = server.Close(context.Background())
+		return err
+	}
+	defer instance.RemoveState(statePath)
 	fmt.Println(server.Endpoint())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -261,7 +271,11 @@ func writeInspection(writer io.Writer, manifest domain.AgentManifest) error {
 }
 
 func status() error {
-	endpoint, token := os.Getenv("VEIL_CORE_ENDPOINT"), os.Getenv("VEIL_ADMIN_TOKEN")
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	token := os.Getenv("VEIL_ADMIN_TOKEN")
 	if _, err := core.ListenAddress(endpoint); err != nil {
 		return err
 	}
@@ -282,4 +296,19 @@ func status() error {
 	}
 	fmt.Printf("AgentVeil Core: %s (API %s)\n", health["status"], health["api_version"])
 	return nil
+}
+
+func resolveCoreEndpoint(explicit string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	state, err := instance.LoadState(filepath.Join(configDir, "agentveil", "core.json"))
+	if err != nil {
+		return "", errors.New("AgentVeil Core endpoint is unavailable; start 'veil serve' or set VEIL_CORE_ENDPOINT")
+	}
+	return state.APIEndpoint, nil
 }
