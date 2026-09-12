@@ -64,3 +64,14 @@ func TestClaudeAPIKeyDiscoveryUsesIndirectRuntimeSource(t *testing.T) {
 		t.Fatalf("auth=%+v", auth)
 	}
 }
+
+func TestClaudeOAuthDiscoveryDoesNotClaimRewritableCoverage(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "2.1.220"}, Verified: map[string]map[string]struct{}{"claude": {"2.1.220": {}}}}
+	manifest, err := d.Inspect(context.Background(), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Surfaces[0].Rewritable || manifest.Surfaces[0].Auth.Type != domain.AuthPassthrough {
+		t.Fatalf("OAuth surface overstated coverage: %+v", manifest.Surfaces[0])
+	}
+}

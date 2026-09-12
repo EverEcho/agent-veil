@@ -80,10 +80,12 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			}
 		}
 		auth := domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "Claude login"}
+		rewritable := false
 		if value, ok := d.System.LookupEnv("ANTHROPIC_API_KEY"); ok && value != "" {
 			auth = domain.AuthStrategy{Type: domain.AuthAnthropicKey, Source: "environment:ANTHROPIC_API_KEY"}
+			rewritable = true
 		}
-		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Rewritable: true, Required: true}}
+		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Rewritable: rewritable, Required: true}}
 	case "hermes", "cursor":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}

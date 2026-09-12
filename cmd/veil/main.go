@@ -79,15 +79,15 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if err != nil {
 		return err
 	}
+	if name == "claude" && (len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Auth.Type != domain.AuthAnthropicKey) {
+		return errors.New("protected Claude launch currently requires ANTHROPIC_API_KEY; OAuth mode has no verified capability-header injection")
+	}
 	plan, err := planner.Build(manifest, runtimeOptions())
 	if err != nil {
 		return err
 	}
 	if len(plan.Routes) != 1 || plan.Summary.Protected != plan.Summary.Total {
 		return errors.New("agent does not have exactly one fully protected route")
-	}
-	if name == "claude" && plan.Routes[0].Auth.Type != domain.AuthAnthropicKey {
-		return errors.New("protected Claude launch currently requires ANTHROPIC_API_KEY; OAuth mode has no verified capability-header injection")
 	}
 	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents", adminToken, manifest, nil); err != nil {
 		return err
