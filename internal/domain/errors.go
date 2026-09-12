@@ -14,6 +14,7 @@ const (
 	ErrVaultDestroyed       ErrorCode = "VAULT_DESTROYED"
 	ErrUnknownPlaceholder   ErrorCode = "UNKNOWN_PLACEHOLDER"
 	ErrMalformedPlaceholder ErrorCode = "MALFORMED_PLACEHOLDER"
+	ErrInvalidOrigin        ErrorCode = "INVALID_ORIGIN"
 	ErrUpstreamDenied       ErrorCode = "UPSTREAM_DENIED"
 	ErrUnauthorizedRoute    ErrorCode = "UNAUTHORIZED_ROUTE"
 	ErrPolicyBlocked        ErrorCode = "POLICY_BLOCKED"

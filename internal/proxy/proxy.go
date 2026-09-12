@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -109,6 +110,10 @@ func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) 
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !validLocalOrigin(r) {
+		fail(w, http.StatusForbidden, string(domain.ErrInvalidOrigin))
+		return
+	}
 	routeID, endpoint, ok := splitRoutePath(r.URL.Path)
 	if !ok {
 		fail(w, http.StatusNotFound, "UNKNOWN_ROUTE")
@@ -381,6 +386,30 @@ func allowedMethods(protocolType domain.Protocol) string {
 		return http.MethodDelete + ", " + http.MethodGet + ", " + http.MethodPost
 	}
 	return http.MethodPost
+}
+
+func validLocalOrigin(request *http.Request) bool {
+	value := strings.TrimSpace(request.Header.Get("Origin"))
+	if value == "" {
+		return true
+	}
+	origin, err := url.Parse(value)
+	if err != nil || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return false
+	}
+	expectedScheme := "http"
+	if request.TLS != nil {
+		expectedScheme = "https"
+	}
+	if !strings.EqualFold(origin.Scheme, expectedScheme) {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(origin.Hostname()), ".")
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return false
+	}
+	return strings.EqualFold(origin.Host, request.Host)
 }
 
 func EncodeCapability(sessionID, routeToken string) string {
