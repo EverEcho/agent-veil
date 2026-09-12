@@ -37,7 +37,7 @@ type Scanner struct {
 
 func NewDefault() *Scanner {
 	return &Scanner{rules: []rule{
-		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`), nil, 0},
+		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----`), nil, 0},
 		{"secret.github_pat", "secret.github_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`), nil, 0},
 		{"secret.openai_key", "secret.openai_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b`), nil, 0},
 		{"secret.anthropic_key", "secret.anthropic_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`), nil, 0},
@@ -47,8 +47,10 @@ func NewDefault() *Scanner {
 		{"secret.gitlab_pat", "secret.gitlab_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`), nil, 0},
 		{"secret.stripe_key", "secret.stripe_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b`), nil, 0},
 		{"secret.jwt", "secret.jwt", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), nil, 0},
+		{"secret.bearer", "secret.bearer", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)\bBearer[ \t]+([A-Za-z0-9._~+/=-]{16,})`), highEntropy, 1},
 		{"secret.database_url", "secret.database_url", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:@/]+:[^\s@/]+@[^\s]+`), nil, 0},
-		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)(?:password|api_key|token)\s*=\s*([^\s;]{8,})`), highEntropy, 1},
+		{"secret.aws_secret_key", "secret.aws_secret_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)\bAWS_SECRET_ACCESS_KEY\s*=\s*["']?([A-Za-z0-9/+=]{40})["']?`), nil, 1},
+		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)(?:password|api_key|token)\s*=\s*["']?([^\s;"']{8,})["']?`), highEntropy, 1},
 		{"pii.email", "pii.email", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`), nil, 0},
 		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil, 0},
 		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},

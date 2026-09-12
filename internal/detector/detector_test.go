@@ -20,6 +20,36 @@ func TestCaptureGroupPreservesAssignmentContext(t *testing.T) {
 	}
 }
 
+func TestContextualSecretsPreserveSyntax(t *testing.T) {
+	text := `Authorization: Bearer Abcdefghijklmnop123456 export OPENAI_API_KEY="sk-examplevalue1234567890" AWS_SECRET_ACCESS_KEY='AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/=='`
+	matches := scan(t, NewDefault(), text)
+	values := map[string]string{}
+	for _, match := range matches {
+		values[match.Finding.Category] = match.Value
+	}
+	for category, want := range map[string]string{
+		"secret.bearer":         "Abcdefghijklmnop123456",
+		"secret.openai_key":     "sk-examplevalue1234567890",
+		"secret.aws_secret_key": "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/==",
+	} {
+		if got := values[category]; got != want {
+			t.Fatalf("category %s value=%q want=%q matches=%+v", category, got, want, matches)
+		}
+	}
+	if len(matches) != 3 {
+		t.Fatalf("unexpected contextual matches: %+v", matches)
+	}
+}
+
+func TestEncryptedAndDSAPrivateKeysAreBlocked(t *testing.T) {
+	for _, marker := range []string{"-----BEGIN ENCRYPTED PRIVATE KEY-----", "-----BEGIN DSA PRIVATE KEY-----"} {
+		matches := scan(t, NewDefault(), marker)
+		if len(matches) != 1 || matches[0].Finding.Category != "secret.private_key" || matches[0].Finding.SuggestedAction != "block" {
+			t.Fatalf("marker %q matches=%+v", marker, matches)
+		}
+	}
+}
+
 func TestProviderSecretFamilies(t *testing.T) {
 	text := "AKIAABCDEFGHIJKLMNOP xoxb-1234567890-abcdefghijklmnop glpat-abcdefghijklmnopqrst sk_live_abcdefghijklmnopqrst eyJabcdef.abcdefgh.abcdefgh"
 	if matches := scan(t, NewDefault(), text); len(matches) != 5 {
