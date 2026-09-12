@@ -18,7 +18,15 @@ type ChunkedScanner struct {
 	maxCacheEntries          int
 }
 
-const defaultChunkCacheEntries = 1024
+const (
+	DefaultChunkBytes        = 64 << 10
+	DefaultOverlapBytes      = 4 << 10
+	defaultChunkCacheEntries = 1024
+)
+
+func NewDefaultChunked() (*ChunkedScanner, error) {
+	return NewChunked(NewDefault(), DefaultChunkBytes, DefaultOverlapBytes)
+}
 
 func NewChunked(scanner *Scanner, chunkBytes, overlapBytes int) (*ChunkedScanner, error) {
 	return NewChunkedWithCacheLimit(scanner, chunkBytes, overlapBytes, defaultChunkCacheEntries)

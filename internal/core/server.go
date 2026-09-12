@@ -53,6 +53,7 @@ type Server struct {
 	discoverer interface {
 		DetectAll(context.Context) []discovery.Detection
 	}
+	scanner detector.ContentScanner
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -61,7 +62,11 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if manager == nil || len(adminToken) < 32 {
 		return nil, errors.New("manager and an admin token of at least 32 characters are required")
 	}
-	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default()}, nil
+	scanner, err := detector.NewDefaultChunked()
+	if err != nil {
+		return nil, err
+	}
+	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default(), scanner: scanner}, nil
 }
 
 func (s *Server) WithDiscoverer(value interface {
@@ -589,7 +594,7 @@ func (s *Server) proxyHandler() http.Handler {
 		if selectedAgentKind == "claude" && selected.Auth.Type == domain.AuthAnthropicKey {
 			capabilityHeader = "X-Api-Key"
 		}
-		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.scanner)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

@@ -26,8 +26,8 @@ const (
 	HeaderSession       = "X-Veil-Session"
 	HeaderRouteToken    = "X-Veil-Route-Token"
 	CapabilityPrefix    = "veil-v1:"
-	defaultChunkBytes   = 64 << 10
-	defaultOverlapBytes = 4 << 10
+	defaultChunkBytes   = detector.DefaultChunkBytes
+	defaultOverlapBytes = detector.DefaultOverlapBytes
 )
 
 type Route struct {
@@ -63,12 +63,19 @@ type Handler struct {
 }
 
 func NewHandler(sessions *session.Manager, routes []Route, client *http.Client) (*Handler, error) {
+	scanner, err := detector.NewDefaultChunked()
+	if err != nil {
+		return nil, err
+	}
+	return NewHandlerWithScanner(sessions, routes, client, scanner)
+}
+
+func NewHandlerWithScanner(sessions *session.Manager, routes []Route, client *http.Client, scanner detector.ContentScanner) (*Handler, error) {
 	if sessions == nil || client == nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "session manager and HTTP client are required")
 	}
-	scanner, err := detector.NewChunked(detector.NewDefault(), defaultChunkBytes, defaultOverlapBytes)
-	if err != nil {
-		return nil, err
+	if scanner == nil {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "content scanner is required")
 	}
 	h := &Handler{sessions: sessions, routes: make(map[string]configuredRoute, len(routes)), client: client, scanner: scanner}
 	for _, route := range routes {

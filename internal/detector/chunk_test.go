@@ -30,6 +30,13 @@ func (pathSemantic) Detect(path, text string) ([]domain.Finding, error) {
 	return []domain.Finding{{RuleID: "pii.semantic_name", Category: "pii.semantic_name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: path, Start: 0, End: 1}, Confidence: 0.8, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
 }
 
+type countingSemantic struct{ calls int }
+
+func (s *countingSemantic) Detect(string, string) ([]domain.Finding, error) {
+	s.calls++
+	return nil, nil
+}
+
 func TestRequiredSemanticDetectorFailsClosed(t *testing.T) {
 	_, err := NewDefault().WithSemantic(failedSemantic{}, true).ScanChecked("/x", "ordinary text")
 	var veil *domain.VeilError
@@ -128,5 +135,22 @@ func TestChunkCacheKeyIncludesSemanticFieldPath(t *testing.T) {
 	}
 	if matches, err := scanner.ScanChecked("/ordinary", text); err != nil || len(matches) != 0 {
 		t.Fatalf("path-dependent finding was reused: matches=%+v err=%v", matches, err)
+	}
+}
+
+func TestChunkCacheReusesRepeatedConversationContent(t *testing.T) {
+	semantic := &countingSemantic{}
+	scanner, err := NewChunked(NewDefault().WithSemantic(semantic, true), 256, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("ordinary conversation history ", 4)
+	for range 2 {
+		if _, err := scanner.ScanChecked("/input", text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if semantic.calls != 1 {
+		t.Fatalf("semantic detector calls=%d want=1", semantic.calls)
 	}
 }
