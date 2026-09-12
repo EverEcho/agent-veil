@@ -3,17 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/session"
 )
 
 func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
@@ -71,6 +77,35 @@ func TestResolveCoreEndpointUsesExplicitValueOrSecureState(t *testing.T) {
 	}
 	if got, err := resolveCoreEndpoint(""); err != nil || got != "http://127.0.0.1:4321" {
 		t.Fatalf("discovered endpoint=%q err=%v", got, err)
+	}
+}
+
+func TestConfigureRuleStoreRequiresCanonicalTrustKey(t *testing.T) {
+	server, _ := core.New(session.NewManager(), "01234567890123456789012345678901")
+	configDirectory := t.TempDir()
+	if err := configureRuleStore(server, configDirectory, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureRuleStore(server, configDirectory, "invalid", ""); err == nil {
+		t.Fatal("invalid rule trust key was accepted")
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(public)
+	if err := configureRuleStore(server, configDirectory, encoded, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(configDirectory, "rules"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("unsafe rule directory mode=%v", info.Mode())
+	}
+	if err := configureRuleStore(server, configDirectory, "", filepath.Join(configDirectory, "custom-rules")); err == nil {
+		t.Fatal("rule path without trust key was accepted")
 	}
 }
 

@@ -68,6 +68,19 @@ export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
 go run ./cmd/veil serve
 ```
 
+To load an installed signed rule pack, configure its trusted Ed25519 public key
+in canonical base64. The store defaults to the private AgentVeil configuration
+directory and may be overridden with an absolute path:
+
+```bash
+export VEIL_RULE_VERIFY_KEY='base64-ed25519-public-key'
+export VEIL_RULE_STORE_PATH='/absolute/path/to/agentveil/rules'
+```
+
+An absent active rule version keeps the built-in rules. An invalid active
+pointer, signature, digest, JSON document, or compiled rule prevents Core from
+starting.
+
 Other commands discover the active random loopback endpoint from a 0600 local
 state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 

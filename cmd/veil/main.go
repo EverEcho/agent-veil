@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,7 @@ import (
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -288,6 +291,9 @@ func serve() error {
 	if err := server.WithPolicyStore(policyStore); err != nil {
 		return err
 	}
+	if err := configureRuleStore(server, configDir, os.Getenv("VEIL_RULE_VERIFY_KEY"), os.Getenv("VEIL_RULE_STORE_PATH")); err != nil {
+		return err
+	}
 	auditPath := os.Getenv("VEIL_AUDIT_PATH")
 	if auditPath == "" {
 		auditPath = filepath.Join(configDir, "audit.jsonl")
@@ -320,6 +326,28 @@ func serve() error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return server.Close(shutdown)
+}
+
+func configureRuleStore(server *core.Server, configDir, encodedKey, configuredPath string) error {
+	if encodedKey == "" && configuredPath == "" {
+		return nil
+	}
+	if server == nil || encodedKey == "" {
+		return errors.New("VEIL_RULE_VERIFY_KEY is required when rule storage is configured")
+	}
+	key, err := base64.StdEncoding.DecodeString(encodedKey)
+	if err != nil || len(key) != ed25519.PublicKeySize || base64.StdEncoding.EncodeToString(key) != encodedKey {
+		return errors.New("VEIL_RULE_VERIFY_KEY must be a canonical base64 Ed25519 public key")
+	}
+	path := configuredPath
+	if path == "" {
+		path = filepath.Join(configDir, "rules")
+	}
+	store, err := rulestore.New(path, ed25519.PublicKey(key))
+	if err != nil {
+		return err
+	}
+	return server.WithRuleStore(store)
 }
 
 func runtimeOptions() planner.Options {
