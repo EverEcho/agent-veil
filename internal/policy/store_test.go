@@ -40,7 +40,7 @@ func TestASKBrokerIsOneTimeAndFailsClosedOnTimeout(t *testing.T) {
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		ids := broker.Pending()
 		if len(ids) > 0 {
-			id = ids[0]
+			id = ids[0].ID
 			break
 		}
 	}

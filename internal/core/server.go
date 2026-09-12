@@ -29,6 +29,8 @@ type Server struct {
 	listener   net.Listener
 	httpServer *http.Server
 	registry   *registry.Registry
+	broker     *policy.Broker
+	policy     policy.Engine
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -37,8 +39,10 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if manager == nil || len(adminToken) < 32 {
 		return nil, errors.New("manager and an admin token of at least 32 characters are required")
 	}
-	return &Server{manager: manager, adminToken: adminToken}, nil
+	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}}, nil
 }
+
+func (s *Server) WithPolicy(engine policy.Engine) *Server { s.policy = engine; return s }
 
 func (s *Server) Start() error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -55,6 +59,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/agents/{id}", s.auth(s.getAgent))
 	mux.HandleFunc("POST /v1/agents", s.auth(s.registerAgent))
 	mux.HandleFunc("DELETE /v1/agents/{id}", s.auth(s.deleteAgent))
+	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
+	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -62,6 +68,20 @@ func (s *Server) Start() error {
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() { _ = s.httpServer.Serve(listener) }()
 	return nil
+}
+
+func (s *Server) listApprovals(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.broker.Pending())
+}
+func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Action domain.Action `json:"action"`
+	}
+	if err := decodeManagement(r, &request); err != nil || !s.broker.Resolve(r.PathValue("id"), request.Action) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_APPROVAL"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +145,8 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 const dashboardHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AgentVeil</title><style>
 :root{color-scheme:dark;font-family:ui-sans-serif,system-ui;background:#0b0e14;color:#e8edf5}body{max-width:1100px;margin:0 auto;padding:40px 24px}h1{letter-spacing:-.04em}.muted{color:#8c98aa}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{background:#141925;border:1px solid #273044;border-radius:14px;padding:18px}.status{font-weight:700;text-transform:uppercase}.active,.protected,.local{color:#55d89b}.blocked,.unprotected{color:#ff6b76}.partial,.observed{color:#f2bd5a}button,input{background:#1e2635;color:inherit;border:1px solid #35415a;border-radius:8px;padding:10px}button{cursor:pointer}</style></head><body>
-<h1>AgentVeil</h1><p class="muted">Local privacy control plane</p><div><input id="token" type="password" placeholder="Management token"><button id="load">Load status</button></div><p id="message" class="muted"></p><div id="agents" class="grid"></div>
-<script>const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));document.querySelector('#load').onclick=async()=>{const token=document.querySelector('#token').value;const m=document.querySelector('#message');try{const r=await fetch('/v1/agents',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw Error(r.status);const rows=await r.json();m.textContent=rows.length+' agents discovered';document.querySelector('#agents').innerHTML=rows.map(x=>'<section class="card"><div class="status '+e(x.state)+'">'+e(x.state)+'</div><h2>'+e(x.manifest.agent.kind)+'</h2><p class="muted">'+e(x.manifest.agent.version||'unknown version')+'</p><p>Protected '+x.plan.summary.protected+' · Local '+x.plan.summary.local+' · Partial '+x.plan.summary.partial+' · Observed '+x.plan.summary.observed+' · Unprotected '+x.plan.summary.unprotected+'</p></section>').join('')}catch(err){m.textContent='Unable to load protected status';document.querySelector('#agents').textContent=''}}</script></body></html>`
+<h1>AgentVeil</h1><p class="muted">Local privacy control plane</p><div><input id="token" type="password" placeholder="Management token"><button id="load">Load status</button></div><p id="message" class="muted"></p><div id="approvals" class="grid"></div><div id="agents" class="grid"></div>
+<script>const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),token=()=>document.querySelector('#token').value;async function decide(id,action){await fetch('/v1/approvals/'+id,{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({action})});await load()}async function load(){const m=document.querySelector('#message');try{const headers={Authorization:'Bearer '+token()},[agents,approvals]=await Promise.all([fetch('/v1/agents',{headers}),fetch('/v1/approvals',{headers})]);if(!agents.ok||!approvals.ok)throw Error('unauthorized');const rows=await agents.json(),asks=await approvals.json();m.textContent=rows.length+' agents discovered';document.querySelector('#approvals').innerHTML=asks.map(x=>'<section class="card"><div class="status partial">Decision required</div><h2>'+e(x.finding.category)+'</h2><p>'+e(x.finding.severity)+' · '+e(x.finding.location.path)+'</p><button onclick="decide(\''+x.id+'\',\'redact\')">Redact once</button> <button onclick="decide(\''+x.id+'\',\'allow\')">Allow once</button> <button onclick="decide(\''+x.id+'\',\'block\')">Block</button></section>').join('');document.querySelector('#agents').innerHTML=rows.map(x=>'<section class="card"><div class="status '+e(x.state)+'">'+e(x.state)+'</div><h2>'+e(x.manifest.agent.kind)+'</h2><p class="muted">'+e(x.manifest.agent.version||'unknown version')+'</p><p>Protected '+x.plan.summary.protected+' · Local '+x.plan.summary.local+' · Partial '+x.plan.summary.partial+' · Observed '+x.plan.summary.observed+' · Unprotected '+x.plan.summary.unprotected+'</p></section>').join('')}catch(err){m.textContent='Unable to load protected status';document.querySelector('#agents').textContent=''}}document.querySelector('#load').onclick=load;setInterval(()=>{if(token())load()},1000)</script></body></html>`
 
 func (s *Server) Endpoint() string {
 	if s.listener == nil {
@@ -234,7 +254,7 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
 		}
-		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, Upstream: upstream, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

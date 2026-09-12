@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,6 +30,10 @@ type Route struct {
 	Policy                            policy.Engine
 	MaxRequestBytes, MaxResponseBytes int64
 	VaultLimits                       redactor.Limits
+	Interactive                       bool
+	Approver                          interface {
+		Request(context.Context, domain.Finding) (domain.Action, error)
+	}
 }
 type configuredRoute struct {
 	Route
@@ -106,7 +111,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer vault.Destroy()
-	processed, err := pipeline.Process(pipeline.Context{SurfaceID: routeID}, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	processed, err := pipeline.Process(pipeline.Context{SurfaceID: routeID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
 		return

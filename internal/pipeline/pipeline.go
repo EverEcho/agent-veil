@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"sort"
 
 	"github.com/agentveil/agentveil/internal/detector"
@@ -13,6 +14,10 @@ import (
 type Context struct {
 	AgentID, Workspace, Provider, SurfaceID string
 	Interactive                             bool
+	RequestContext                          context.Context
+	Approver                                interface {
+		Request(context.Context, domain.Finding) (domain.Action, error)
+	}
 }
 type Result struct {
 	Body     []byte
@@ -42,7 +47,22 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 			}
 			result.Findings = append(result.Findings, match.Finding)
 			result.Actions = append(result.Actions, decision.Action)
-			switch decision.Action {
+			action := decision.Action
+			if action == domain.ActionAsk {
+				if !ctx.Interactive || ctx.Approver == nil {
+					return Result{}, domain.NewError(domain.ErrInteractionRequired, "process request", "interactive policy decision is required")
+				}
+				requestContext := ctx.RequestContext
+				if requestContext == nil {
+					requestContext = context.Background()
+				}
+				action, err = ctx.Approver.Request(requestContext, match.Finding)
+				if err != nil {
+					return Result{}, err
+				}
+				result.Actions[len(result.Actions)-1] = action
+			}
+			switch action {
 			case domain.ActionBlock:
 				return Result{}, domain.NewError(domain.ErrPolicyBlocked, "process request", "policy blocked sensitive content")
 			case domain.ActionRedact:
@@ -52,8 +72,6 @@ func Process(ctx Context, endpoint, contentType, encoding string, body []byte, s
 				}
 				start, end := match.Finding.Location.Start, match.Finding.Location.End
 				text = text[:start] + placeholder + text[end:]
-			case domain.ActionAsk:
-				return Result{}, domain.NewError(domain.ErrInteractionRequired, "process request", "interactive policy decision is required")
 			}
 		}
 		if len(matches) > 0 {

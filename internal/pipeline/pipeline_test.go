@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -22,6 +23,19 @@ func TestRequestIsRedactedAndRecoverable(t *testing.T) {
 	restored, err := vault.Restore(string(result.Body))
 	if err != nil || !strings.Contains(restored, "dev@example.com") {
 		t.Fatalf("restore failed: %v %s", err, restored)
+	}
+}
+
+type redactApprover struct{}
+
+func (redactApprover) Request(context.Context, domain.Finding) (domain.Action, error) {
+	return domain.ActionRedact, nil
+}
+func TestInteractiveASKCanResolveToRedact(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	result, err := Process(Context{Interactive: true, RequestContext: context.Background(), Approver: redactApprover{}}, "/v1/responses", "application/json", "", []byte(`{"input":"dev@example.com"}`), detector.NewDefault(), policy.Engine{Default: domain.ActionAsk}, vault)
+	if err != nil || strings.Contains(string(result.Body), "dev@example.com") {
+		t.Fatalf("result=%s err=%v", result.Body, err)
 	}
 }
 

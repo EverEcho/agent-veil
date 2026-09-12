@@ -99,14 +99,22 @@ func (s *Store) Load() (Document, error) {
 	return document, nil
 }
 
+type Approval struct {
+	ID      string         `json:"id"`
+	Finding domain.Finding `json:"finding"`
+}
 type approvalResult struct{ action domain.Action }
+type pendingApproval struct {
+	finding domain.Finding
+	channel chan approvalResult
+}
 type Broker struct {
 	mu      sync.Mutex
-	pending map[string]chan approvalResult
+	pending map[string]pendingApproval
 }
 
-func NewBroker() *Broker { return &Broker{pending: map[string]chan approvalResult{}} }
-func (b *Broker) Request(ctx context.Context, _ domain.Finding) (domain.Action, error) {
+func NewBroker() *Broker { return &Broker{pending: map[string]pendingApproval{}} }
+func (b *Broker) Request(ctx context.Context, finding domain.Finding) (domain.Action, error) {
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
 		return domain.ActionBlock, err
@@ -114,7 +122,7 @@ func (b *Broker) Request(ctx context.Context, _ domain.Finding) (domain.Action, 
 	id := hex.EncodeToString(idBytes)
 	channel := make(chan approvalResult, 1)
 	b.mu.Lock()
-	b.pending[id] = channel
+	b.pending[id] = pendingApproval{finding: finding, channel: channel}
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); delete(b.pending, id); b.mu.Unlock() }()
 	select {
@@ -124,21 +132,21 @@ func (b *Broker) Request(ctx context.Context, _ domain.Finding) (domain.Action, 
 		return domain.ActionBlock, domain.NewError(domain.ErrInteractionRequired, "resolve ASK", "approval timed out")
 	}
 }
-func (b *Broker) Pending() []string {
+func (b *Broker) Pending() []Approval {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ids := make([]string, 0, len(b.pending))
-	for id := range b.pending {
-		ids = append(ids, id)
+	approvals := make([]Approval, 0, len(b.pending))
+	for id, pending := range b.pending {
+		approvals = append(approvals, Approval{ID: id, Finding: pending.finding})
 	}
-	return ids
+	return approvals
 }
 func (b *Broker) Resolve(id string, action domain.Action) bool {
 	if action != domain.ActionAllow && action != domain.ActionRedact && action != domain.ActionBlock {
 		return false
 	}
 	b.mu.Lock()
-	channel, ok := b.pending[id]
+	pending, ok := b.pending[id]
 	if ok {
 		delete(b.pending, id)
 	}
@@ -146,6 +154,6 @@ func (b *Broker) Resolve(id string, action domain.Action) bool {
 	if !ok {
 		return false
 	}
-	channel <- approvalResult{action: action}
+	pending.channel <- approvalResult{action: action}
 	return true
 }
