@@ -1,7 +1,9 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +38,7 @@ import (
 )
 
 const maxManagementBody = 64 << 10
+const maxRuleInstallBody = 2 << 20
 const defaultMaxConcurrentProxyRequests = 64
 const maxConcurrentProxyRequests = 4096
 const maxIntegrationLeaseSeconds = 3600
@@ -223,6 +226,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/discovery/{id}", s.auth(s.getInspection))
 	mux.HandleFunc("POST /v1/detect", s.auth(s.testDetection))
 	mux.HandleFunc("GET /v1/rules", s.auth(s.listRulePacks))
+	mux.HandleFunc("POST /v1/rules", s.auth(s.installRulePack))
 	mux.HandleFunc("PUT /v1/rules/active", s.auth(s.activateRulePack))
 	mux.HandleFunc("DELETE /v1/rules/active", s.auth(s.deactivateRulePack))
 	mux.HandleFunc("GET /", s.dashboard)
@@ -437,6 +441,11 @@ type rulePackInventory struct {
 	Versions []rulestore.Manifest `json:"versions"`
 }
 
+type rulePackInstall struct {
+	Manifest       rulestore.Manifest `json:"manifest"`
+	ArtifactBase64 string             `json:"artifact_base64"`
+}
+
 func (s *Server) listRulePacks(w http.ResponseWriter, _ *http.Request) {
 	if s.ruleStore == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
@@ -458,6 +467,28 @@ func (s *Server) listRulePacks(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) installRulePack(w http.ResponseWriter, r *http.Request) {
+	if s.ruleStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
+		return
+	}
+	var request rulePackInstall
+	if err := decodeManagementWithLimit(r, &request, maxRuleInstallBody); err != nil || request.ArtifactBase64 == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_RULE_PACK"})
+		return
+	}
+	payload, err := base64.StdEncoding.DecodeString(request.ArtifactBase64)
+	if err != nil || base64.StdEncoding.EncodeToString(payload) != request.ArtifactBase64 || int64(len(payload)) != request.Manifest.Size {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_RULE_PACK"})
+		return
+	}
+	if err := s.ruleStore.Install(request.Manifest, bytes.NewReader(payload)); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_INSTALLATION_FAILED"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, request.Manifest)
 }
 
 func (s *Server) activateRulePack(w http.ResponseWriter, r *http.Request) {
@@ -923,6 +954,13 @@ func routeIDFromPath(path string) (string, bool) {
 }
 
 func decodeManagement(r *http.Request, destination any) error {
+	return decodeManagementWithLimit(r, destination, maxManagementBody)
+}
+
+func decodeManagementWithLimit(r *http.Request, destination any, limit int64) error {
+	if r == nil || r.Body == nil || destination == nil || limit <= 0 {
+		return errors.New("management request, destination, and positive size limit are required")
+	}
 	contentTypes := r.Header.Values("Content-Type")
 	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
 		return errors.New("management request requires one valid application/json content type")
@@ -931,11 +969,11 @@ func decodeManagement(r *http.Request, destination any) error {
 	if len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") {
 		return errors.New("management request content encoding is unsupported or ambiguous")
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxManagementBody+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
 		return err
 	}
-	if len(body) > maxManagementBody {
+	if int64(len(body)) > limit {
 		return errors.New("management request too large")
 	}
 	if err := jsonsafe.Validate(body); err != nil {

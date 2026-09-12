@@ -624,6 +624,57 @@ func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
 	}
 }
 
+func TestRulePackManagementInstallsOnlyCanonicalSignedArtifacts(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := rulestore.New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithRuleStore(store); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(detector.RulePack{SchemaVersion: "v1", Rules: []detector.RuleDefinition{{ID: "custom.ticket", Category: "internal.ticket", Severity: domain.SeverityHigh, SuggestedAction: domain.ActionRedact, Pattern: `TICKET-[0-9]{6}`}}})
+	sum := sha256.Sum256(payload)
+	manifest := rulestore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, rulestore.SigningPayload(manifest)))
+	requestPayload, _ := json.Marshal(rulePackInstall{Manifest: manifest, ArtifactBase64: base64.StdEncoding.EncodeToString(payload)})
+	request := httptest.NewRequest(http.MethodPost, "/v1/rules", bytes.NewReader(requestPayload))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.installRulePack(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("installation status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.0.0" {
+		t.Fatalf("versions=%+v error=%v", versions, err)
+	}
+
+	for name, mutate := range map[string]func(*rulePackInstall){
+		"noncanonical base64": func(value *rulePackInstall) { value.ArtifactBase64 += "\n" },
+		"bad signature": func(value *rulePackInstall) {
+			value.Manifest.Version = "2.0.0"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := rulePackInstall{Manifest: manifest, ArtifactBase64: base64.StdEncoding.EncodeToString(payload)}
+			mutate(&candidate)
+			body, _ := json.Marshal(candidate)
+			request := httptest.NewRequest(http.MethodPost, "/v1/rules", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			s.installRulePack(recorder, request)
+			if recorder.Code == http.StatusCreated {
+				t.Fatal("unsafe rule artifact was installed")
+			}
+		})
+	}
+}
+
 func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var received string
 	var authorization string
@@ -718,8 +769,14 @@ func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
 		t.Fatalf("event=%+v", event)
 	}
 	encoded, _ := json.Marshal(event)
-	if strings.Contains(string(encoded), "api.example") || strings.Contains(string(encoded), "443") {
-		t.Fatalf("egress audit retained target metadata: %s", encoded)
+	var eventDocument map[string]any
+	if err := json.Unmarshal(encoded, &eventDocument); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"target", "host", "port", "upstream"} {
+		if _, exists := eventDocument[field]; exists {
+			t.Fatalf("egress audit retained target field %q: %s", field, encoded)
+		}
 	}
 	diagnosticRecorder := httptest.NewRecorder()
 	server.diagnostics(diagnosticRecorder, httptest.NewRequest(http.MethodGet, "/v1/diagnostics", nil))
