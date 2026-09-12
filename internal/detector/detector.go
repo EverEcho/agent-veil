@@ -34,6 +34,16 @@ type Semantic interface {
 	Detect(path, text string) ([]domain.Finding, error)
 }
 
+var structuredRuleIDs = map[string]struct{}{
+	"pii.cn.id_card": {},
+	"pii.cn.uscc":    {},
+	"pii.us.ssn":     {},
+	"pii.iban":       {},
+	"pii.bank_card":  {},
+	"pii.ipv4":       {},
+	"pii.ipv6":       {},
+}
+
 type Scanner struct {
 	rules            []rule
 	requiredFeatures map[string]featureSet
@@ -166,8 +176,12 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 			if rule.validate != nil && !rule.validate(value) {
 				continue
 			}
+			detectorName := "deterministic"
+			if _, structured := structuredRuleIDs[rule.id]; structured {
+				detectorName = "structured"
+			}
 			matches = append(matches, Match{Finding: domain.Finding{RuleID: rule.id, Category: rule.category, Severity: rule.severity,
-				Location: domain.ContentLocation{Path: path, Start: index[0], End: index[1]}, Confidence: 1, Detector: "deterministic", SuggestedAction: rule.action}, Value: value})
+				Location: domain.ContentLocation{Path: path, Start: index[0], End: index[1]}, Confidence: 1, Detector: detectorName, SuggestedAction: rule.action}, Value: value})
 		}
 	}
 	matches = append(matches, scanEntropyCandidates(path, text)...)
@@ -318,10 +332,14 @@ func Merge(matches []Match) []Match {
 }
 
 func priority(match Match) int {
-	score := map[domain.Severity]int{domain.SeverityLow: 1, domain.SeverityMedium: 2, domain.SeverityHigh: 3, domain.SeverityCritical: 4}[match.Finding.Severity]
-	if strings.HasPrefix(match.Finding.Category, "secret.") {
-		score += 10
+	score := map[domain.Severity]int{domain.SeverityLow: 10, domain.SeverityMedium: 20, domain.SeverityHigh: 30, domain.SeverityCritical: 40}[match.Finding.Severity]
+	if match.Finding.Detector == "structured" {
+		score += 1000
 	}
+	if strings.HasPrefix(match.Finding.Category, "secret.") && match.Finding.Detector != "entropy" {
+		score += 500
+	}
+	score += strings.Count(match.Finding.RuleID, ".")
 	return score
 }
 

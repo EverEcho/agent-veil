@@ -50,6 +50,36 @@ func TestMergeProtectsEntireOverlappingUnion(t *testing.T) {
 	}
 }
 
+func TestMergeFollowsValidatedSecretAndSpecificityPriority(t *testing.T) {
+	location := domain.ContentLocation{Path: "/x", Start: 0, End: 10}
+	tests := []struct {
+		name    string
+		matches []Match
+		winner  string
+	}{
+		{"validated-result", []Match{
+			{Finding: domain.Finding{RuleID: "secret.token", Category: "secret.token", Severity: domain.SeverityCritical, Detector: "deterministic", Location: location}, Value: "0123456789"},
+			{Finding: domain.Finding{RuleID: "pii.bank_card", Category: "pii.bank_card", Severity: domain.SeverityHigh, Detector: "structured", Location: location}, Value: "0123456789"},
+		}, "pii.bank_card"},
+		{"known-secret-over-entropy", []Match{
+			{Finding: domain.Finding{RuleID: "secret.high_entropy", Category: "secret.high_entropy", Severity: domain.SeverityCritical, Detector: "entropy", Location: location}, Value: "0123456789"},
+			{Finding: domain.Finding{RuleID: "secret.github_pat", Category: "secret.github_pat", Severity: domain.SeverityHigh, Detector: "deterministic", Location: location}, Value: "0123456789"},
+		}, "secret.github_pat"},
+		{"specific-rule", []Match{
+			{Finding: domain.Finding{RuleID: "pii.address", Category: "pii.address", Severity: domain.SeverityHigh, Detector: "semantic", Location: location}, Value: "0123456789"},
+			{Finding: domain.Finding{RuleID: "pii.address.street", Category: "pii.address.street", Severity: domain.SeverityHigh, Detector: "semantic", Location: location}, Value: "0123456789"},
+		}, "pii.address.street"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			merged := Merge(test.matches)
+			if len(merged) != 1 || merged[0].Finding.RuleID != test.winner {
+				t.Fatalf("merged=%+v", merged)
+			}
+		})
+	}
+}
+
 func TestSemanticDetectorCannotReturnAnotherFieldPath(t *testing.T) {
 	_, err := NewDefault().WithSemantic(wrongPathSemantic{}, true).ScanChecked("/input", "safe")
 	var veil *domain.VeilError
@@ -154,6 +184,11 @@ func TestStructuredChineseValidators(t *testing.T) {
 	valid := scan(t, scanner, "id 11010519491231002X uscc 91350211M000100Y46 tel 010-12345678")
 	if len(valid) != 3 {
 		t.Fatalf("valid=%+v", valid)
+	}
+	for _, match := range valid {
+		if match.Finding.Category != "pii.cn.landline" && match.Finding.Detector != "structured" {
+			t.Fatalf("validated match source=%q", match.Finding.Detector)
+		}
 	}
 	invalid := scan(t, scanner, "id 99010519490231002X uscc 91350211M000100Y44")
 	if len(invalid) != 0 {
