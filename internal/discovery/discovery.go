@@ -17,6 +17,23 @@ import (
 
 var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 
+var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
+
+type DetectionStatus string
+
+const (
+	DetectionVerified       DetectionStatus = "verified"
+	DetectionUnverified     DetectionStatus = "unverified"
+	DetectionVersionUnknown DetectionStatus = "version_unknown"
+)
+
+type Detection struct {
+	Agent      string          `json:"agent"`
+	Executable string          `json:"executable"`
+	Version    string          `json:"version,omitempty"`
+	Status     DetectionStatus `json:"status"`
+}
+
 type System interface {
 	LookPath(string) (string, error)
 	Version(context.Context, string) (string, error)
@@ -42,6 +59,30 @@ type Discoverer struct {
 
 func Default() Discoverer {
 	return Discoverer{System: OSSystem{}, Verified: compatibility.VerifiedVersions(runtime.GOOS)}
+}
+
+func (d Discoverer) DetectAll(ctx context.Context) []Detection {
+	result := make([]Detection, 0, len(SupportedAgents))
+	for _, name := range SupportedAgents {
+		executable, err := d.System.LookPath(name)
+		if err != nil {
+			continue
+		}
+		detection := Detection{Agent: name, Executable: executable, Status: DetectionVersionUnknown}
+		if output, versionErr := d.System.Version(ctx, executable); versionErr == nil {
+			detection.Version = versionPattern.FindString(output)
+		}
+		if detection.Version != "" {
+			detection.Status = DetectionUnverified
+			if versions := d.Verified[name]; versions != nil {
+				if _, ok := versions[detection.Version]; ok {
+					detection.Status = DetectionVerified
+				}
+			}
+		}
+		result = append(result, detection)
+	}
+	return result
 }
 
 func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManifest, error) {

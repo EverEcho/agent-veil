@@ -13,6 +13,24 @@ type fakeSystem struct {
 	environment     map[string]string
 }
 
+type inventorySystem struct {
+	installed map[string]string
+}
+
+func (f inventorySystem) LookPath(name string) (string, error) {
+	if _, ok := f.installed[name]; !ok {
+		return "", errors.New("missing")
+	}
+	return "/bin/" + name, nil
+}
+func (f inventorySystem) Version(_ context.Context, executable string) (string, error) {
+	name := strings.TrimPrefix(executable, "/bin/")
+	return f.installed[name], nil
+}
+func (f inventorySystem) ReadFile(string) ([]byte, error) { return nil, errors.New("unused") }
+func (f inventorySystem) LookupEnv(string) (string, bool) { return "", false }
+func (f inventorySystem) HomeDir() (string, error)        { return "/home/test", nil }
+
 func (f fakeSystem) LookPath(name string) (string, error)            { return "/bin/" + name, nil }
 func (f fakeSystem) Version(context.Context, string) (string, error) { return f.version, nil }
 func (f fakeSystem) ReadFile(string) ([]byte, error) {
@@ -109,5 +127,17 @@ func TestClaudeOAuthDiscoveryDoesNotClaimRewritableCoverage(t *testing.T) {
 	}
 	if manifest.Surfaces[0].Rewritable || manifest.Surfaces[0].Auth.Type != domain.AuthPassthrough {
 		t.Fatalf("OAuth surface overstated coverage: %+v", manifest.Surfaces[0])
+	}
+}
+
+func TestAutomaticDiscoveryReportsUnknownVersionsWithoutClaimingCompatibility(t *testing.T) {
+	d := Discoverer{System: inventorySystem{installed: map[string]string{
+		"codex":    "codex-cli 0.153.4",
+		"openclaw": "OpenClaw 9.9.9",
+		"cline":    "development build",
+	}}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	got := d.DetectAll(context.Background())
+	if len(got) != 3 || got[0].Agent != "codex" || got[0].Status != DetectionVerified || got[1].Agent != "openclaw" || got[1].Status != DetectionUnverified || got[2].Agent != "cline" || got[2].Status != DetectionVersionUnknown {
+		t.Fatalf("detections=%+v", got)
 	}
 }

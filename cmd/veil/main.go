@@ -40,13 +40,20 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <inspect|run|serve|status>")
+		return errors.New("usage: veil <discover|inspect|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
 		return serve()
 	case "status":
 		return status()
+	case "discover":
+		if len(args) != 1 {
+			return errors.New("usage: veil discover")
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(discovery.Default().DetectAll(context.Background()))
 	case "inspect":
 		if len(args) != 2 {
 			return errors.New("usage: veil inspect <codex|claude|hermes|cursor>")
