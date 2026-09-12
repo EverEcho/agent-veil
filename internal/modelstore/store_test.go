@@ -163,6 +163,61 @@ func TestStoreDeactivatesWithoutDeletingVerifiedModels(t *testing.T) {
 	}
 }
 
+func TestStoreRemovesOnlyVerifiedInactiveModels(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		payload := []byte("verified-model-" + version)
+		if err := store.Install(signedManifest(t, private, version, payload), bytes.NewReader(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Activate("1.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.1.0"); err == nil {
+		t.Fatal("active model was removed")
+	}
+	extra := filepath.Join(store.root, "versions", "1.0.0", "unexpected")
+	if err := os.WriteFile(extra, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.0.0"); err == nil {
+		t.Fatal("malformed model version was removed without surfacing its integrity failure")
+	}
+	if _, err := os.Stat(filepath.Join(store.root, "versions", "1.0.0", "manifest.json")); err != nil {
+		t.Fatalf("failed removal damaged verified files: %v", err)
+	}
+	if err := os.Remove(extra); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.1.0" {
+		t.Fatalf("versions=%+v error=%v", versions, err)
+	}
+	if file, _, err := store.Open("1.0.0"); err == nil {
+		file.Close()
+		t.Fatal("removed model remains available")
+	}
+	file, manifest, err := store.OpenActive()
+	if err != nil || manifest.Version != "1.1.0" {
+		if file != nil {
+			file.Close()
+		}
+		t.Fatalf("manifest=%+v error=%v", manifest, err)
+	}
+	file.Close()
+}
+
 func TestStoreRejectsUnsafeRootsAndVersions(t *testing.T) {
 	public, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

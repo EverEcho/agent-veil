@@ -158,9 +158,7 @@ func (s *Store) open(version string) (*os.File, Manifest, error) {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open model", "model manifest is invalid or ambiguous")
 	}
 	var manifest Manifest
-	decoder := json.NewDecoder(bytes.NewReader(manifestPayload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil || manifest.Version != version {
+	if err := decodeStrict(manifestPayload, &manifest); err != nil || manifest.Version != version {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open model", "model manifest does not match requested version")
 	}
 	if err := s.verifyManifest(manifest); err != nil {
@@ -259,6 +257,51 @@ func (s *Store) Deactivate() error {
 	return syncDirectory(s.root)
 }
 
+// Remove deletes one verified inactive version. Active or malformed versions
+// are retained so deletion cannot conceal integrity failures or invalidate the
+// selected rollback state.
+func (s *Store) Remove(version string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, _, err := s.open(version)
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	activePath := filepath.Join(s.root, "active.json")
+	payload, err := readPrivateFile(activePath, maxManifestBytes)
+	if err == nil {
+		var active activeVersion
+		if decodeStrict(payload, &active) != nil {
+			return domain.NewError(domain.ErrInvalidContract, "remove model", "active model pointer is invalid")
+		}
+		if active.Version == version {
+			return domain.NewError(domain.ErrInvalidContract, "remove model", "active model version cannot be removed")
+		}
+		activeFile, _, err := s.open(active.Version)
+		if err != nil {
+			return domain.NewError(domain.ErrInvalidContract, "remove model", "active model version is invalid")
+		}
+		if err := activeFile.Close(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	directory := filepath.Join(s.root, "versions", version)
+	for _, name := range []string{"model.onnx", "manifest.json"} {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(directory); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Join(s.root, "versions"))
+}
+
 func (s *Store) OpenActive() (*os.File, Manifest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -270,12 +313,26 @@ func (s *Store) OpenActive() (*os.File, Manifest, error) {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open active model", "active model pointer is invalid or ambiguous")
 	}
 	var active activeVersion
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&active); err != nil {
+	if err := decodeStrict(payload, &active); err != nil {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open active model", "active model pointer is invalid")
 	}
 	return s.open(active.Version)
+}
+
+func decodeStrict(payload []byte, target any) error {
+	if err := jsonsafe.Validate(payload); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("trailing JSON data")
+	}
+	return nil
 }
 
 func installedEntryCount(path string, limit int) (int, error) {
