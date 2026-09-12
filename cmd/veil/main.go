@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/core"
+	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/registry"
@@ -27,13 +28,24 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <serve|status>")
+		return errors.New("usage: veil <inspect|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
 		return serve()
 	case "status":
 		return status()
+	case "inspect":
+		if len(args) != 2 {
+			return errors.New("usage: veil inspect <codex|claude|hermes|cursor>")
+		}
+		manifest, err := discovery.Default().Inspect(context.Background(), args[1])
+		if err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(manifest)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
