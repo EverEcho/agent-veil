@@ -5,16 +5,16 @@ import (
 )
 
 type Scope struct {
-	AgentID     string
-	Workspace   string
-	Provider    string
-	SurfaceID   string
-	FindingType string
+	AgentID     string `json:"agent_id,omitempty"`
+	Workspace   string `json:"workspace,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	SurfaceID   string `json:"surface_id,omitempty"`
+	FindingType string `json:"finding_type,omitempty"`
 }
 
 type Rule struct {
-	Scope  Scope
-	Action domain.Action
+	Scope  Scope         `json:"scope"`
+	Action domain.Action `json:"action"`
 }
 
 type Decision struct {
