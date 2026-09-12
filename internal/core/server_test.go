@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/audit"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
@@ -106,7 +108,8 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	}
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")
-	s.WithRegistry(reg)
+	auditStore, _ := audit.NewStore(filepath.Join(t.TempDir(), "audit.jsonl"), time.Hour, nil)
+	s.WithRegistry(reg).WithAuditor(auditStore)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +126,17 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || strings.Contains(received, "dev@example.com") || !strings.Contains(string(body), "dev@example.com") {
 		t.Fatalf("status=%d provider=%s body=%s", response.StatusCode, received, body)
+	}
+	auditRequest, _ := http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/audit", nil)
+	auditRequest.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	auditResponse, err := http.DefaultClient.Do(auditRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer auditResponse.Body.Close()
+	var events []domain.AuditEvent
+	if err := json.NewDecoder(auditResponse.Body).Decode(&events); err != nil || len(events) != 1 || events[0].FindingCount != 1 || events[0].FindingTypes[0] != "pii.email" {
+		t.Fatalf("events=%+v err=%v", events, err)
 	}
 }
 

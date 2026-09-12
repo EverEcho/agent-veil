@@ -34,6 +34,9 @@ type Server struct {
 	auditor    interface {
 		Append(domain.AuditEvent) error
 	}
+	auditReader interface {
+		Recent(time.Time) ([]domain.AuditEvent, error)
+	}
 }
 
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
@@ -48,6 +51,11 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 func (s *Server) WithPolicy(engine policy.Engine) *Server { s.policy = engine; return s }
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
 	s.auditor = value
+	if reader, ok := value.(interface {
+		Recent(time.Time) ([]domain.AuditEvent, error)
+	}); ok {
+		s.auditReader = reader
+	}
 	return s
 }
 
@@ -68,6 +76,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /v1/agents/{id}", s.auth(s.deleteAgent))
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
+	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -79,6 +88,22 @@ func (s *Server) Start() error {
 
 func (s *Server) listApprovals(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.broker.Pending())
+}
+func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
+	if s.auditReader == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "AUDIT_UNAVAILABLE"})
+		return
+	}
+	events, err := s.auditReader.Recent(time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "AUDIT_READ_FAILED"})
+		return
+	}
+	const limit = 500
+	if len(events) > limit {
+		events = events[len(events)-limit:]
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 	var request struct {
@@ -152,8 +177,8 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 const dashboardHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AgentVeil</title><style>
 :root{color-scheme:dark;font-family:ui-sans-serif,system-ui;background:#0b0e14;color:#e8edf5}body{max-width:1100px;margin:0 auto;padding:40px 24px}h1{letter-spacing:-.04em}.muted{color:#8c98aa}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{background:#141925;border:1px solid #273044;border-radius:14px;padding:18px}.status{font-weight:700;text-transform:uppercase}.active,.protected,.local{color:#55d89b}.blocked,.unprotected{color:#ff6b76}.partial,.observed{color:#f2bd5a}button,input{background:#1e2635;color:inherit;border:1px solid #35415a;border-radius:8px;padding:10px}button{cursor:pointer}</style></head><body>
-<h1>AgentVeil</h1><p class="muted">Local privacy control plane</p><div><input id="token" type="password" placeholder="Management token"><button id="load">Load status</button></div><p id="message" class="muted"></p><div id="approvals" class="grid"></div><div id="agents" class="grid"></div>
-<script>const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),token=()=>document.querySelector('#token').value;async function decide(id,action){await fetch('/v1/approvals/'+id,{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({action})});await load()}async function load(){const m=document.querySelector('#message');try{const headers={Authorization:'Bearer '+token()},[agents,approvals]=await Promise.all([fetch('/v1/agents',{headers}),fetch('/v1/approvals',{headers})]);if(!agents.ok||!approvals.ok)throw Error('unauthorized');const rows=await agents.json(),asks=await approvals.json();m.textContent=rows.length+' agents discovered';document.querySelector('#approvals').innerHTML=asks.map(x=>'<section class="card"><div class="status partial">Decision required</div><h2>'+e(x.finding.category)+'</h2><p>'+e(x.finding.severity)+' · '+e(x.finding.location.path)+'</p><button onclick="decide(\''+x.id+'\',\'redact\')">Redact once</button> <button onclick="decide(\''+x.id+'\',\'allow\')">Allow once</button> <button onclick="decide(\''+x.id+'\',\'block\')">Block</button></section>').join('');document.querySelector('#agents').innerHTML=rows.map(x=>'<section class="card"><div class="status '+e(x.state)+'">'+e(x.state)+'</div><h2>'+e(x.manifest.agent.kind)+'</h2><p class="muted">'+e(x.manifest.agent.version||'unknown version')+'</p><p>Protected '+x.plan.summary.protected+' · Local '+x.plan.summary.local+' · Partial '+x.plan.summary.partial+' · Observed '+x.plan.summary.observed+' · Unprotected '+x.plan.summary.unprotected+'</p></section>').join('')}catch(err){m.textContent='Unable to load protected status';document.querySelector('#agents').textContent=''}}document.querySelector('#load').onclick=load;setInterval(()=>{if(token())load()},1000)</script></body></html>`
+<h1>AgentVeil</h1><p class="muted">Local privacy control plane</p><div><input id="token" type="password" placeholder="Management token"><button id="load">Load status</button></div><p id="message" class="muted"></p><div id="approvals" class="grid"></div><div id="agents" class="grid"></div><h2>Recent decisions</h2><div id="audit" class="grid"></div>
+<script>const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),token=()=>document.querySelector('#token').value;async function decide(id,action){await fetch('/v1/approvals/'+id,{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({action})});await load()}async function load(){const m=document.querySelector('#message');try{const headers={Authorization:'Bearer '+token()},[agents,approvals,audit]=await Promise.all([fetch('/v1/agents',{headers}),fetch('/v1/approvals',{headers}),fetch('/v1/audit',{headers})]);if(!agents.ok||!approvals.ok||!audit.ok)throw Error('unauthorized');const rows=await agents.json(),asks=await approvals.json(),events=await audit.json();m.textContent=rows.length+' agents discovered · '+events.length+' retained decisions';document.querySelector('#approvals').innerHTML=asks.map(x=>'<section class="card"><div class="status partial">Decision required</div><h2>'+e(x.finding.category)+'</h2><p>'+e(x.finding.severity)+' · '+e(x.finding.location.path)+'</p><button onclick="decide(\''+x.id+'\',\'redact\')">Redact once</button> <button onclick="decide(\''+x.id+'\',\'allow\')">Allow once</button> <button onclick="decide(\''+x.id+'\',\'block\')">Block</button></section>').join('');document.querySelector('#agents').innerHTML=rows.map(x=>'<section class="card"><div class="status '+e(x.state)+'">'+e(x.state)+'</div><h2>'+e(x.manifest.agent.kind)+'</h2><p class="muted">'+e(x.manifest.agent.version||'unknown version')+'</p><p>Protected '+x.plan.summary.protected+' · Local '+x.plan.summary.local+' · Partial '+x.plan.summary.partial+' · Observed '+x.plan.summary.observed+' · Unprotected '+x.plan.summary.unprotected+'</p></section>').join('');document.querySelector('#audit').innerHTML=events.slice(-20).reverse().map(x=>'<section class="card"><div class="status '+e(x.action)+'">'+e(x.action)+'</div><p>'+e(x.agent_id||'unknown')+' · '+e(x.surface_id||'unknown')+'</p><p class="muted">'+e(x.protocol||'unknown')+' · '+Number(x.finding_count||0)+' findings · '+Number(x.latency_ms||0)+' ms'+(x.error_code?' · '+e(x.error_code):'')+'</p></section>').join('')}catch(err){m.textContent='Unable to load protected status';document.querySelector('#agents').textContent='';document.querySelector('#audit').textContent=''}}document.querySelector('#load').onclick=load;setInterval(()=>{if(token())load()},1000)</script></body></html>`
 
 func (s *Server) Endpoint() string {
 	if s.listener == nil {

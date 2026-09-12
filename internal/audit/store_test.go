@@ -3,6 +3,7 @@ package audit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,5 +34,27 @@ func TestStoreUsesPrivatePermissionsRetentionAndLeakScan(t *testing.T) {
 	info, _ := os.Stat(path)
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("audit mode=%o", info.Mode().Perm())
+	}
+	persisted, _ := os.ReadFile(path)
+	if strings.Contains(string(persisted), `"agent_id":"old"`) {
+		t.Fatalf("expired event remained on disk: %s", persisted)
+	}
+}
+
+func TestOpeningStorePrunesEventsOutsideRetention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	store, err := NewStore(path, 24*time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(domain.AuditEvent{Timestamp: time.Now().UTC().Add(-2 * time.Hour), AgentID: "expired", Action: domain.ActionAllow}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path, time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	persisted, _ := os.ReadFile(path)
+	if strings.Contains(string(persisted), "expired") {
+		t.Fatalf("expired event survived restart pruning: %s", persisted)
 	}
 }
