@@ -49,33 +49,33 @@ func (r *Registry) Reconcile(manifest domain.AgentManifest) (Entry, error) {
 	generation := previous.Generation + 1
 	if err != nil {
 		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: r.now(), ErrorCode: domain.ErrInvalidContract}
-		r.entries[manifest.Agent.ID] = blocked
-		return blocked, err
+		r.entries[manifest.Agent.ID] = cloneEntry(blocked)
+		return cloneEntry(blocked), err
 	}
 	for _, coverage := range plan.Coverage {
 		if coverage.Status == domain.CoverageUnprotected && required(manifest, coverage.SurfaceID) {
 			blocked := Entry{Manifest: manifest, Plan: plan, State: StateBlocked, Generation: generation, UpdatedAt: r.now(), ErrorCode: domain.ErrPolicyBlocked}
-			r.entries[manifest.Agent.ID] = blocked
-			return blocked, domain.NewError(domain.ErrPolicyBlocked, "reconcile integration", "required surface is unprotected")
+			r.entries[manifest.Agent.ID] = cloneEntry(blocked)
+			return cloneEntry(blocked), domain.NewError(domain.ErrPolicyBlocked, "reconcile integration", "required surface is unprotected")
 		}
 	}
 	entry := Entry{Manifest: manifest, Plan: plan, State: StateActive, Generation: generation, UpdatedAt: r.now()}
-	r.entries[manifest.Agent.ID] = entry
-	return entry, nil
+	r.entries[manifest.Agent.ID] = cloneEntry(entry)
+	return cloneEntry(entry), nil
 }
 
 func (r *Registry) Get(agentID string) (Entry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	entry, ok := r.entries[agentID]
-	return entry, ok
+	return cloneEntry(entry), ok
 }
 func (r *Registry) List() []Entry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	values := make([]Entry, 0, len(r.entries))
 	for _, entry := range r.entries {
-		values = append(values, entry)
+		values = append(values, cloneEntry(entry))
 	}
 	return values
 }
@@ -99,8 +99,43 @@ func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {
 		manifest = domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: agentID, Kind: "managed", Mode: domain.ModeManaged}}
 	}
 	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: previous.Generation + 1, UpdatedAt: r.now(), ErrorCode: code}
-	r.entries[agentID] = entry
-	return entry, domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
+	r.entries[agentID] = cloneEntry(entry)
+	return cloneEntry(entry), domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
+}
+
+func cloneEntry(source Entry) Entry {
+	result := source
+	result.Manifest = cloneManifest(source.Manifest)
+	result.Plan.Routes = append([]domain.ProtectedRoute(nil), source.Plan.Routes...)
+	result.Plan.Coverage = append([]domain.SurfaceCoverage(nil), source.Plan.Coverage...)
+	result.Plan.Risks = append([]domain.ProtectionRisk(nil), source.Plan.Risks...)
+	return result
+}
+
+func cloneManifest(source domain.AgentManifest) domain.AgentManifest {
+	result := source
+	result.Agent.Metadata = cloneStrings(source.Agent.Metadata)
+	result.Surfaces = make([]domain.EgressSurface, len(source.Surfaces))
+	for index, surface := range source.Surfaces {
+		result.Surfaces[index] = surface
+		result.Surfaces[index].Metadata = cloneStrings(surface.Metadata)
+		if surface.Upstream != nil {
+			upstream := *surface.Upstream
+			result.Surfaces[index].Upstream = &upstream
+		}
+	}
+	return result
+}
+
+func cloneStrings(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 func required(manifest domain.AgentManifest, id string) bool {
 	for _, surface := range manifest.Surfaces {

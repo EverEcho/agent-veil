@@ -119,3 +119,30 @@ func TestManagedMonitorRejectsInvalidConstructionAndEmptyRevision(t *testing.T) 
 		t.Fatalf("empty revision did not block: entry=%+v changed=%v err=%v", entry, changed, err)
 	}
 }
+
+func TestRegistrySnapshotsCannotMutateStoredProtectionState(t *testing.T) {
+	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
+	registry := New(options)
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Metadata: map[string]string{"owner": "plugin"}}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Metadata: map[string]string{"model": "safe"}, Rewritable: true, Required: true}}}
+	entry, err := registry.Reconcile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Agent.Metadata["owner"] = "mutated"
+	manifest.Surfaces[0].Protocol = domain.ProtocolUnknown
+	manifest.Surfaces[0].Upstream.Host = "attacker.example"
+	manifest.Surfaces[0].Metadata["model"] = "mutated"
+	entry.Manifest.Surfaces[0].Upstream.Host = "returned.example"
+	entry.Plan.Coverage[0].Status = domain.CoverageUnprotected
+
+	stored, ok := registry.Get("native")
+	if !ok || stored.Manifest.Agent.Metadata["owner"] != "plugin" || stored.Manifest.Surfaces[0].Protocol != domain.ProtocolOpenAIChat || stored.Manifest.Surfaces[0].Upstream.Host != "api.example" || stored.Manifest.Surfaces[0].Metadata["model"] != "safe" || stored.Plan.Coverage[0].Status != domain.CoverageProtected {
+		t.Fatalf("stored entry was mutated through a shared snapshot: %+v", stored)
+	}
+	listed := registry.List()
+	listed[0].Manifest.Surfaces[0].Metadata["model"] = "list-mutated"
+	stored, _ = registry.Get("native")
+	if stored.Manifest.Surfaces[0].Metadata["model"] != "safe" {
+		t.Fatalf("list result mutated registry: %+v", stored)
+	}
+}
