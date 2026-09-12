@@ -10,8 +10,8 @@ conservatively than discovered traffic.
 - domain models for agents, egress surfaces, manifests, routes, plans, sessions,
   findings, policies, networking and audit events;
 - a loopback-only Core with capability-authenticated routes, lifecycle-bound
-  sessions, version-negotiated management APIs, ASK decisions, bounded
-  concurrency, and safe shutdown;
+  sessions and pending ASK decisions, version-negotiated management APIs,
+  bounded concurrency, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
   Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
 - incremental SSE protection with cross-chunk secret detection and placeholder

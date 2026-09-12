@@ -644,6 +644,52 @@ func TestActiveProtectedRequestEndsWhenSessionIsDeleted(t *testing.T) {
 	}
 }
 
+func TestPendingASKEndsWhenSessionIsDeletedBeforeUpstream(t *testing.T) {
+	providerCalled := false
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	broker := policy.NewBroker()
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionAsk}, Interactive: true, Approver: broker, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"email dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, request)
+		close(requestDone)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for len(broker.Pending()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(broker.Pending()) != 1 {
+		t.Fatal("request did not enter pending ASK state")
+	}
+	if !manager.Delete(created.Session.ID) {
+		t.Fatal("session was not deleted")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("pending ASK survived explicit session deletion")
+	}
+	if recorder.Code != http.StatusForbidden || providerCalled || len(broker.Pending()) != 0 {
+		t.Fatalf("status=%d provider-called=%t pending=%d body=%s", recorder.Code, providerCalled, len(broker.Pending()), recorder.Body.String())
+	}
+}
+
 func TestStreamingResponseClearsServerWriteDeadline(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

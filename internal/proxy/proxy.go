@@ -167,6 +167,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
 		return
 	}
+	requestContext, cancel := context.WithDeadline(r.Context(), authorization.ExpiresAt)
+	stopRevocation := context.AfterFunc(authorization.Context, cancel)
+	defer func() {
+		stopRevocation()
+		cancel()
+	}()
 	started := time.Now()
 	auditEvent := domain.AuditEvent{SessionID: sessionID, AgentID: route.AgentID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, Action: domain.ActionAllow, WorkspaceRef: route.WorkspaceRef}
 	defer func() {
@@ -250,7 +256,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
 		if err == nil && route.Protocol == domain.ProtocolMCPStreamable {
 			err = protocol.ValidateMCPStreamableBodyVersion(mcpVersion, processed.Body)
 			mcpVersionMismatch = err != nil
@@ -270,12 +276,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := *route.Upstream
 	target.Path = joinBasePath(route.Upstream.Path, endpoint)
 	target.RawQuery = r.URL.RawQuery
-	requestContext, cancel := context.WithDeadline(r.Context(), authorization.ExpiresAt)
-	stopRevocation := context.AfterFunc(authorization.Context, cancel)
-	defer func() {
-		stopRevocation()
-		cancel()
-	}()
 	upstreamRequest, err := http.NewRequestWithContext(requestContext, r.Method, target.String(), bytes.NewReader(processed.Body))
 	if err != nil {
 		auditEvent.ErrorCode = "UPSTREAM_REQUEST_FAILED"
