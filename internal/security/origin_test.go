@@ -29,4 +29,15 @@ func TestLoopbackAuthorityAndOriginValidation(t *testing.T) {
 			t.Fatalf("unsafe origin accepted: %q", origin)
 		}
 	}
+	request.Header["Origin"] = []string{"http://127.0.0.1:43123", "https://attacker.example"}
+	if ValidLocalOrigin(request) {
+		t.Fatal("duplicate Origin headers were accepted")
+	}
+	request.Header["Origin"] = []string{""}
+	if ValidLocalOrigin(request) {
+		t.Fatal("explicit empty Origin header was accepted")
+	}
+	if ValidLocalOrigin(nil) {
+		t.Fatal("nil request was accepted")
+	}
 }

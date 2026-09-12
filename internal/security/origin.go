@@ -18,9 +18,19 @@ func ValidLoopbackAuthority(authority string) bool {
 }
 
 func ValidLocalOrigin(request *http.Request) bool {
-	value := strings.TrimSpace(request.Header.Get("Origin"))
-	if value == "" {
+	if request == nil {
+		return false
+	}
+	values := request.Header.Values("Origin")
+	if len(values) == 0 {
 		return true
+	}
+	if len(values) != 1 {
+		return false
+	}
+	value := strings.TrimSpace(values[0])
+	if value == "" {
+		return false
 	}
 	origin, err := url.Parse(value)
 	if err != nil || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || !ValidLoopbackAuthority(origin.Host) {
