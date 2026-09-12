@@ -144,9 +144,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		auditEvent.LatencyMS = time.Since(started).Milliseconds()
 		_ = route.Auditor.Append(auditEvent)
 	}()
-	if r.Method != http.MethodPost {
+	if !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
-		w.Header().Set("Allow", http.MethodPost)
+		w.Header().Set("Allow", allowedMethods(route.Protocol))
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
 		return
 	}
@@ -170,7 +170,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if surfaceID == "" {
 		surfaceID = routeID
 	}
-	processed, err := pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	processed := pipeline.Result{Body: body, Protocol: route.Protocol, Vault: vault}
+	if r.Method == http.MethodGet {
+		if len(body) != 0 {
+			auditEvent.ErrorCode = domain.ErrUnknownProtocol
+			fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+			return
+		}
+	} else {
+		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: r.Context(), Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+	}
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.ErrorCode = errorCodeValue(err)
@@ -354,6 +363,17 @@ func splitRoutePath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return id, "/" + suffix, true
+}
+
+func routeAllowsMethod(protocolType domain.Protocol, method string) bool {
+	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && method == http.MethodGet
+}
+
+func allowedMethods(protocolType domain.Protocol) string {
+	if protocolType == domain.ProtocolMCPStreamable {
+		return http.MethodGet + ", " + http.MethodPost
+	}
+	return http.MethodPost
 }
 
 func EncodeCapability(sessionID, routeToken string) string {

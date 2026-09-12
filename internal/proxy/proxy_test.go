@@ -246,6 +246,49 @@ func TestUnsupportedMethodFailsBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
+	providerMethod := ""
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerMethod = r.Method
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, err := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerMethod != http.MethodGet || !strings.Contains(recorder.Body.String(), `"value":"safe"`) {
+		t.Fatalf("status=%d method=%q body=%s", recorder.Code, providerMethod, recorder.Body.String())
+	}
+}
+
+func TestMCPStreamableGETRejectsRequestBody(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodGet, "/route/mcp/mcp", strings.NewReader("unexpected"))
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+	}
+}
+
 func TestProxyEvaluatesAgentProviderAndSurfacePolicyScope(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
