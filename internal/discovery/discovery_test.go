@@ -90,6 +90,25 @@ func TestHermesDiscoveryUsesVersionedConfigSurfaceEnumeration(t *testing.T) {
 	}
 }
 
+func TestOpenClawDiscoveryUsesManagedDiscoveryOnlySurfaces(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "OpenClaw 1.2.3", config: `{
+  agents: { defaults: { model: { primary: "corp/main", fallbacks: ["corp/backup"] } } },
+  models: { providers: { corp: { baseUrl: "https://models.example/v1", api: "openai-completions", apiKey: "secret" } } },
+}`}, Verified: map[string]map[string]struct{}{"openclaw": {"1.2.3": {}}}}
+	manifest, err := d.Inspect(context.Background(), "openclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Agent.Mode != domain.ModeManaged || len(manifest.Surfaces) != 2 {
+		t.Fatalf("manifest=%+v", manifest)
+	}
+	for _, surface := range manifest.Surfaces {
+		if surface.Rewritable || surface.Protocol != domain.ProtocolOpenAIChat || surface.Metadata["model_ref"] == "" {
+			t.Fatalf("surface overstated or incomplete: %+v", surface)
+		}
+	}
+}
+
 const hermesConfigFixtureForDiscovery = `
 model:
   provider: custom

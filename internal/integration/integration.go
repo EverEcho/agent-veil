@@ -14,6 +14,7 @@ type Slot struct {
 	Protocol             domain.Protocol
 	BaseURL              string
 	Auth                 domain.AuthStrategy
+	Metadata             map[string]string
 	Rewritable, Required bool
 }
 
@@ -69,7 +70,7 @@ func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
 		if auth.Type == "" {
 			auth.Type = domain.AuthPassthrough
 		}
-		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: slot.ID, Name: slot.Name, Type: slot.Type, Protocol: slot.Protocol, Upstream: upstream, Auth: auth, ConfigSource: config.ConfigSource, Rewritable: slot.Rewritable, Required: slot.Required})
+		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: slot.ID, Name: slot.Name, Type: slot.Type, Protocol: slot.Protocol, Upstream: upstream, Auth: auth, ConfigSource: config.ConfigSource, Rewritable: slot.Rewritable, Required: slot.Required, Metadata: cloneMetadata(slot.Metadata)})
 	}
 	for _, name := range config.LocalMCP {
 		id := "mcp-" + strings.NewReplacer(" ", "-", "/", "-").Replace(strings.ToLower(name))
@@ -79,6 +80,17 @@ func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
 		return domain.AgentManifest{}, err
 	}
 	return manifest, nil
+}
+
+func cloneMetadata(source map[string]string) map[string]string {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 type LaunchPlan struct {

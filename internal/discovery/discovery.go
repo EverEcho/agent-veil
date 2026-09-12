@@ -139,6 +139,17 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		} else {
 			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 		}
+	case "openclaw":
+		config.Mode = domain.ModeManaged
+		config.ConfigSource = filepath.Join(home, ".openclaw", "openclaw.json")
+		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
+			config.Observed, err = integration.ParseOpenClawConfig(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
+		}
 	case "cursor":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
