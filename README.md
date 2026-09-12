@@ -41,6 +41,9 @@ conservatively than discovered traffic.
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;
+- conservative OpenCode JSONC enumeration of primary/small models and local or
+  remote MCP surfaces, with inline, project, and managed override gaps reported
+  explicitly; no OpenCode release is yet marked as verified or protected;
 - scoped transparent-mode CA and process-egress assessment primitives. These are
   not yet a complete transparent interception product.
 
@@ -64,6 +67,7 @@ go run ./cmd/veil inspect codex
 go run ./cmd/veil inspect claude
 go run ./cmd/veil inspect hermes
 go run ./cmd/veil inspect openclaw
+go run ./cmd/veil inspect opencode
 go run ./cmd/veil run codex -- --help
 ```
 
