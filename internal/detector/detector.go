@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -50,7 +51,9 @@ func NewDefault() *Scanner {
 		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)(?:password|api_key|token)\s*=\s*([^\s;]{8,})`), highEntropy, 1},
 		{"pii.email", "pii.email", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`), nil, 0},
 		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil, 0},
+		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},
 		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID, 0},
+		{"pii.cn.uscc", "pii.cn.uscc", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9ABCDEFGHJKLMNPQRTUWXY]{18}\b`), validUSCC, 0},
 		{"pii.bank_card", "pii.bank_card", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{13,19}\b`), validLuhn, 0},
 		{"pii.ipv4", "pii.ipv4", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`), validIP, 0},
 		{"pii.mac", "pii.mac", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`), nil, 0},
@@ -155,6 +158,13 @@ func validCNID(value string) bool {
 	if len(value) != 18 {
 		return false
 	}
+	provinces := map[string]struct{}{"11": {}, "12": {}, "13": {}, "14": {}, "15": {}, "21": {}, "22": {}, "23": {}, "31": {}, "32": {}, "33": {}, "34": {}, "35": {}, "36": {}, "37": {}, "41": {}, "42": {}, "43": {}, "44": {}, "45": {}, "46": {}, "50": {}, "51": {}, "52": {}, "53": {}, "54": {}, "61": {}, "62": {}, "63": {}, "64": {}, "65": {}, "71": {}, "81": {}, "82": {}}
+	if _, ok := provinces[value[:2]]; !ok {
+		return false
+	}
+	if _, err := time.Parse("20060102", value[6:14]); err != nil {
+		return false
+	}
 	weights := [...]int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
 	checks := "10X98765432"
 	sum := 0
@@ -165,6 +175,21 @@ func validCNID(value string) bool {
 		sum += int(value[i]-'0') * weights[i]
 	}
 	return byte(unicode.ToUpper(rune(value[17]))) == checks[sum%11]
+}
+
+func validUSCC(value string) bool {
+	const alphabet = "0123456789ABCDEFGHJKLMNPQRTUWXY"
+	weights := [17]int{1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28}
+	sum := 0
+	for i := 0; i < 17; i++ {
+		index := strings.IndexByte(alphabet, value[i])
+		if index < 0 {
+			return false
+		}
+		sum += index * weights[i]
+	}
+	expected := alphabet[(31-sum%31)%31]
+	return value[17] == expected
 }
 
 func validIP(value string) bool { return net.ParseIP(value) != nil }
