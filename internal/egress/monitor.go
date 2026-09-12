@@ -52,26 +52,60 @@ type Assessment struct {
 	Risk       *domain.ProtectionRisk `json:"risk,omitempty"`
 }
 
+const (
+	MaxExpectedRoutes = 256
+	MaxLocalEndpoints = 256
+)
+
+type expectedKey struct {
+	ProcessIdentity
+	Transport Transport
+	Host      string
+	Port      uint16
+	RouteID   string
+}
+
+type localKey struct {
+	Transport Transport
+	Host      string
+	Port      uint16
+}
+
 func Assess(connections []Connection, expected []Expected) []Assessment {
 	return AssessWithLocalEndpoints(connections, expected, nil)
 }
 
 func AssessWithLocalEndpoints(connections []Connection, expected []Expected, localEndpoints []LocalEndpoint) []Assessment {
+	expectedIndex := make(map[expectedKey]Expected, len(expected))
+	for _, route := range expected {
+		if !validExpected(route) {
+			continue
+		}
+		key := expectedKey{ProcessIdentity: route.ProcessIdentity, Transport: route.Transport, Host: canonicalHost(route.Host), Port: route.Port, RouteID: route.RouteID}
+		if _, exists := expectedIndex[key]; !exists {
+			expectedIndex[key] = route
+		}
+	}
+	localIndex := make(map[localKey]struct{}, len(localEndpoints))
+	for _, endpoint := range localEndpoints {
+		if validLocalEndpoint(endpoint) {
+			localIndex[localKey{Transport: endpoint.Transport, Host: canonicalHost(endpoint.Host), Port: endpoint.Port}] = struct{}{}
+		}
+	}
 	results := make([]Assessment, 0, len(connections))
 	for _, connection := range connections {
 		var matched *Expected
-		for _, route := range expected {
-			if validExpected(route) && connection.ProcessIdentity == route.ProcessIdentity && connection.Transport == route.Transport && canonicalHost(connection.Host) == canonicalHost(route.Host) && connection.Port == route.Port && connection.ThroughRouteID == route.RouteID {
-				copy := route
-				matched = &copy
-				break
-			}
+		key := expectedKey{ProcessIdentity: connection.ProcessIdentity, Transport: connection.Transport, Host: canonicalHost(connection.Host), Port: connection.Port, RouteID: connection.ThroughRouteID}
+		if route, ok := expectedIndex[key]; ok {
+			copy := route
+			matched = &copy
 		}
 		if matched != nil && !connection.Blocked {
 			results = append(results, Assessment{Connection: connection, Status: StatusContentProtected, SurfaceID: matched.SurfaceID})
 			continue
 		}
-		if !connection.Blocked && matchesLocalEndpoint(connection, localEndpoints) {
+		_, local := localIndex[localKey{Transport: connection.Transport, Host: canonicalHost(connection.Host), Port: connection.Port}]
+		if !connection.Blocked && local {
 			results = append(results, Assessment{Connection: connection, Status: StatusLocal})
 			continue
 		}
@@ -91,15 +125,6 @@ func AssessWithLocalEndpoints(connections []Connection, expected []Expected, loc
 		results = append(results, Assessment{Connection: connection, Status: status, SurfaceID: surfaceID, Risk: &risk})
 	}
 	return results
-}
-
-func matchesLocalEndpoint(connection Connection, endpoints []LocalEndpoint) bool {
-	for _, endpoint := range endpoints {
-		if validLocalEndpoint(endpoint) && connection.Transport == endpoint.Transport && canonicalHost(connection.Host) == canonicalHost(endpoint.Host) && connection.Port == endpoint.Port {
-			return true
-		}
-	}
-	return false
 }
 
 func validLocalEndpoint(endpoint LocalEndpoint) bool {

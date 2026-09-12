@@ -55,6 +55,9 @@ func (o *Observer) Observe(expected []Expected) ([]Assessment, error) {
 func (o *Observer) ObserveWithLocalEndpoints(expected []Expected, localEndpoints []LocalEndpoint) ([]Assessment, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if len(expected) > MaxExpectedRoutes || len(localEndpoints) > MaxLocalEndpoints {
+		return nil, domain.NewError(domain.ErrInvalidContract, "observe process egress", "route and local endpoint sets exceed their limits")
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		snapshot, err := o.processes.Snapshot()
 		if err != nil {
@@ -69,6 +72,9 @@ func (o *Observer) ObserveWithLocalEndpoints(expected []Expected, localEndpoints
 				continue
 			}
 			return nil, err
+		}
+		if len(connections) > DefaultMaxConnections {
+			return nil, domain.NewError(domain.ErrInvalidContract, "observe process egress", "connection snapshot exceeds its limit")
 		}
 		return AssessWithLocalEndpoints(connections, expected, localEndpoints), nil
 	}

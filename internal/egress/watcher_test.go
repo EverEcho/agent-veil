@@ -108,6 +108,12 @@ func TestWatcherRejectsInvalidConfiguration(t *testing.T) {
 		func() (*Watcher, error) {
 			return NewWatcher(source, MaxWatchInterval+time.Nanosecond, nil, nil, handle)
 		},
+		func() (*Watcher, error) {
+			return NewWatcher(source, MinWatchInterval, make([]Expected, MaxExpectedRoutes+1), nil, handle)
+		},
+		func() (*Watcher, error) {
+			return NewWatcher(source, MinWatchInterval, nil, make([]LocalEndpoint, MaxLocalEndpoints+1), handle)
+		},
 	} {
 		if watcher, err := create(); err == nil || watcher != nil {
 			t.Fatalf("invalid watcher accepted: watcher=%+v err=%v", watcher, err)

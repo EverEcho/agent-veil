@@ -34,7 +34,7 @@ type Watcher struct {
 }
 
 func NewWatcher(source ObservationSource, interval time.Duration, expected []Expected, localEndpoints []LocalEndpoint, handle AssessmentHandler) (*Watcher, error) {
-	if source == nil || handle == nil || interval < MinWatchInterval || interval > MaxWatchInterval {
+	if source == nil || handle == nil || interval < MinWatchInterval || interval > MaxWatchInterval || len(expected) > MaxExpectedRoutes || len(localEndpoints) > MaxLocalEndpoints {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create egress watcher", "source, handler, and bounded interval are required")
 	}
 	return &Watcher{

@@ -134,3 +134,25 @@ func TestObserverFailsClosedAfterRepeatedProcessChurn(t *testing.T) {
 		t.Fatalf("assessments=%+v calls=%d err=%v", assessments, collector.calls, err)
 	}
 }
+
+func TestObserverRejectsUnboundedAssessmentSets(t *testing.T) {
+	root := identity(10, 100)
+	processes := fixedProcessSnapshotter{snapshot: []Process{{ProcessIdentity: root, ParentID: 1}}}
+	for _, test := range []struct {
+		expected    []Expected
+		local       []LocalEndpoint
+		connections []Connection
+	}{
+		{expected: make([]Expected, MaxExpectedRoutes+1)},
+		{local: make([]LocalEndpoint, MaxLocalEndpoints+1)},
+		{connections: make([]Connection, DefaultMaxConnections+1)},
+	} {
+		observer, err := NewObserver(root, 8, processes, &recordingConnectionSnapshotter{result: test.connections})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if assessments, err := observer.ObserveWithLocalEndpoints(test.expected, test.local); err == nil || assessments != nil {
+			t.Fatalf("unbounded assessment input accepted: assessments=%d err=%v", len(assessments), err)
+		}
+	}
+}
