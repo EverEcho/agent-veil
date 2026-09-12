@@ -59,24 +59,28 @@ func (e Engine) Decide(context Scope, interactive bool) (Decision, error) {
 	if err := context.Validate(); err != nil {
 		return Decision{}, err
 	}
+	if err := validateRules(e.Rules); err != nil {
+		return Decision{}, err
+	}
 	decision := Decision{Action: e.Default, Reason: "default policy"}
 	bestSpecificity := -1
+	explicitBlock := false
 	for i := range e.Rules {
 		rule := &e.Rules[i]
-		if !rule.Action.Valid() || rule.Scope.Validate() != nil {
-			return Decision{}, domain.NewError(domain.ErrInvalidContract, "evaluate policy", "rule action is invalid")
-		}
 		specificity, matches := match(rule.Scope, context)
 		if !matches {
 			continue
 		}
 		// An explicit block is never downgraded by another matching rule.
 		if rule.Action == domain.ActionBlock {
-			decision = Decision{Action: domain.ActionBlock, Rule: rule, Reason: "explicit matching block rule"}
-			bestSpecificity = specificity
+			if !explicitBlock || specificity > bestSpecificity {
+				decision = Decision{Action: domain.ActionBlock, Rule: rule, Reason: "explicit matching block rule"}
+				bestSpecificity = specificity
+			}
+			explicitBlock = true
 			continue
 		}
-		if decision.Action != domain.ActionBlock && specificity >= bestSpecificity {
+		if !explicitBlock && specificity > bestSpecificity {
 			decision = Decision{Action: rule.Action, Rule: rule, Reason: "most specific matching rule"}
 			bestSpecificity = specificity
 		}
@@ -86,6 +90,20 @@ func (e Engine) Decide(context Scope, interactive bool) (Decision, error) {
 		decision.Reason = "ASK fails closed in a non-interactive context"
 	}
 	return decision, nil
+}
+
+func validateRules(rules []Rule) error {
+	seen := make(map[Scope]struct{}, len(rules))
+	for _, rule := range rules {
+		if !rule.Action.Valid() || rule.Scope.Validate() != nil {
+			return domain.NewError(domain.ErrInvalidContract, "evaluate policy", "rule action or scope is invalid")
+		}
+		if _, duplicate := seen[rule.Scope]; duplicate {
+			return domain.NewError(domain.ErrInvalidContract, "evaluate policy", "duplicate policy scope is ambiguous")
+		}
+		seen[rule.Scope] = struct{}{}
+	}
+	return nil
 }
 
 func validProvider(value string) bool {
@@ -110,16 +128,24 @@ func validProvider(value string) bool {
 
 func match(rule, context Scope) (int, bool) {
 	specificity := 0
-	pairs := [][2]string{{rule.AgentID, context.AgentID}, {rule.Workspace, context.Workspace},
-		{rule.Provider, context.Provider}, {rule.SurfaceID, context.SurfaceID}, {rule.FindingType, context.FindingType}}
+	pairs := []struct {
+		rule, context string
+		weight        int
+	}{
+		{rule.AgentID, context.AgentID, 1},
+		{rule.Workspace, context.Workspace, 2},
+		{rule.Provider, context.Provider, 4},
+		{rule.SurfaceID, context.SurfaceID, 8},
+		{rule.FindingType, context.FindingType, 16},
+	}
 	for _, pair := range pairs {
-		if pair[0] == "" {
+		if pair.rule == "" {
 			continue
 		}
-		if pair[0] != pair[1] {
+		if pair.rule != pair.context {
 			return 0, false
 		}
-		specificity++
+		specificity += pair.weight
 	}
 	return specificity, true
 }
