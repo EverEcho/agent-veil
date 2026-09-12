@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -44,6 +45,7 @@ type activeVersion struct {
 type Store struct {
 	root      string
 	verifyKey ed25519.PublicKey
+	mu        sync.RWMutex
 }
 
 func New(root string, verifyKey ed25519.PublicKey) (*Store, error) {
@@ -64,6 +66,8 @@ func New(root string, verifyKey ed25519.PublicKey) (*Store, error) {
 }
 
 func (s *Store) Install(manifest Manifest, source io.Reader) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if source == nil {
 		return domain.NewError(domain.ErrInvalidContract, "install rule pack", "rule source is required")
 	}
@@ -76,6 +80,13 @@ func (s *Store) Install(manifest Manifest, source io.Reader) error {
 		return domain.NewError(domain.ErrInvalidContract, "install rule pack", "rule version is already installed")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	count, err := installedEntryCount(versions, maxInstalledVersions+1)
+	if err != nil {
+		return err
+	}
+	if count >= maxInstalledVersions {
+		return domain.NewError(domain.ErrInvalidContract, "install rule pack", "installed rule versions reached their limit")
 	}
 	temporary, err := os.MkdirTemp(versions, ".install-*")
 	if err != nil {
@@ -115,6 +126,12 @@ func (s *Store) Install(manifest Manifest, source io.Reader) error {
 }
 
 func (s *Store) Open(version string) (detector.RulePack, Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.open(version)
+}
+
+func (s *Store) open(version string) (detector.RulePack, Manifest, error) {
 	if !versionPattern.MatchString(version) {
 		return detector.RulePack{}, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open rule pack", "rule version is invalid")
 	}
@@ -149,6 +166,8 @@ func (s *Store) Open(version string) (detector.RulePack, Manifest, error) {
 
 // List returns only versions whose signed manifest and rule payload verify.
 func (s *Store) List() ([]Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	directory, err := os.Open(filepath.Join(s.root, "versions"))
 	if err != nil {
 		return nil, err
@@ -169,7 +188,7 @@ func (s *Store) List() ([]Manifest, error) {
 		if !versionPattern.MatchString(entry.Name()) || !entry.IsDir() {
 			return nil, domain.NewError(domain.ErrInvalidContract, "list rule packs", "rule versions directory contains an invalid entry")
 		}
-		_, manifest, err := s.Open(entry.Name())
+		_, manifest, err := s.open(entry.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +199,9 @@ func (s *Store) List() ([]Manifest, error) {
 }
 
 func (s *Store) Activate(version string) error {
-	if _, _, err := s.Open(version); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, _, err := s.open(version); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(activeVersion{Version: version})
@@ -193,6 +214,8 @@ func (s *Store) Activate(version string) error {
 // Deactivate removes only the active pointer so callers can immediately fall
 // back to built-in rules without deleting any verified rollback versions.
 func (s *Store) Deactivate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	activePath := filepath.Join(s.root, "active.json")
 	info, err := os.Lstat(activePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -211,6 +234,8 @@ func (s *Store) Deactivate() error {
 }
 
 func (s *Store) OpenActive() (detector.RulePack, Manifest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	payload, err := readPrivateFile(filepath.Join(s.root, "active.json"), maxManifestBytes)
 	if err != nil {
 		return detector.RulePack{}, Manifest{}, err
@@ -219,7 +244,23 @@ func (s *Store) OpenActive() (detector.RulePack, Manifest, error) {
 	if err := decodeStrict(payload, &active); err != nil {
 		return detector.RulePack{}, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open active rule pack", "active rule pointer is invalid")
 	}
-	return s.Open(active.Version)
+	return s.open(active.Version)
+}
+
+func installedEntryCount(path string, limit int) (int, error) {
+	directory, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	entries, readErr := directory.ReadDir(limit)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return 0, readErr
+	}
+	if closeErr != nil {
+		return 0, closeErr
+	}
+	return len(entries), nil
 }
 
 func (s *Store) verifyManifest(manifest Manifest) error {
