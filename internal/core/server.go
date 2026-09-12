@@ -22,6 +22,7 @@ import (
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/egress"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -204,6 +205,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
 	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
+	mux.HandleFunc("POST /v1/egress-events", s.auth(s.reportUnexpectedEgress))
 	mux.HandleFunc("GET /v1/call-tree", s.auth(s.getCallTree))
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
 	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
@@ -262,6 +264,59 @@ func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
 		events = events[len(events)-limit:]
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+type unexpectedEgressReport struct {
+	SessionID  string           `json:"session_id"`
+	AgentID    string           `json:"agent_id"`
+	Generation uint64           `json:"generation"`
+	RouteID    string           `json:"route_id"`
+	Transport  egress.Transport `json:"transport"`
+}
+
+func (s *Server) reportUnexpectedEgress(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil || s.auditor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "EGRESS_AUDIT_UNAVAILABLE"})
+		return
+	}
+	var report unexpectedEgressReport
+	if err := decodeManagement(r, &report); err != nil || report.SessionID == "" || report.AgentID == "" || report.Generation == 0 || report.RouteID == "" || report.Transport != egress.TransportTCP && report.Transport != egress.TransportUDP {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": string(domain.ErrInvalidContract)})
+		return
+	}
+	entry, ok := s.registry.Get(report.AgentID)
+	if !ok || entry.State != registry.StateActive || entry.Generation != report.Generation || !s.manager.ContainsRoute(report.SessionID, report.RouteID) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	var route *domain.ProtectedRoute
+	for index := range entry.Plan.Routes {
+		if entry.Plan.Routes[index].ID == report.RouteID {
+			route = &entry.Plan.Routes[index]
+			break
+		}
+	}
+	if route == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	event := domain.AuditEvent{
+		Timestamp:    time.Now().UTC(),
+		SessionID:    report.SessionID,
+		AgentID:      report.AgentID,
+		SurfaceID:    route.SurfaceID,
+		Protocol:     route.Protocol,
+		FindingTypes: []string{"network.unexpected_egress." + string(report.Transport)},
+		FindingCount: 1,
+		Severity:     domain.SeverityCritical,
+		Action:       domain.ActionBlock,
+		ErrorCode:    domain.ErrUnexpectedEgress,
+	}
+	if err := s.auditor.Append(event); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "AUDIT_WRITE_FAILED"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
 	engine := s.policyEngine()

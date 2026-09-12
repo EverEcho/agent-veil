@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -252,7 +253,7 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 	response.Body.Close()
 	routeID := registered.Plan.Routes[0].ID
-	if routeID != "route-primary-g1" {
+	if !strings.HasPrefix(routeID, "route-") || !strings.HasSuffix(routeID, "-g1") || len(routeID) != len("route-")+32+len("-g1") {
 		t.Fatalf("route was not generation bound: %q", routeID)
 	}
 	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
@@ -531,6 +532,52 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var events []domain.AuditEvent
 	if err := json.NewDecoder(auditResponse.Body).Decode(&events); err != nil || len(events) != 1 || events[0].FindingCount != 1 || events[0].FindingTypes[0] != "pii.email" {
 		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+func TestUnexpectedEgressReportIsBoundToLiveRouteAndPrivacySafe(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "agent", Kind: "test"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeID := registered.Plan.Routes[0].ID
+	manager := session.NewManager()
+	created, err := manager.Create("", "http://127.0.0.1:1", []string{routeID}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.jsonl"), time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, _ := New(manager, "01234567890123456789012345678901")
+	server.WithRegistry(reg).WithAuditor(store)
+	body := fmt.Sprintf(`{"session_id":%q,"agent_id":"agent","generation":%d,"route_id":%q,"transport":"udp"}`, created.Session.ID, registered.Generation, routeID)
+	request := httptest.NewRequest(http.MethodPost, "/v1/egress-events", strings.NewReader(body))
+	recorder := httptest.NewRecorder()
+	server.reportUnexpectedEgress(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	events, err := store.Recent(time.Now().UTC())
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	event := events[0]
+	if event.SessionID != created.Session.ID || event.AgentID != "agent" || event.SurfaceID != "primary" || event.Protocol != domain.ProtocolOpenAIResponses || event.Action != domain.ActionBlock || event.ErrorCode != domain.ErrUnexpectedEgress || event.FindingCount != 1 || len(event.FindingTypes) != 1 || event.FindingTypes[0] != "network.unexpected_egress.udp" {
+		t.Fatalf("event=%+v", event)
+	}
+	encoded, _ := json.Marshal(event)
+	if strings.Contains(string(encoded), "api.example") || strings.Contains(string(encoded), "443") {
+		t.Fatalf("egress audit retained target metadata: %s", encoded)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/egress-events", strings.NewReader(strings.Replace(body, fmt.Sprintf(`"generation":%d`, registered.Generation), `"generation":999`, 1)))
+	recorder = httptest.NewRecorder()
+	server.reportUnexpectedEgress(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("unbound report status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

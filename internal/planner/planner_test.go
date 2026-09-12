@@ -107,6 +107,23 @@ func TestBuildCreatesRouteOnlyForFullCapability(t *testing.T) {
 	}
 }
 
+func TestRouteIdentityIsStableAndUniqueAcrossAgents(t *testing.T) {
+	build := func(agentID string) domain.ProtectionPlan {
+		manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: agentID, Kind: "custom"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true}}}
+		plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+	first := build("agent-a")
+	repeated := build("agent-a")
+	second := build("agent-b")
+	if len(first.Routes) != 1 || first.Routes[0].ID != repeated.Routes[0].ID || first.Routes[0].ID == second.Routes[0].ID || len(first.Routes[0].ID) != len("route-")+32 {
+		t.Fatalf("route ids first=%q repeated=%q second=%q", first.Routes[0].ID, repeated.Routes[0].ID, second.Routes[0].ID)
+	}
+}
+
 func TestBuildUsesIndependentSurfaceNetworkRoutes(t *testing.T) {
 	direct := domain.NetworkRoute{Type: domain.NetworkDirect}
 	proxyRoute := domain.NetworkRoute{Type: domain.NetworkHTTPProxy, Endpoint: "http://127.0.0.1:8080"}

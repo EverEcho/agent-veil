@@ -1,8 +1,9 @@
 package planner
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/routing"
@@ -63,7 +64,7 @@ func Build(manifest domain.AgentManifest, options Options) (domain.ProtectionPla
 				continue
 			}
 		}
-		coverage, route, risks := classify(surface, options)
+		coverage, route, risks := classify(manifest.Agent.ID, surface, options)
 		plan.Coverage = append(plan.Coverage, coverage)
 		plan.Risks = append(plan.Risks, risks...)
 		if route != nil {
@@ -78,7 +79,7 @@ func Build(manifest domain.AgentManifest, options Options) (domain.ProtectionPla
 	return plan, nil
 }
 
-func classify(surface domain.EgressSurface, options Options) (domain.SurfaceCoverage, *domain.ProtectedRoute, []domain.ProtectionRisk) {
+func classify(agentID string, surface domain.EgressSurface, options Options) (domain.SurfaceCoverage, *domain.ProtectedRoute, []domain.ProtectionRisk) {
 	coverage := domain.SurfaceCoverage{SurfaceID: surface.ID}
 	if surface.Type == domain.SurfaceMCPStdio && surface.Protocol == domain.ProtocolLocalStdio {
 		coverage.Status, coverage.Reason = domain.CoverageLocal, "surface uses local stdio; descendant network egress is separate"
@@ -109,7 +110,7 @@ func classify(surface domain.EgressSurface, options Options) (domain.SurfaceCove
 		coverage.Status, coverage.Reason = domain.CoveragePartial, "request inspection is available but response or stream protection is incomplete"
 		return coverage, nil, []domain.ProtectionRisk{{SurfaceID: surface.ID, Code: domain.RiskRequestOnly, Severity: domain.SeverityHigh, Message: coverage.Reason}}
 	}
-	routeID := "route-" + sanitizeID(surface.ID)
+	routeID := protectedRouteID(agentID, surface.ID)
 	coverage.Status, coverage.Reason, coverage.RouteID = domain.CoverageProtected, "request, response and stream inspection are available", routeID
 	network := options.Network
 	if surface.Network != nil {
@@ -121,8 +122,9 @@ func classify(surface domain.EgressSurface, options Options) (domain.SurfaceCove
 	return coverage, route, nil
 }
 
-func sanitizeID(value string) string {
-	return strings.NewReplacer("/", "-", " ", "-", ":", "-").Replace(value)
+func protectedRouteID(agentID, surfaceID string) string {
+	digest := sha256.Sum256([]byte(agentID + "\x00" + surfaceID))
+	return "route-" + hex.EncodeToString(digest[:16])
 }
 
 func addSummary(summary *domain.CoverageSummary, status domain.CoverageStatus) {

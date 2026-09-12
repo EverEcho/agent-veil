@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -15,8 +16,9 @@ import (
 )
 
 const protectedEgressWatchInterval = 250 * time.Millisecond
+const protectedEgressReportTimeout = 2 * time.Second
 
-func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, processID int, endpoint string) (<-chan error, error) {
+func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, processID int, endpoint string, binding protectedEgressBinding) (<-chan error, error) {
 	identity, err := egress.LinuxProcessIdentity("", processID)
 	if err != nil {
 		return nil, fmt.Errorf("bind protected process identity: %w", err)
@@ -30,7 +32,25 @@ func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, p
 		return nil, err
 	}
 	watcher, err := egress.NewWatcher(observer, protectedEgressWatchInterval, nil, []egress.LocalEndpoint{localEndpoint}, func(_ context.Context, assessments []egress.Assessment) error {
-		return validateProtectedEgress(assessments)
+		validationErr := validateProtectedEgress(assessments)
+		if validationErr == nil {
+			return nil
+		}
+		for _, assessment := range assessments {
+			if assessment.Status != egress.StatusObserved {
+				continue
+			}
+			cancel()
+			report := map[string]any{"session_id": binding.SessionID, "agent_id": binding.AgentID, "generation": binding.Generation, "route_id": binding.RouteID, "transport": assessment.Connection.Transport}
+			reportContext, cancelReport := context.WithTimeout(context.Background(), protectedEgressReportTimeout)
+			reportErr := managementJSON(reportContext, "POST", endpoint+"/v1/egress-events", binding.AdminToken, report, nil)
+			cancelReport()
+			if reportErr != nil {
+				return errors.Join(validationErr, fmt.Errorf("report unexpected process egress: %w", reportErr))
+			}
+			break
+		}
+		return validationErr
 	})
 	if err != nil {
 		return nil, err

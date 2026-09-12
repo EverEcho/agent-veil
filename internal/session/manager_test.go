@@ -164,3 +164,20 @@ func TestPruneExpiredRevokesIdleParentAndChildSessions(t *testing.T) {
 		t.Fatalf("expired sessions retained=%d", len(m.sessions))
 	}
 }
+
+func TestContainsRouteValidatesLiveManagementOwnership(t *testing.T) {
+	m := NewManager()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	created, err := m.Create("", "local", []string{"primary"}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.ContainsRoute(created.Session.ID, "primary") || m.ContainsRoute(created.Session.ID, "other") || m.ContainsRoute("missing", "primary") {
+		t.Fatal("live route ownership was not validated exactly")
+	}
+	now = now.Add(2 * time.Second)
+	if m.ContainsRoute(created.Session.ID, "primary") || len(m.List()) != 0 {
+		t.Fatal("expired route ownership remained valid")
+	}
+}

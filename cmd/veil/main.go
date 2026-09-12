@@ -38,6 +38,14 @@ import (
 const protectedLaunchLease = 30 * time.Second
 const protectedLaunchHeartbeat = 10 * time.Second
 
+type protectedEgressBinding struct {
+	SessionID  string
+	AgentID    string
+	Generation uint64
+	RouteID    string
+	AdminToken string
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "veil:", err)
@@ -166,7 +174,8 @@ func runProtected(ctx context.Context, name string, childArgs []string) (resultE
 		<-leaseResult
 		return err
 	}
-	egressResult, err := startProtectedEgressWatch(childContext, cancelChild, command.Process.Pid, endpoint)
+	egressBinding := protectedEgressBinding{SessionID: created.Session.ID, AgentID: manifest.Agent.ID, Generation: registered.Generation, RouteID: protectedRoute.ID, AdminToken: adminToken}
+	egressResult, err := startProtectedEgressWatch(childContext, cancelChild, command.Process.Pid, endpoint, egressBinding)
 	if err != nil {
 		cancelChild()
 		_ = command.Wait()

@@ -174,6 +174,30 @@ func (m *Manager) AuthorizeRoute(sessionID, routeID, token string) (Authorizatio
 	return Authorization{}, false
 }
 
+// ContainsRoute validates management-plane ownership without exposing or
+// comparing the route capability itself.
+func (m *Manager) ContainsRoute(sessionID, routeID string) bool {
+	if sessionID == "" || routeID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.sessions[sessionID]
+	if !ok {
+		return false
+	}
+	if !entry.session.ExpiresAt.After(m.now()) {
+		m.deleteCascadeLocked(sessionID)
+		return false
+	}
+	for _, candidate := range entry.session.RouteIDs {
+		if candidate == routeID {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) Delete(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
