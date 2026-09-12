@@ -210,15 +210,32 @@ func extractResponseInput(d *Document, value any, path []any, depth int) {
 			extractResponseInput(d, child, appendPath(path, i), depth+1)
 		}
 	case map[string]any:
+		typeName, _ := typed["type"].(string)
 		for _, key := range sortedKeys(typed) {
 			child := typed[key]
 			switch key {
-			case "type", "role", "name", "id", "call_id", "status", "signature", "thinking", "redacted_thinking":
+			case "type", "role", "name", "id", "call_id", "status":
+				continue
+			case "signature", "thinking", "redacted_thinking":
+				if responseIntegrityContainer(typeName) {
+					continue
+				}
+			case "arguments", "input", "output":
+				extractValue(d, child, appendPath(path, key), depth+1)
 				continue
 			default:
-				extractResponseInput(d, child, appendPath(path, key), depth+1)
 			}
+			extractResponseInput(d, child, appendPath(path, key), depth+1)
 		}
+	}
+}
+
+func responseIntegrityContainer(typeName string) bool {
+	switch typeName {
+	case "function_call", "custom_tool_call", "reasoning", "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -278,9 +295,6 @@ func extractValue(d *Document, value any, path []any, depth int) {
 	case map[string]any:
 		for _, key := range sortedKeys(typed) {
 			child := typed[key]
-			if key == "thinking" || key == "redacted_thinking" || key == "signature" {
-				continue
-			}
 			extractValue(d, child, appendPath(path, key), depth+1)
 		}
 	}
@@ -323,9 +337,6 @@ func extractEmbedded(d *Document, value any, outerPath []any, parents [][]any, p
 	case map[string]any:
 		for _, key := range sortedKeys(typed) {
 			child := typed[key]
-			if key == "thinking" || key == "redacted_thinking" || key == "signature" {
-				continue
-			}
 			extractEmbedded(d, child, outerPath, parents, appendPath(path, key), depth+1)
 		}
 	}

@@ -99,6 +99,34 @@ func TestNestedJSONStringFieldsRoundTripAtLeafLevel(t *testing.T) {
 	}
 }
 
+func TestToolPayloadKeysCannotImpersonateIntegrityFields(t *testing.T) {
+	tests := []struct {
+		endpoint string
+		body     string
+	}{
+		{"/v1/chat/completions", `{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"x","arguments":"{\"thinking\":\"dev@example.com\",\"signature\":\"ghp_abcdefghijklmnopqrstuvwxyz\"}"}}]}]}`},
+		{"/v1/responses", `{"input":[{"type":"function_call","signature":"server-integrity","arguments":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}]}`},
+		{"/v1/messages", `{"messages":[{"role":"assistant","content":[{"type":"tool_use","input":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}]}]}`},
+		{"/v1beta/models/gemini-2.5-pro:generateContent", `{"contents":[{"parts":[{"functionCall":{"args":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}}]}]}`},
+		{"/mcp", `{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.endpoint, func(t *testing.T) {
+			document, err := Parse(test.endpoint, "application/json", "", []byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := map[string]bool{}
+			for _, field := range document.Fields {
+				values[field.Text] = true
+			}
+			if !values["dev@example.com"] || !values["ghp_abcdefghijklmnopqrstuvwxyz"] || values["server-integrity"] {
+				t.Fatalf("unsafe extraction fields=%+v", document.Fields)
+			}
+		})
+	}
+}
+
 func TestExcessiveContentNestingFailsClosed(t *testing.T) {
 	var input any = "secret"
 	for i := 0; i < maxValueDepth+2; i++ {
