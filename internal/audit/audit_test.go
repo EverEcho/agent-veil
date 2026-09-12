@@ -28,3 +28,19 @@ func TestAuditLeakScanRejectsSensitiveMetadataByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditRejectsInvalidMetadataAndBounds(t *testing.T) {
+	now := time.Now().UTC()
+	for _, event := range []domain.AuditEvent{
+		{Action: domain.ActionBlock},
+		{Timestamp: now, Action: domain.Action("invalid")},
+		{Timestamp: now, Action: domain.ActionBlock, FindingCount: -1},
+		{Timestamp: now, Action: domain.ActionBlock, LatencyMS: -1},
+		{Timestamp: now, Action: domain.ActionBlock, AgentID: "unsafe/path"},
+		{Timestamp: now, Action: domain.ActionBlock, FindingTypes: []string{"pii.email"}},
+	} {
+		if _, err := Marshal(event); err == nil {
+			t.Fatalf("invalid audit event was accepted: %+v", event)
+		}
+	}
+}

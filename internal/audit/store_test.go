@@ -155,3 +155,22 @@ func TestStoreRejectsDuplicateAuditKeys(t *testing.T) {
 		t.Fatal("audit event with duplicate identity was accepted")
 	}
 }
+
+func TestStoreRejectsUnknownOrLeakBearingPersistedAuditFields(t *testing.T) {
+	for _, payload := range []string{
+		`{"timestamp":"2026-01-01T00:00:00Z","agent_id":"safe","action":"allow","future":true}` + "\n",
+		`{"timestamp":"2026-01-01T00:00:00Z","agent_id":"dev@example.com","action":"block"}` + "\n",
+	} {
+		directory := filepath.Join(t.TempDir(), "private")
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, "audit.jsonl")
+		if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewStore(path, 100*365*24*time.Hour, nil); err == nil {
+			t.Fatalf("unsafe persisted audit was accepted: %s", payload)
+		}
+	}
+}

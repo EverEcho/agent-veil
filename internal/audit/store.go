@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -136,8 +137,16 @@ func (s *Store) readLocked() ([]domain.AuditEvent, error) {
 			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains invalid or ambiguous data")
 		}
 		var event domain.AuditEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
+		eventDecoder := json.NewDecoder(bytes.NewReader(raw))
+		eventDecoder.DisallowUnknownFields()
+		if err := eventDecoder.Decode(&event); err != nil {
 			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains invalid data")
+		}
+		if err := eventDecoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains trailing data")
+		}
+		if _, err := Marshal(event); err != nil {
+			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit event failed validation or leak scanning")
 		}
 		events = append(events, event)
 	}
