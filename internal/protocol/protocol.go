@@ -29,6 +29,7 @@ type Document struct {
 const (
 	maxValueDepth       = 16
 	maxEmbeddedJSONSize = 1 << 20
+	MaxEndpointBytes    = 4096
 )
 
 func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Document, error) {
@@ -42,30 +43,9 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])); mediaType != "application/json" {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "protocol endpoint requires application/json")
 	}
-	var protocol domain.Protocol
-	cleanEndpoint := strings.TrimSuffix(endpoint, "/")
-	switch cleanEndpoint {
-	case "/v1/chat/completions":
-		protocol = domain.ProtocolOpenAIChat
-	case "/v1/responses":
-		protocol = domain.ProtocolOpenAIResponses
-	case "/v1/messages":
-		protocol = domain.ProtocolAnthropic
-	case "/mcp", "/v1/mcp":
-		if expected == domain.ProtocolMCPStreamable {
-			protocol = domain.ProtocolMCPStreamable
-		} else {
-			protocol = domain.ProtocolMCPHTTP
-		}
-	default:
-		if strings.Contains(cleanEndpoint, "/models/") && (strings.HasSuffix(cleanEndpoint, ":generateContent") || strings.HasSuffix(cleanEndpoint, ":streamGenerateContent")) {
-			protocol = domain.ProtocolGemini
-		} else {
-			return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is not supported")
-		}
-	}
-	if expected != "" && protocol != expected {
-		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint does not match the protected route protocol")
+	protocol, err := ResolveEndpoint(expected, endpoint)
+	if err != nil {
+		return nil, err
 	}
 	if err := jsonsafe.Validate(body); err != nil {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body is not valid unambiguous JSON")
@@ -100,6 +80,46 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+// ResolveEndpoint binds a request path to one implemented protocol and rejects
+// ambiguous or traversal-bearing paths before they can be joined to an upstream
+// base path.
+func ResolveEndpoint(expected domain.Protocol, endpoint string) (domain.Protocol, error) {
+	if len(endpoint) == 0 || len(endpoint) > MaxEndpointBytes || endpoint[0] != '/' || strings.Contains(endpoint, "//") || strings.ContainsRune(endpoint, '\\') {
+		return "", domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is malformed")
+	}
+	for _, segment := range strings.Split(endpoint, "/") {
+		if segment == "." || segment == ".." {
+			return "", domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint contains traversal")
+		}
+	}
+	var protocol domain.Protocol
+	cleanEndpoint := strings.TrimSuffix(endpoint, "/")
+	switch cleanEndpoint {
+	case "/v1/chat/completions":
+		protocol = domain.ProtocolOpenAIChat
+	case "/v1/responses":
+		protocol = domain.ProtocolOpenAIResponses
+	case "/v1/messages":
+		protocol = domain.ProtocolAnthropic
+	case "/mcp", "/v1/mcp":
+		if expected == domain.ProtocolMCPStreamable {
+			protocol = domain.ProtocolMCPStreamable
+		} else {
+			protocol = domain.ProtocolMCPHTTP
+		}
+	default:
+		if strings.Contains(cleanEndpoint, "/models/") && (strings.HasSuffix(cleanEndpoint, ":generateContent") || strings.HasSuffix(cleanEndpoint, ":streamGenerateContent")) {
+			protocol = domain.ProtocolGemini
+		} else {
+			return "", domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint is not supported")
+		}
+	}
+	if expected != "" && protocol != expected {
+		return "", domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint does not match the protected route protocol")
+	}
+	return protocol, nil
 }
 
 func validRequestEnvelope(protocolType domain.Protocol, root any) bool {

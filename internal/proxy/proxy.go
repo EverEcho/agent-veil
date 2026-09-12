@@ -172,6 +172,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
 		return
 	}
+	if _, err := protocol.ResolveEndpoint(route.Protocol, endpoint); err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+		return
+	}
 	mcpVersion := ""
 	if route.Protocol == domain.ProtocolMCPStreamable {
 		var err error

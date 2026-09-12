@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -105,6 +106,25 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 		if !errors.As(err, &veilErr) {
 			t.Fatalf("expected fail-closed error for %+v", item)
 		}
+	}
+}
+
+func TestProtocolEndpointsRejectTraversalAndAmbiguity(t *testing.T) {
+	for _, endpoint := range []string{
+		"",
+		"v1/responses",
+		"/v1//responses",
+		"/v1/../responses",
+		"/v1/./responses",
+		`/v1\responses`,
+		"/" + strings.Repeat("x", MaxEndpointBytes),
+	} {
+		if _, err := ResolveEndpoint("", endpoint); err == nil {
+			t.Fatalf("unsafe endpoint accepted: %q", endpoint)
+		}
+	}
+	if got, err := ResolveEndpoint(domain.ProtocolMCPStreamable, "/mcp"); err != nil || got != domain.ProtocolMCPStreamable {
+		t.Fatalf("valid MCP endpoint rejected: protocol=%q error=%v", got, err)
 	}
 }
 

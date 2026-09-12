@@ -582,6 +582,29 @@ func TestMCPStreamableGETRejectsRequestBody(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableNonPOSTCannotEscapeEndpoint(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL + "/gateway")
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "mcp", Protocol: domain.ProtocolMCPStreamable, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	for _, path := range []string{"/route/mcp/mcp/../admin", "/route/mcp/mcp//admin", `/route/mcp/mcp\admin`} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set(HeaderSession, created.Session.ID)
+		request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("path=%q status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+	if providerCalls != 0 {
+		t.Fatalf("unsafe paths reached upstream: calls=%d", providerCalls)
+	}
+}
+
 func TestMCPStreamableDELETEForwardsSessionAndEmptyResponse(t *testing.T) {
 	providerMethod, providerSession := "", ""
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
