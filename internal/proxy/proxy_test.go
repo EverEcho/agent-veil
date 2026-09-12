@@ -22,8 +22,11 @@ func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
 		providerBody = string(payload)
+		var request map[string]any
+		_ = json.Unmarshal(payload, &request)
+		response, _ := json.Marshal(map[string]any{"output_text": request["input"]})
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
+		_, _ = w.Write(response)
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -54,8 +57,11 @@ func TestProxyChunkedScannerFindsEntityAcrossLongContextBoundary(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
 		providerBody = string(payload)
+		var request map[string]any
+		_ = json.Unmarshal(payload, &request)
+		response, _ := json.Marshal(map[string]any{"output_text": request["input"]})
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
+		_, _ = w.Write(response)
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -617,6 +623,27 @@ func TestProtectedRouteForcesIdentityResponseEncoding(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || providerAcceptEncoding != "identity" {
 		t.Fatalf("status=%d upstream accept-encoding=%q body=%s", recorder.Code, providerAcceptEncoding, recorder.Body.String())
+	}
+}
+
+func TestUnknownProviderResponseEnvelopeFailsClosed(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"future_output":"dev@example.com"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || strings.Contains(recorder.Body.String(), "dev@example.com") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

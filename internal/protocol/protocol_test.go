@@ -72,6 +72,16 @@ func TestMalformedProtocolEnvelopesFailClosed(t *testing.T) {
 	}
 }
 
+func TestMalformedResponseEnvelopesFailClosed(t *testing.T) {
+	for _, protocolType := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable} {
+		for _, body := range []string{`{}`, `[]`, `{"unknown":"dev@example.com"}`} {
+			if _, err := ParseResponse(protocolType, "application/json", []byte(body)); err == nil {
+				t.Fatalf("protocol %s accepted malformed response %s", protocolType, body)
+			}
+		}
+	}
+}
+
 func TestNestedJSONStringFieldsRoundTripAtLeafLevel(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"notify","arguments":"{\"contact\":\"dev@example.com\",\"nested\":\"{\\\"phone\\\":\\\"13800138000\\\"}\"}"}}]}]}`)
 	document, err := Parse("/v1/chat/completions", "application/json", "", body)

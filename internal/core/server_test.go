@@ -393,8 +393,11 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 		received = string(body)
 		authorization = r.Header.Get("Authorization")
 		receivedPath = r.URL.Path
+		var providerRequest map[string]any
+		_ = json.Unmarshal(body, &providerRequest)
+		providerResponse, _ := json.Marshal(map[string]any{"output_text": providerRequest["input"]})
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		_, _ = w.Write(providerResponse)
 	}))
 	defer provider.Close()
 	parsed, _ := url.Parse(provider.URL)
@@ -590,8 +593,11 @@ func TestProxyConcurrencyConfigurationRejectsInvalidOrLateChanges(t *testing.T) 
 func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		var providerRequest map[string]any
+		_ = json.Unmarshal(body, &providerRequest)
+		providerResponse, _ := json.Marshal(map[string]any{"output_text": providerRequest["input"]})
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(body)
+		_, _ = w.Write(providerResponse)
 	}))
 	defer provider.Close()
 	parsed, _ := url.Parse(provider.URL)
