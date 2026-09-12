@@ -135,11 +135,24 @@ func TestValidateMCPStreamableBodyVersionRejectsHeaderMismatch(t *testing.T) {
 }
 
 func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
-	for _, item := range []struct{ endpoint, contentType, encoding string }{{"/unknown", "application/json", ""}, {"/v1/responses", "text/plain", ""}, {"/v1/responses", "application/json", "gzip"}} {
+	for _, item := range []struct{ endpoint, contentType, encoding string }{{"/unknown", "application/json", ""}, {"/v1/responses", "text/plain", ""}, {"/v1/responses", "application/json; malformed", ""}, {"/v1/responses", "application/json", "gzip"}} {
 		_, err := Parse(item.endpoint, item.contentType, item.encoding, []byte(`{}`))
 		var veilErr *domain.VeilError
 		if !errors.As(err, &veilErr) {
 			t.Fatalf("expected fail-closed error for %+v", item)
+		}
+	}
+}
+
+func TestMediaTypeRequiresExactValidRepresentation(t *testing.T) {
+	for _, value := range []string{"application/json", "APPLICATION/JSON", "application/json; charset=utf-8"} {
+		if !MediaTypeIs(value, "application/json") {
+			t.Fatalf("valid media type rejected: %q", value)
+		}
+	}
+	for _, value := range []string{"", "application/jsonish", "application/json; malformed", "application/json, text/plain", "text/event-streaming"} {
+		if MediaTypeIs(value, "application/json") || MediaTypeIs(value, "text/event-stream") {
+			t.Fatalf("invalid media type accepted: %q", value)
 		}
 	}
 }

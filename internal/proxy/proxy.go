@@ -312,7 +312,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
 		return
 	}
-	if strings.HasPrefix(strings.ToLower(responseContentType), "text/event-stream") {
+	if protocol.MediaTypeIs(responseContentType, "text/event-stream") {
 		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
 			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = errorCodeValue(err)

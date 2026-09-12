@@ -12,7 +12,7 @@ import (
 )
 
 func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*Document, error) {
-	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])); mediaType != "application/json" {
+	if !MediaTypeIs(contentType, "application/json") {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "protocol response requires application/json")
 	}
 	if err := jsonsafe.Validate(body); err != nil {

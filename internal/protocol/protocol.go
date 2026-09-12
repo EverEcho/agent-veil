@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"sort"
 	"strings"
 
@@ -40,7 +41,7 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 	if strings.TrimSpace(contentEncoding) != "" && !strings.EqualFold(contentEncoding, "identity") {
 		return nil, domain.NewError(domain.ErrUnsupportedEncoding, "parse request", "only identity content encoding is supported")
 	}
-	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])); mediaType != "application/json" {
+	if !MediaTypeIs(contentType, "application/json") {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "protocol endpoint requires application/json")
 	}
 	protocol, err := ResolveEndpoint(expected, endpoint)
@@ -80,6 +81,13 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+// MediaTypeIs parses the complete media type so malformed parameters and
+// prefix lookalikes cannot be mistaken for a supported representation.
+func MediaTypeIs(value, expected string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, expected)
 }
 
 // ResolveEndpoint binds a request path to one implemented protocol and rejects
