@@ -88,18 +88,23 @@ func (m *Manager) List() []domain.ProtectionSession {
 }
 
 func (m *Manager) Authorize(sessionID, routeID, token string) bool {
+	_, ok := m.AuthorizeAndSecret(sessionID, routeID, token)
+	return ok
+}
+
+func (m *Manager) AuthorizeAndSecret(sessionID, routeID, token string) ([]byte, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	entry, ok := m.sessions[sessionID]
 	if !ok || !entry.session.ExpiresAt.After(m.now()) {
-		return false
+		return nil, false
 	}
 	for _, route := range entry.routes {
 		if route.RouteID == routeID && constantTimeStringEqual(route.Token, token) {
-			return true
+			return entry.session.SessionSecret(), true
 		}
 	}
-	return false
+	return nil, false
 }
 
 func (m *Manager) Delete(id string) bool {
