@@ -64,6 +64,22 @@ func TestPolicyStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
 		t.Fatal("symlinked policy file was accepted")
 	}
 }
+
+func TestPolicyStoreRejectsDuplicateKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	payload := `{"schema_version":"v1","default":"redact","default":"allow","rules":[]}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("policy with duplicate action was accepted")
+	}
+}
+
 func TestASKBrokerIsOneTimeAndFailsClosedOnTimeout(t *testing.T) {
 	broker := NewBroker()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)

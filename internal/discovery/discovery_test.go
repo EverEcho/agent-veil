@@ -286,6 +286,13 @@ func TestClaudeAPIKeyDiscoveryUsesIndirectRuntimeSource(t *testing.T) {
 	}
 }
 
+func TestClaudeDiscoveryRejectsDuplicateConfigurationKeys(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "2.1.220", config: `{"env":{"ANTHROPIC_BASE_URL":"https://safe.example","ANTHROPIC_BASE_URL":"https://hidden.example"}}`}, Verified: map[string]map[string]struct{}{"claude": {"2.1.220": {}}}}
+	if _, err := d.Inspect(context.Background(), "claude"); err == nil {
+		t.Fatal("Claude settings with duplicate upstream were accepted")
+	}
+}
+
 func TestProtectedCLIDiscoveryBindsEnvironmentProxyAfterDLP(t *testing.T) {
 	for _, name := range []string{"codex", "claude"} {
 		version := "0.153.4"

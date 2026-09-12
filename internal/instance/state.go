@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 const maxStateBytes = 4096
@@ -95,6 +96,9 @@ func LoadState(path string) (State, error) {
 	}
 	if len(payload) > maxStateBytes {
 		return State{}, domain.NewError(domain.ErrInvalidContract, "load core state", "state file is too large")
+	}
+	if err := jsonsafe.Validate(payload); err != nil {
+		return State{}, domain.NewError(domain.ErrInvalidContract, "load core state", "state file is invalid or ambiguous")
 	}
 	var state State
 	decoder := json.NewDecoder(bytes.NewReader(payload))

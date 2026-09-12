@@ -40,6 +40,16 @@ func (f fixedInspectableDiscoverer) Inspect(context.Context, string) (domain.Age
 	return f.manifest, nil
 }
 
+func TestDecodeManagementRejectsDuplicateKeys(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"agent_id":"visible","agent_id":"hidden"}`))
+	var destination struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := decodeManagement(request, &destination); err == nil {
+		t.Fatal("management request with duplicate identity was accepted")
+	}
+}
+
 func TestDashboardContainsNoProtectedData(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	request := httptest.NewRequest(http.MethodGet, "/", nil)

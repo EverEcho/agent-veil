@@ -7,11 +7,15 @@ import (
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*Document, error) {
 	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])); mediaType != "application/json" {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "protocol response requires application/json")
+	}
+	if err := jsonsafe.Validate(body); err != nil {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "body is not valid unambiguous JSON")
 	}
 	var root any
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -87,6 +91,9 @@ func validResponseEnvelope(protocolType domain.Protocol, root any) bool {
 }
 
 func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) {
+	if err := jsonsafe.Validate(data); err != nil {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data is not valid unambiguous JSON")
+	}
 	var root any
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

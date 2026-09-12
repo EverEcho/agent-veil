@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 type Field struct {
@@ -65,6 +66,9 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 	}
 	if expected != "" && protocol != expected {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "endpoint does not match the protected route protocol")
+	}
+	if err := jsonsafe.Validate(body); err != nil {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body is not valid unambiguous JSON")
 	}
 	var root any
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -374,6 +378,9 @@ func extractEmbedded(d *Document, value any, outerPath []any, parents [][]any, p
 }
 
 func decodeEmbeddedJSON(value string) (any, bool) {
+	if err := jsonsafe.Validate([]byte(value)); err != nil {
+		return nil, false
+	}
 	var decoded any
 	decoder := json.NewDecoder(strings.NewReader(value))
 	decoder.UseNumber()

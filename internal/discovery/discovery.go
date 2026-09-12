@@ -13,6 +13,7 @@ import (
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/integration"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
@@ -118,7 +119,10 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			var settings struct {
 				Env map[string]string `json:"env"`
 			}
-			if json.Unmarshal(content, &settings) == nil && settings.Env["ANTHROPIC_BASE_URL"] != "" {
+			if jsonsafe.Validate(content) != nil || json.Unmarshal(content, &settings) != nil {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover claude", "settings JSON is invalid or ambiguous")
+			}
+			if settings.Env["ANTHROPIC_BASE_URL"] != "" {
 				baseURL = settings.Env["ANTHROPIC_BASE_URL"]
 			}
 		}

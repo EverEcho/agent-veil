@@ -21,6 +21,7 @@ import (
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/redactor"
@@ -642,6 +643,9 @@ func decodeManagement(r *http.Request, destination any) error {
 	}
 	if len(body) > maxManagementBody {
 		return errors.New("management request too large")
+	}
+	if err := jsonsafe.Validate(body); err != nil {
+		return errors.New("management request contains invalid or ambiguous JSON")
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()

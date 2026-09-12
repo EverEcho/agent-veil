@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 type Document struct {
@@ -117,6 +118,9 @@ func (s *Store) Load() (Document, error) {
 	}
 	if len(payload) > maxPolicyBytes {
 		return Document{}, domain.NewError(domain.ErrInvalidContract, "load policy", "policy file is too large")
+	}
+	if err := jsonsafe.Validate(payload); err != nil {
+		return Document{}, domain.NewError(domain.ErrInvalidContract, "load policy", "policy JSON is invalid or ambiguous")
 	}
 	var document Document
 	decoder := json.NewDecoder(bytes.NewReader(payload))

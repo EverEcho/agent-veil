@@ -41,6 +41,7 @@ func TestCoreStateRejectsRemoteMalformedAndOversizedData(t *testing.T) {
 	for _, payload := range []string{
 		`{"schema_version":"v1","api_endpoint":"https://api.example:443","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
 		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","process_id":1,"started_at":"2026-01-01T00:00:00Z","token":"secret"}`,
+		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","api_endpoint":"http://127.0.0.1:2","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
 		strings.Repeat("x", maxStateBytes+1),
 	} {
 		if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {

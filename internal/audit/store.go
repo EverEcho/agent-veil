@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 type Store struct {
@@ -125,10 +126,17 @@ func (s *Store) readLocked() ([]domain.AuditEvent, error) {
 	var events []domain.AuditEvent
 	decoder := json.NewDecoder(bufio.NewReader(io.LimitReader(file, s.maxBytes+1)))
 	for {
-		var event domain.AuditEvent
-		if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
+			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains invalid data")
+		}
+		if err := jsonsafe.Validate(raw); err != nil {
+			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains invalid or ambiguous data")
+		}
+		var event domain.AuditEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
 			return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file contains invalid data")
 		}
 		events = append(events, event)

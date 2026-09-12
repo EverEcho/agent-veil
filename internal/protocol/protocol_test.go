@@ -52,6 +52,18 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	}
 }
 
+func TestProtocolRejectsDuplicateKeysAcrossRequestAndResponse(t *testing.T) {
+	if _, err := Parse("/v1/chat/completions", "application/json", "", []byte(`{"messages":[],"messages":[{"role":"user","content":"hidden"}]}`)); err == nil {
+		t.Fatal("request with duplicate messages was accepted")
+	}
+	if _, err := ParseResponse(domain.ProtocolOpenAIChat, "application/json", []byte(`{"choices":[],"choices":[{"message":{"content":"hidden"}}]}`)); err == nil {
+		t.Fatal("response with duplicate choices was accepted")
+	}
+	if _, err := ParseStreamEvent(domain.ProtocolOpenAIResponses, []byte(`{"type":"response.output_text.delta","delta":"safe","delta":"hidden"}`)); err == nil {
+		t.Fatal("stream event with duplicate delta was accepted")
+	}
+}
+
 func TestMalformedProtocolEnvelopesFailClosed(t *testing.T) {
 	for _, test := range []struct {
 		endpoint string

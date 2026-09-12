@@ -144,3 +144,14 @@ func TestStoreCompactsOldestEventsBeforeCapacity(t *testing.T) {
 		t.Fatalf("audit size=%d max=%d", info.Size(), store.maxBytes)
 	}
 }
+
+func TestStoreRejectsDuplicateAuditKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	payload := `{"timestamp":"2026-01-01T00:00:00Z","agent_id":"visible","agent_id":"hidden","action":"allow"}` + "\n"
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path, time.Hour, nil); err == nil {
+		t.Fatal("audit event with duplicate identity was accepted")
+	}
+}
