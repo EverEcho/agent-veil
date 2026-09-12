@@ -35,13 +35,14 @@ type Semantic interface {
 }
 
 var structuredRuleIDs = map[string]struct{}{
-	"pii.cn.id_card": {},
-	"pii.cn.uscc":    {},
-	"pii.us.ssn":     {},
-	"pii.iban":       {},
-	"pii.bank_card":  {},
-	"pii.ipv4":       {},
-	"pii.ipv6":       {},
+	"pii.cn.id_card":       {},
+	"pii.cn.license_plate": {},
+	"pii.cn.uscc":          {},
+	"pii.us.ssn":           {},
+	"pii.iban":             {},
+	"pii.bank_card":        {},
+	"pii.ipv4":             {},
+	"pii.ipv6":             {},
 }
 
 type Scanner struct {
@@ -78,6 +79,7 @@ func NewDefault() *Scanner {
 		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil, 0},
 		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},
 		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID, 0},
+		{"pii.cn.license_plate", "pii.cn.license_plate", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`(?:^|[^京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼A-Z0-9])([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z][·•]?[A-Z0-9]{5,6})(?:$|[^A-Z0-9])`), validCNLicensePlate, 1},
 		{"pii.cn.uscc", "pii.cn.uscc", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9ABCDEFGHJKLMNPQRTUWXY]{18}\b`), validUSCC, 0},
 		{"pii.us.ssn", "pii.us.ssn", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b`), validUSSSN, 0},
 		{"pii.iban", "pii.iban", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`), validIBAN, 0},
@@ -102,6 +104,7 @@ func NewDefault() *Scanner {
 		"pii.cn.phone":          featureDigit,
 		"pii.cn.landline":       featureDigit,
 		"pii.cn.id_card":        featureDigit,
+		"pii.cn.license_plate":  featureUpper,
 		"pii.us.ssn":            featureDash | featureDigit,
 		"pii.iban":              featureDigit,
 		"pii.bank_card":         featureDigit,
@@ -409,6 +412,44 @@ func validUSCC(value string) bool {
 	}
 	expected := alphabet[(31-sum%31)%31]
 	return value[17] == expected
+}
+
+func validCNLicensePlate(value string) bool {
+	value = strings.ReplaceAll(strings.ReplaceAll(value, "·", ""), "•", "")
+	characters := []rune(value)
+	if len(characters) != 7 && len(characters) != 8 || !validPlateLetter(characters[1]) {
+		return false
+	}
+	for _, character := range characters[2:] {
+		if !validPlateCharacter(character) {
+			return false
+		}
+	}
+	if len(characters) == 7 {
+		return true
+	}
+	sequence := characters[2:]
+	if (sequence[0] == 'D' || sequence[0] == 'F') && allPlateDigits(sequence[2:]) {
+		return true
+	}
+	return (sequence[5] == 'D' || sequence[5] == 'F') && allPlateDigits(sequence[:5])
+}
+
+func validPlateLetter(character rune) bool {
+	return character >= 'A' && character <= 'Z' && character != 'I' && character != 'O'
+}
+
+func validPlateCharacter(character rune) bool {
+	return character >= '0' && character <= '9' || validPlateLetter(character)
+}
+
+func allPlateDigits(characters []rune) bool {
+	for _, character := range characters {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func validUSSSN(value string) bool {

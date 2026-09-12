@@ -217,6 +217,22 @@ func TestStructuredChineseValidators(t *testing.T) {
 	}
 }
 
+func TestChineseCivilianLicensePlateValidator(t *testing.T) {
+	matches := scan(t, NewDefault(), "ordinary 京A12345 separated 冀B·6C789 small-new-energy 沪AD12345 large-new-energy 粤B12345F")
+	if len(matches) != 4 {
+		t.Fatalf("valid civilian plates were not detected: %+v", matches)
+	}
+	for _, match := range matches {
+		if match.Finding.Category != "pii.cn.license_plate" || match.Finding.Detector != "structured" {
+			t.Fatalf("plate was not structurally attributed: %+v", match)
+		}
+	}
+	invalid := scan(t, NewDefault(), "京I12345 京AO12345 沪AG12345 粤B1234AF 京A1234567")
+	if len(invalid) != 0 {
+		t.Fatalf("invalid civilian plates accepted: %+v", invalid)
+	}
+}
+
 func TestInternationalStructuredPIIValidators(t *testing.T) {
 	scanner := NewDefault()
 	matches := scan(t, scanner, "ssn 123-45-6789 iban GB82WEST12345698765432 ipv6 2001:db8::1 loopback ::1")
