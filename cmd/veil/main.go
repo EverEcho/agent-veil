@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,9 +44,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(manifest)
+		return writeInspection(os.Stdout, manifest)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -58,11 +57,7 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("VEIL_ADMIN_TOKEN must be set to a random value of at least 32 characters: %w", err)
 	}
-	capabilities := map[domain.Protocol]planner.Capability{}
-	for _, protocol := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP} {
-		capabilities[protocol] = planner.Capability{Protocol: protocol, RequestInspection: true, ResponseInspection: true, StreamInspection: true, Observable: true}
-	}
-	server.WithRegistry(registry.New(planner.Options{Capabilities: capabilities, DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}}))
+	server.WithRegistry(registry.New(runtimeOptions()))
 	if err := server.Start(); err != nil {
 		return err
 	}
@@ -73,6 +68,28 @@ func serve() error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return server.Close(shutdown)
+}
+
+func runtimeOptions() planner.Options {
+	capabilities := map[domain.Protocol]planner.Capability{}
+	for _, protocol := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP} {
+		capabilities[protocol] = planner.Capability{Protocol: protocol, RequestInspection: true, ResponseInspection: true, StreamInspection: true, Observable: true}
+	}
+	return planner.Options{Capabilities: capabilities, DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}}
+}
+
+func writeInspection(writer io.Writer, manifest domain.AgentManifest) error {
+	plan, err := planner.Build(manifest, runtimeOptions())
+	if err != nil {
+		return err
+	}
+	result := struct {
+		Manifest domain.AgentManifest  `json:"manifest"`
+		Plan     domain.ProtectionPlan `json:"protection_plan"`
+	}{manifest, plan}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
 }
 
 func status() error {
