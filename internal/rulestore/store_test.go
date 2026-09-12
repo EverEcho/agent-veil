@@ -158,6 +158,56 @@ func TestStoreDeactivatesWithoutDeletingVerifiedRulePacks(t *testing.T) {
 	}
 }
 
+func TestStoreRemovesOnlyVerifiedInactiveRulePacks(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.0.0", "1.1.0"} {
+		payload := rulePayload(t, "custom.ticket."+version)
+		if err := store.Install(signedManifest(t, private, version, payload), bytes.NewReader(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Activate("1.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.1.0"); err == nil {
+		t.Fatal("active rule pack was removed")
+	}
+	extra := filepath.Join(store.root, "versions", "1.0.0", "unexpected")
+	if err := os.WriteFile(extra, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.0.0"); err == nil {
+		t.Fatal("malformed rule version was removed without surfacing its integrity failure")
+	}
+	if _, err := os.Stat(filepath.Join(store.root, "versions", "1.0.0", "manifest.json")); err != nil {
+		t.Fatalf("failed removal damaged verified files: %v", err)
+	}
+	if err := os.Remove(extra); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.1.0" {
+		t.Fatalf("versions=%+v error=%v", versions, err)
+	}
+	if _, _, err := store.Open("1.0.0"); err == nil {
+		t.Fatalf("removed rule pack remains available: %v", err)
+	}
+	active, manifest, err := store.OpenActive()
+	if err != nil || manifest.Version != "1.1.0" || len(active.Rules) != 1 {
+		t.Fatalf("active=%+v manifest=%+v error=%v", active, manifest, err)
+	}
+}
+
 func TestStoreRejectsUnsafeRootVersionAndAmbiguousJSON(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

@@ -233,6 +233,43 @@ func (s *Store) Deactivate() error {
 	return syncDirectory(s.root)
 }
 
+// Remove deletes one verified inactive version. Active or malformed versions
+// are retained so deletion cannot silently break the current data plane or
+// conceal integrity failures.
+func (s *Store) Remove(version string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, _, err := s.open(version); err != nil {
+		return err
+	}
+	activePath := filepath.Join(s.root, "active.json")
+	payload, err := readPrivateFile(activePath, maxManifestBytes)
+	if err == nil {
+		var active activeVersion
+		if decodeStrict(payload, &active) != nil {
+			return domain.NewError(domain.ErrInvalidContract, "remove rule pack", "active rule pointer is invalid")
+		}
+		if active.Version == version {
+			return domain.NewError(domain.ErrInvalidContract, "remove rule pack", "active rule version cannot be removed")
+		}
+		if _, _, err := s.open(active.Version); err != nil {
+			return domain.NewError(domain.ErrInvalidContract, "remove rule pack", "active rule version is invalid")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	directory := filepath.Join(s.root, "versions", version)
+	for _, name := range []string{"rules.json", "manifest.json"} {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(directory); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Join(s.root, "versions"))
+}
+
 func (s *Store) OpenActive() (detector.RulePack, Manifest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
