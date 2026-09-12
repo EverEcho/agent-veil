@@ -1,0 +1,48 @@
+package integration
+
+import (
+	"testing"
+
+	"github.com/agentveil/agentveil/internal/domain"
+)
+
+func TestHermesAllSlotsAndMCPBecomeIndependentSurfaces(t *testing.T) {
+	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{"hermes": {"1.0.0": {}}}}
+	config := Config{AgentID: "h", Kind: "hermes", Version: "1.0.0", ConfigSource: "fixture-v1", Mode: domain.ModeLaunch, Slots: []Slot{
+		{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://api.example", Rewritable: true, Required: true},
+		{ID: "vision", Name: "Vision", Type: domain.SurfaceVision, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://vision.example", Rewritable: true},
+		{ID: "fallback-1", Name: "Fallback", Type: domain.SurfaceModelFallback, Protocol: domain.ProtocolAnthropic, BaseURL: "https://fallback.example", Rewritable: true},
+	}, LocalMCP: []string{"filesystem"}}
+	manifest, err := inspector.Inspect(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 4 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	seen := map[string]bool{}
+	for _, surface := range manifest.Surfaces {
+		if seen[surface.ID] {
+			t.Fatal("surface ids are not independent")
+		}
+		seen[surface.ID] = true
+	}
+}
+
+func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
+	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{"codex": {"1.0": {}}}}
+	if _, err := inspector.Inspect(Config{Kind: "codex", Version: "2.0"}); err == nil {
+		t.Fatal("unknown version accepted")
+	}
+	agent := domain.AgentInstance{ID: "c", Kind: "codex", Mode: domain.ModeLaunch, Executable: "codex"}
+	if _, err := PrepareLaunch(agent, []string{"--provider=direct"}, "http://127.0.0.1:1", "s", "", "t"); err == nil {
+		t.Fatal("routing override accepted")
+	}
+	plan, err := PrepareLaunch(agent, []string{"exec"}, "http://127.0.0.1:1", "s", "parent", "short-lived")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Temporary || plan.Environment["VEIL_PARENT_SESSION"] != "parent" || plan.Environment["CODEX_DISABLE_WEBSOCKET"] != "1" {
+		t.Fatalf("invalid launch plan: %+v", plan)
+	}
+}
