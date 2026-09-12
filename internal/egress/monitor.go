@@ -12,6 +12,7 @@ type Transport string
 
 const (
 	StatusContentProtected Status    = "content_protected"
+	StatusLocal            Status    = "local"
 	StatusObserved         Status    = "observed"
 	StatusBlocked          Status    = "blocked"
 	TransportTCP           Transport = "tcp"
@@ -35,6 +36,15 @@ type Expected struct {
 	RouteID   string    `json:"route_id"`
 	SurfaceID string    `json:"surface_id"`
 }
+
+// LocalEndpoint identifies an exact loopback hop that is allowed to stay on
+// the device. A match only establishes locality; it does not prove that the
+// connection's content passed through a protected route.
+type LocalEndpoint struct {
+	Transport Transport `json:"transport"`
+	Host      string    `json:"host"`
+	Port      uint16    `json:"port"`
+}
 type Assessment struct {
 	Connection Connection             `json:"connection"`
 	Status     Status                 `json:"status"`
@@ -43,6 +53,10 @@ type Assessment struct {
 }
 
 func Assess(connections []Connection, expected []Expected) []Assessment {
+	return AssessWithLocalEndpoints(connections, expected, nil)
+}
+
+func AssessWithLocalEndpoints(connections []Connection, expected []Expected, localEndpoints []LocalEndpoint) []Assessment {
 	results := make([]Assessment, 0, len(connections))
 	for _, connection := range connections {
 		var matched *Expected
@@ -55,6 +69,10 @@ func Assess(connections []Connection, expected []Expected) []Assessment {
 		}
 		if matched != nil && !connection.Blocked {
 			results = append(results, Assessment{Connection: connection, Status: StatusContentProtected, SurfaceID: matched.SurfaceID})
+			continue
+		}
+		if !connection.Blocked && matchesLocalEndpoint(connection, localEndpoints) {
+			results = append(results, Assessment{Connection: connection, Status: StatusLocal})
 			continue
 		}
 		status := StatusObserved
@@ -73,6 +91,20 @@ func Assess(connections []Connection, expected []Expected) []Assessment {
 		results = append(results, Assessment{Connection: connection, Status: status, SurfaceID: surfaceID, Risk: &risk})
 	}
 	return results
+}
+
+func matchesLocalEndpoint(connection Connection, endpoints []LocalEndpoint) bool {
+	for _, endpoint := range endpoints {
+		if validLocalEndpoint(endpoint) && connection.Transport == endpoint.Transport && canonicalHost(connection.Host) == canonicalHost(endpoint.Host) && connection.Port == endpoint.Port {
+			return true
+		}
+	}
+	return false
+}
+
+func validLocalEndpoint(endpoint LocalEndpoint) bool {
+	ip := net.ParseIP(strings.Trim(strings.TrimSpace(endpoint.Host), "[]"))
+	return validTransport(endpoint.Transport) && ip != nil && ip.IsLoopback() && endpoint.Port > 0
 }
 
 func validExpected(route Expected) bool {

@@ -35,6 +35,10 @@ func NewObserver(root ProcessIdentity, maxProcesses int, processes ProcessSnapsh
 }
 
 func (o *Observer) Observe(expected []Expected) ([]Assessment, error) {
+	return o.ObserveWithLocalEndpoints(expected, nil)
+}
+
+func (o *Observer) ObserveWithLocalEndpoints(expected []Expected, localEndpoints []LocalEndpoint) ([]Assessment, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	snapshot, err := o.processes.Snapshot()
@@ -48,5 +52,5 @@ func (o *Observer) Observe(expected []Expected) ([]Assessment, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Assess(connections, expected), nil
+	return AssessWithLocalEndpoints(connections, expected, localEndpoints), nil
 }

@@ -59,6 +59,38 @@ func TestDifferentTransportCannotClaimContentProtection(t *testing.T) {
 	}
 }
 
+func TestExactLoopbackEndpointIsLocalButNotContentProtected(t *testing.T) {
+	connection := Connection{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}
+	result := AssessWithLocalEndpoints([]Connection{connection}, nil, []LocalEndpoint{{Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}})[0]
+	if result.Status != StatusLocal || result.Status == StatusContentProtected || result.Risk != nil || result.SurfaceID != "" {
+		t.Fatalf("local hop was overstated or reported as risky: %+v", result)
+	}
+}
+
+func TestLocalEndpointDeclarationFailsClosed(t *testing.T) {
+	connection := Connection{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}
+	for _, endpoint := range []LocalEndpoint{
+		{Transport: TransportUDP, Host: "127.0.0.1", Port: 48123},
+		{Transport: TransportTCP, Host: "127.0.0.1", Port: 48124},
+		{Transport: TransportTCP, Host: "localhost", Port: 48123},
+		{Transport: TransportTCP, Host: "192.0.2.1", Port: 48123},
+		{Host: "127.0.0.1", Port: 48123},
+	} {
+		result := AssessWithLocalEndpoints([]Connection{connection}, nil, []LocalEndpoint{endpoint})[0]
+		if result.Status != StatusObserved || result.Risk == nil {
+			t.Fatalf("invalid local endpoint was trusted: endpoint=%+v result=%+v", endpoint, result)
+		}
+	}
+}
+
+func TestBlockedLocalEndpointRemainsBlocked(t *testing.T) {
+	connection := Connection{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "::1", Port: 48123, Blocked: true}
+	result := AssessWithLocalEndpoints([]Connection{connection}, nil, []LocalEndpoint{{Transport: TransportTCP, Host: "[::1]", Port: 48123}})[0]
+	if result.Status != StatusBlocked || result.Risk == nil {
+		t.Fatalf("blocked local connection was hidden: %+v", result)
+	}
+}
+
 func identity(processID int, startedAt uint64) ProcessIdentity {
 	return ProcessIdentity{ProcessID: processID, StartedAt: startedAt}
 }

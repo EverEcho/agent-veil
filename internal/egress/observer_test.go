@@ -79,3 +79,19 @@ func TestNewObserverRequiresCollectors(t *testing.T) {
 		t.Fatal("nil connection collector was accepted")
 	}
 }
+
+func TestObserverClassifiesExactLoopbackHopAsLocal(t *testing.T) {
+	root := identity(10, 100)
+	collector := &recordingConnectionSnapshotter{result: []Connection{{ProcessIdentity: root, Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}}}
+	observer, err := NewObserver(root, 8, fixedProcessSnapshotter{snapshot: []Process{{ProcessIdentity: root, ParentID: 1}}}, collector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assessments, err := observer.ObserveWithLocalEndpoints(nil, []LocalEndpoint{{Transport: TransportTCP, Host: "127.0.0.1", Port: 48123}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assessments) != 1 || assessments[0].Status != StatusLocal || assessments[0].Risk != nil {
+		t.Fatalf("assessments=%+v", assessments)
+	}
+}
