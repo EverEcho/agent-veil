@@ -158,14 +158,23 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		}
 		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Network: environmentProxyRoute(d.System), Rewritable: rewritable, Required: true}}
 	case "hermes":
-		config.ConfigSource = filepath.Join(home, ".hermes", "config.yaml")
+		hermesHome := filepath.Join(home, ".hermes")
+		if configuredHome, ok := d.System.LookupEnv("HERMES_HOME"); ok && strings.TrimSpace(configuredHome) != "" {
+			hermesHome = strings.TrimSpace(configuredHome)
+			if !filepath.IsAbs(hermesHome) || strings.ContainsRune(hermesHome, 0) {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover hermes", "HERMES_HOME must be an absolute safe path")
+			}
+		}
+		config.ConfigSource = filepath.Join(hermesHome, "config.yaml")
 		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
 			config.Observed, config.LocalMCP, err = integration.ParseHermesConfig(content)
 			if err != nil {
 				return domain.AgentManifest{}, err
 			}
-		} else {
+		} else if errors.Is(readErr, os.ErrNotExist) {
 			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
+		} else {
+			return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover hermes", "configuration could not be inspected")
 		}
 	case "openclaw":
 		config.Mode = domain.ModeManaged

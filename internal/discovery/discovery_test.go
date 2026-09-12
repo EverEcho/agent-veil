@@ -103,6 +103,36 @@ func TestHermesDiscoveryUsesVersionedConfigSurfaceEnumeration(t *testing.T) {
 	}
 }
 
+func TestHermesDiscoveryHonorsAbsoluteHermesHome(t *testing.T) {
+	customHome := "/srv/hermes-profile"
+	d := Discoverer{System: fakeSystem{
+		version:     "Hermes Agent v0.20.6",
+		environment: map[string]string{"HERMES_HOME": customHome},
+		files:       map[string]string{filepath.Join(customHome, "config.yaml"): hermesConfigFixtureForDiscovery},
+	}, Verified: map[string]map[string]struct{}{"hermes": {"0.20.6": {}}}}
+	manifest, err := d.Inspect(context.Background(), "hermes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 4 || manifest.Surfaces[0].ConfigSource != filepath.Join(customHome, "config.yaml") {
+		t.Fatalf("manifest=%+v", manifest)
+	}
+	for _, value := range []string{"relative/profile", "bad\x00profile"} {
+		d.System = fakeSystem{version: "Hermes Agent v0.20.6", environment: map[string]string{"HERMES_HOME": value}}
+		if _, err := d.Inspect(context.Background(), "hermes"); err == nil {
+			t.Fatalf("unsafe HERMES_HOME %q was accepted", value)
+		}
+	}
+}
+
+func TestHermesDiscoveryFailsClosedOnUnreadableConfiguration(t *testing.T) {
+	path := "/home/test/.hermes/config.yaml"
+	d := Discoverer{System: fakeSystem{version: "Hermes Agent v0.20.6", readErrors: map[string]error{path: os.ErrPermission}}, Verified: map[string]map[string]struct{}{"hermes": {"0.20.6": {}}}}
+	if _, err := d.Inspect(context.Background(), "hermes"); err == nil {
+		t.Fatal("unreadable Hermes configuration was treated as absent")
+	}
+}
+
 func TestOpenClawDiscoveryUsesManagedDiscoveryOnlySurfaces(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "OpenClaw 1.2.3", config: `{
   agents: { defaults: { model: { primary: "corp/main", fallbacks: ["corp/backup"] } } },
