@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,24 @@ import (
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/session"
 )
+
+type blockingRequestBody struct {
+	started              chan struct{}
+	closed               chan struct{}
+	startOnce, closeOnce sync.Once
+}
+
+func (b *blockingRequestBody) Read([]byte) (int, error) {
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.closed
+	return 0, errors.New("request body closed")
+}
+
+func (b *blockingRequestBody) Close() error {
+	b.startOnce.Do(func() { close(b.started) })
+	b.closeOnce.Do(func() { close(b.closed) })
+	return nil
+}
 
 func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	var providerBody string
@@ -687,6 +707,48 @@ func TestPendingASKEndsWhenSessionIsDeletedBeforeUpstream(t *testing.T) {
 	}
 	if recorder.Code != http.StatusForbidden || providerCalled || len(broker.Pending()) != 0 {
 		t.Fatalf("status=%d provider-called=%t pending=%d body=%s", recorder.Code, providerCalled, len(broker.Pending()), recorder.Body.String())
+	}
+}
+
+func TestPendingUploadEndsWhenSessionIsDeletedBeforeParsing(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("revoked upload reached provider")
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := &blockingRequestBody{started: make(chan struct{}), closed: make(chan struct{})}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", nil)
+	request.Body = body
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, request)
+		close(requestDone)
+	}()
+	select {
+	case <-body.started:
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not start reading request body")
+	}
+	if !manager.Delete(created.Session.ID) {
+		t.Fatal("session was not deleted")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("request body read survived explicit session deletion")
+	}
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

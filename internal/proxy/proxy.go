@@ -173,6 +173,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		stopRevocation()
 		cancel()
 	}()
+	stopBodyRead := context.AfterFunc(requestContext, func() { _ = r.Body.Close() })
+	defer stopBodyRead()
 	started := time.Now()
 	auditEvent := domain.AuditEvent{SessionID: sessionID, AgentID: route.AgentID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, Action: domain.ActionAllow, WorkspaceRef: route.WorkspaceRef}
 	defer func() {
@@ -183,6 +185,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		auditEvent.LatencyMS = time.Since(started).Milliseconds()
 		_ = route.Auditor.Append(auditEvent)
 	}()
+	vault, err := redactor.NewVault(authorization.Secret, route.VaultLimits)
+	for i := range authorization.Secret {
+		authorization.Secret[i] = 0
+	}
+	if err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = "VAULT_FAILURE"
+		fail(w, http.StatusInternalServerError, "VAULT_FAILURE")
+		return
+	}
+	defer vault.Destroy()
 	if !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
@@ -227,21 +240,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
-		auditEvent.ErrorCode = "REQUEST_TOO_LARGE"
-		fail(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE")
+		if requestContext.Err() != nil {
+			auditEvent.ErrorCode = domain.ErrUnauthorizedRoute
+			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+		} else {
+			auditEvent.ErrorCode = "REQUEST_TOO_LARGE"
+			fail(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE")
+		}
 		return
 	}
-	vault, err := redactor.NewVault(authorization.Secret, route.VaultLimits)
-	for i := range authorization.Secret {
-		authorization.Secret[i] = 0
-	}
-	if err != nil {
-		auditEvent.Action = domain.ActionBlock
-		auditEvent.ErrorCode = "VAULT_FAILURE"
-		fail(w, http.StatusInternalServerError, "VAULT_FAILURE")
-		return
-	}
-	defer vault.Destroy()
 	surfaceID := route.SurfaceID
 	if surfaceID == "" {
 		surfaceID = routeID
