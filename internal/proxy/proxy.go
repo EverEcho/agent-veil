@@ -431,8 +431,17 @@ func readLimited(reader io.Reader, limit int64) ([]byte, error) {
 	return value, nil
 }
 func copyHeaders(destination, source http.Header) {
+	dynamicHopHeaders := make(map[string]struct{})
+	for _, value := range source.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			if name = http.CanonicalHeaderKey(strings.TrimSpace(name)); name != "" {
+				dynamicHopHeaders[name] = struct{}{}
+			}
+		}
+	}
 	for key, values := range source {
-		if !isHopHeader(key) {
+		_, dynamicallyHopByHop := dynamicHopHeaders[http.CanonicalHeaderKey(key)]
+		if !isHopHeader(key) && !dynamicallyHopByHop {
 			destination[key] = append([]string(nil), values...)
 		}
 	}

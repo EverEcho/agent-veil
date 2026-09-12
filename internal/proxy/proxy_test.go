@@ -109,6 +109,19 @@ type fixedCredentials map[string]string
 
 func (c fixedCredentials) Resolve(source string) (string, error) { return c[source], nil }
 
+func TestCopyHeadersRemovesConnectionNominatedFields(t *testing.T) {
+	source := http.Header{
+		"Connection": {"X-Hop, Keep-Alive"},
+		"X-Hop":      {"must-not-cross"},
+		"X-End":      {"safe"},
+	}
+	destination := make(http.Header)
+	copyHeaders(destination, source)
+	if destination.Get("Connection") != "" || destination.Get("X-Hop") != "" || destination.Get("Keep-Alive") != "" || destination.Get("X-End") != "safe" {
+		t.Fatalf("copied headers=%v", destination)
+	}
+}
+
 func TestCapabilityCarrierIsRemovedBeforeProviderAuth(t *testing.T) {
 	var providerKey string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
