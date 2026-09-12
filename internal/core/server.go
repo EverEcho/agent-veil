@@ -526,7 +526,7 @@ type createRequest struct {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var request createRequest
-	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds <= 0 {
+	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds <= 0 || request.TTLSeconds > int64(session.DefaultMaxTTL/time.Second) || len(request.RouteIDs) > session.DefaultMaxRoutes {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_REQUEST"})
 		return
 	}

@@ -37,15 +37,36 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*managedSession
 	now      func() time.Time
+	limits   Limits
 }
 
+type Limits struct {
+	MaxSessions int
+	MaxRoutes   int
+	MaxTTL      time.Duration
+}
+
+const (
+	DefaultMaxSessions = 1024
+	DefaultMaxRoutes   = 256
+	DefaultMaxTTL      = 24 * time.Hour
+)
+
 func NewManager() *Manager {
-	return &Manager{sessions: make(map[string]*managedSession), now: time.Now}
+	manager, _ := NewManagerWithLimits(Limits{MaxSessions: DefaultMaxSessions, MaxRoutes: DefaultMaxRoutes, MaxTTL: DefaultMaxTTL})
+	return manager
+}
+
+func NewManagerWithLimits(limits Limits) (*Manager, error) {
+	if limits.MaxSessions < 1 || limits.MaxRoutes < 1 || limits.MaxTTL <= 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create session manager", "positive session, route, and TTL limits are required")
+	}
+	return &Manager{sessions: make(map[string]*managedSession), now: time.Now, limits: limits}, nil
 }
 
 func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.Duration) (Created, error) {
-	if ttl <= 0 || len(routeIDs) == 0 {
-		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "positive ttl and at least one route are required")
+	if ttl <= 0 || ttl > m.limits.MaxTTL || len(routeIDs) == 0 || len(routeIDs) > m.limits.MaxRoutes {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "ttl and route count must be within configured limits")
 	}
 	seen := make(map[string]struct{}, len(routeIDs))
 	for _, routeID := range routeIDs {
@@ -60,6 +81,14 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 	now := m.now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for id, entry := range m.sessions {
+		if !entry.session.ExpiresAt.After(now) {
+			m.deleteCascadeLocked(id)
+		}
+	}
+	if len(m.sessions) >= m.limits.MaxSessions {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "active session capacity is exhausted")
+	}
 	if parentID != "" {
 		parent, ok := m.sessions[parentID]
 		if !ok || !parent.session.ExpiresAt.After(now) {

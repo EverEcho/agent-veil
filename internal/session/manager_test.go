@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,6 +26,51 @@ func TestRouteAuthorizationAndExpiry(t *testing.T) {
 	}
 	if len(m.List()) != 0 {
 		t.Fatal("expired session not cleaned")
+	}
+}
+
+func TestManagerEnforcesTTLRouteAndActiveSessionLimits(t *testing.T) {
+	m, err := NewManagerWithLimits(Limits{MaxSessions: 2, MaxRoutes: 2, MaxTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	if _, err := m.Create("", "local", []string{"route"}, time.Minute+time.Second); err == nil {
+		t.Fatal("overlong session TTL was accepted")
+	}
+	if _, err := m.Create("", "local", []string{"one", "two", "three"}, time.Minute); err == nil {
+		t.Fatal("excess route count was accepted")
+	}
+	first, err := m.Create("", "local", []string{"one"}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create("", "local", []string{"two"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Create("", "local", []string{"three"}, time.Minute); err == nil {
+		t.Fatal("active session capacity was exceeded")
+	}
+	now = now.Add(2 * time.Second)
+	if _, err := m.Create("", "local", []string{"three"}, time.Minute); err != nil {
+		t.Fatalf("expired capacity was not reclaimed: %v", err)
+	}
+	if m.Authorize(first.Session.ID, "one", first.Routes[0].Token) {
+		t.Fatal("expired session remained authorized after capacity pruning")
+	}
+}
+
+func TestManagerRejectsInvalidLimits(t *testing.T) {
+	for _, limits := range []Limits{
+		{},
+		{MaxSessions: 1, MaxRoutes: 1, MaxTTL: 0},
+		{MaxSessions: 1, MaxRoutes: 0, MaxTTL: time.Minute},
+		{MaxSessions: 0, MaxRoutes: 1, MaxTTL: time.Minute},
+	} {
+		if _, err := NewManagerWithLimits(limits); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("invalid limits accepted or unsafe error returned: %+v err=%v", limits, err)
+		}
 	}
 }
 

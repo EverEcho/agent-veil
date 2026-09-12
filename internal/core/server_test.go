@@ -235,6 +235,22 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 }
 
+func TestSessionAPIRejectsUnboundedTTLAndRouteCounts(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	for _, input := range []createRequest{
+		{RouteIDs: []string{"route"}, TTLSeconds: int64(session.DefaultMaxTTL/time.Second) + 1},
+		{RouteIDs: make([]string, session.DefaultMaxRoutes+1), TTLSeconds: 60},
+	} {
+		payload, _ := json.Marshal(input)
+		request := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(payload))
+		recorder := httptest.NewRecorder()
+		s.createSession(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("unbounded session request status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
 func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
