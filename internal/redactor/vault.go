@@ -1,0 +1,120 @@
+package redactor
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"regexp"
+	"strings"
+	"sync"
+
+	"github.com/agentveil/agentveil/internal/domain"
+)
+
+var (
+	typeCleaner       = regexp.MustCompile(`[^A-Z0-9]+`)
+	completeToken     = regexp.MustCompile(`\[\[VEIL_[A-Z0-9_]+_[A-F0-9]{16,64}\]\]`)
+	possibleTokenOpen = regexp.MustCompile(`\[\[VEIL_`)
+)
+
+type Limits struct {
+	MaxEntries       int
+	MaxOriginalBytes int
+}
+
+type Vault struct {
+	mu            sync.RWMutex
+	sessionSecret []byte
+	limits        Limits
+	entries       map[string][]byte
+	originalBytes int
+	destroyed     bool
+}
+
+func NewVault(sessionSecret []byte, limits Limits) (*Vault, error) {
+	if len(sessionSecret) < 32 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "session secret must contain at least 256 bits")
+	}
+	if limits.MaxEntries <= 0 || limits.MaxOriginalBytes <= 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create vault", "positive vault limits are required")
+	}
+	return &Vault{sessionSecret: append([]byte(nil), sessionSecret...), limits: limits, entries: make(map[string][]byte)}, nil
+}
+
+func (v *Vault) Store(findingType, original string) (string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.destroyed {
+		return "", domain.NewError(domain.ErrVaultDestroyed, "store placeholder", "request vault has been destroyed")
+	}
+	cleanType := strings.Trim(typeCleaner.ReplaceAllString(strings.ToUpper(findingType), "_"), "_")
+	if cleanType == "" || original == "" {
+		return "", domain.NewError(domain.ErrInvalidContract, "store placeholder", "finding type and original value are required")
+	}
+	mac := hmac.New(sha256.New, v.sessionSecret)
+	_, _ = mac.Write([]byte(cleanType))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(original))
+	id := strings.ToUpper(hex.EncodeToString(mac.Sum(nil)[:8]))
+	placeholder := "[[VEIL_" + cleanType + "_" + id + "]]"
+	if stored, ok := v.entries[placeholder]; ok {
+		if string(stored) != original {
+			return "", domain.NewError(domain.ErrInvalidContract, "store placeholder", "placeholder collision")
+		}
+		return placeholder, nil
+	}
+	if len(v.entries) >= v.limits.MaxEntries || v.originalBytes+len(original) > v.limits.MaxOriginalBytes {
+		return "", domain.NewError(domain.ErrVaultFull, "store placeholder", "request vault capacity exhausted")
+	}
+	v.entries[placeholder] = []byte(original)
+	v.originalBytes += len(original)
+	return placeholder, nil
+}
+
+func (v *Vault) Restore(input string) (string, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.destroyed {
+		return "", domain.NewError(domain.ErrVaultDestroyed, "restore placeholder", "request vault has been destroyed")
+	}
+	indices := completeToken.FindAllStringIndex(input, -1)
+	var result strings.Builder
+	last := 0
+	for _, index := range indices {
+		placeholder := input[index[0]:index[1]]
+		original, ok := v.entries[placeholder]
+		if !ok {
+			return "", domain.NewError(domain.ErrUnknownPlaceholder, "restore placeholder", "placeholder is not present in this request vault")
+		}
+		result.WriteString(input[last:index[0]])
+		result.Write(original)
+		last = index[1]
+	}
+	result.WriteString(input[last:])
+	if possibleTokenOpen.MatchString(completeToken.ReplaceAllString(input, "")) {
+		return "", domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "malformed or incomplete placeholder")
+	}
+	return result.String(), nil
+}
+
+func (v *Vault) Destroy() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for key, original := range v.entries {
+		for i := range original {
+			original[i] = 0
+		}
+		delete(v.entries, key)
+	}
+	for i := range v.sessionSecret {
+		v.sessionSecret[i] = 0
+	}
+	v.originalBytes = 0
+	v.destroyed = true
+}
+
+func (v *Vault) Len() int {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return len(v.entries)
+}
