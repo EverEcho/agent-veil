@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,6 +24,31 @@ func TestScopeNeverInterceptsOutsideExactAllowlist(t *testing.T) {
 		if check {
 			t.Fatal("out-of-scope interception allowed")
 		}
+	}
+}
+
+func TestScopeRejectsMalformedDomainsSessionsAndUnboundedSets(t *testing.T) {
+	for _, value := range []string{".example.com", "example..com", "-api.example", "api-.example", "api example.com", "例子.example", "api.example:443", strings.Repeat("a", 64) + ".example"} {
+		if _, err := NewScope("session", []int{1}, []string{value}); err == nil {
+			t.Fatalf("malformed domain %q was accepted", value)
+		}
+	}
+	if _, err := NewScope("session/escape", []int{1}, []string{"api.example"}); err == nil {
+		t.Fatal("malformed session identity was accepted")
+	}
+	processes := make([]int, maxScopeProcesses+1)
+	for index := range processes {
+		processes[index] = index + 1
+	}
+	if _, err := NewScope("session", processes, []string{"api.example"}); err == nil {
+		t.Fatal("unbounded process scope was accepted")
+	}
+	domains := make([]string, maxScopeDomains+1)
+	for index := range domains {
+		domains[index] = fmt.Sprintf("api-%d.example", index)
+	}
+	if _, err := NewScope("session", []int{1}, domains); err == nil {
+		t.Fatal("unbounded domain scope was accepted")
 	}
 }
 
