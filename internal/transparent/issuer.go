@@ -14,13 +14,14 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/egress"
 )
 
 const maxCAPEMBytes = 64 << 10
 
-func (c CA) IssueServerCertificate(scope Scope, sessionID string, processID int, hostname string, now time.Time) (tls.Certificate, error) {
+func (c CA) IssueServerCertificate(scope Scope, sessionID string, process egress.ProcessIdentity, hostname string, now time.Time) (tls.Certificate, error) {
 	hostname = canonicalHost(hostname)
-	if now.IsZero() || !scope.Allows(sessionID, processID, hostname) {
+	if now.IsZero() || !scope.Allows(sessionID, process, hostname) {
 		return tls.Certificate{}, domain.NewError(domain.ErrInvalidContract, "issue transparent certificate", "session, process, or domain is outside the transparent scope")
 	}
 	certificatePEM, err := readCAFile(c.CertificatePath, false)

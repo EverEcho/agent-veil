@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/egress"
 )
 
 const (
@@ -13,21 +14,26 @@ const (
 )
 
 type Scope struct {
-	SessionID  string
-	ProcessIDs map[int]struct{}
-	Domains    map[string]struct{}
+	SessionID string
+	Processes map[egress.ProcessIdentity]struct{}
+	Domains   map[string]struct{}
 }
 
-func NewScope(sessionID string, processIDs []int, domains []string) (Scope, error) {
-	if !validSessionID(sessionID) || len(processIDs) == 0 || len(processIDs) > maxScopeProcesses || len(domains) == 0 || len(domains) > maxScopeDomains {
+func NewScope(sessionID string, processes []egress.ProcessIdentity, domains []string) (Scope, error) {
+	if !validSessionID(sessionID) || len(processes) == 0 || len(processes) > maxScopeProcesses || len(domains) == 0 || len(domains) > maxScopeDomains {
 		return Scope{}, domain.NewError(domain.ErrInvalidContract, "create transparent scope", "session, processes and domains are required")
 	}
-	scope := Scope{SessionID: sessionID, ProcessIDs: map[int]struct{}{}, Domains: map[string]struct{}{}}
-	for _, pid := range processIDs {
-		if pid <= 0 {
+	scope := Scope{SessionID: sessionID, Processes: map[egress.ProcessIdentity]struct{}{}, Domains: map[string]struct{}{}}
+	seenPIDs := make(map[int]struct{}, len(processes))
+	for _, process := range processes {
+		if process.ProcessID <= 0 || process.StartedAt == 0 {
 			return Scope{}, domain.NewError(domain.ErrInvalidContract, "create transparent scope", "process id is invalid")
 		}
-		scope.ProcessIDs[pid] = struct{}{}
+		if _, duplicate := seenPIDs[process.ProcessID]; duplicate {
+			return Scope{}, domain.NewError(domain.ErrInvalidContract, "create transparent scope", "process scope contains a reused PID")
+		}
+		seenPIDs[process.ProcessID] = struct{}{}
+		scope.Processes[process] = struct{}{}
 	}
 	for _, value := range domains {
 		host := canonicalHost(value)
@@ -70,11 +76,11 @@ func validDNSName(value string) bool {
 	return true
 }
 
-func (s Scope) Allows(sessionID string, processID int, hostname string) bool {
+func (s Scope) Allows(sessionID string, process egress.ProcessIdentity, hostname string) bool {
 	if sessionID != s.SessionID {
 		return false
 	}
-	if _, ok := s.ProcessIDs[processID]; !ok {
+	if _, ok := s.Processes[process]; !ok {
 		return false
 	}
 	_, ok := s.Domains[canonicalHost(hostname)]

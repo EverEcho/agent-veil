@@ -10,17 +10,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/agentveil/agentveil/internal/egress"
 )
 
+func process(pid int, startedAt uint64) egress.ProcessIdentity {
+	return egress.ProcessIdentity{ProcessID: pid, StartedAt: startedAt}
+}
+
 func TestScopeNeverInterceptsOutsideExactAllowlist(t *testing.T) {
-	scope, err := NewScope("session", []int{42}, []string{"api.example.com"})
+	scope, err := NewScope("session", []egress.ProcessIdentity{process(42, 100)}, []string{"api.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !scope.Allows("session", 42, "API.EXAMPLE.COM.") {
+	if !scope.Allows("session", process(42, 100), "API.EXAMPLE.COM.") {
 		t.Fatal("exact target rejected")
 	}
-	for _, check := range []bool{scope.Allows("other", 42, "api.example.com"), scope.Allows("session", 43, "api.example.com"), scope.Allows("session", 42, "evil.example.com"), scope.Allows("session", 42, "sub.api.example.com")} {
+	for _, check := range []bool{scope.Allows("other", process(42, 100), "api.example.com"), scope.Allows("session", process(43, 100), "api.example.com"), scope.Allows("session", process(42, 999), "api.example.com"), scope.Allows("session", process(42, 100), "evil.example.com"), scope.Allows("session", process(42, 100), "sub.api.example.com")} {
 		if check {
 			t.Fatal("out-of-scope interception allowed")
 		}
@@ -29,16 +35,16 @@ func TestScopeNeverInterceptsOutsideExactAllowlist(t *testing.T) {
 
 func TestScopeRejectsMalformedDomainsSessionsAndUnboundedSets(t *testing.T) {
 	for _, value := range []string{".example.com", "example..com", "-api.example", "api-.example", "api example.com", "例子.example", "api.example:443", strings.Repeat("a", 64) + ".example"} {
-		if _, err := NewScope("session", []int{1}, []string{value}); err == nil {
+		if _, err := NewScope("session", []egress.ProcessIdentity{process(1, 1)}, []string{value}); err == nil {
 			t.Fatalf("malformed domain %q was accepted", value)
 		}
 	}
-	if _, err := NewScope("session/escape", []int{1}, []string{"api.example"}); err == nil {
+	if _, err := NewScope("session/escape", []egress.ProcessIdentity{process(1, 1)}, []string{"api.example"}); err == nil {
 		t.Fatal("malformed session identity was accepted")
 	}
-	processes := make([]int, maxScopeProcesses+1)
+	processes := make([]egress.ProcessIdentity, maxScopeProcesses+1)
 	for index := range processes {
-		processes[index] = index + 1
+		processes[index] = process(index+1, uint64(index+1))
 	}
 	if _, err := NewScope("session", processes, []string{"api.example"}); err == nil {
 		t.Fatal("unbounded process scope was accepted")
@@ -47,8 +53,11 @@ func TestScopeRejectsMalformedDomainsSessionsAndUnboundedSets(t *testing.T) {
 	for index := range domains {
 		domains[index] = fmt.Sprintf("api-%d.example", index)
 	}
-	if _, err := NewScope("session", []int{1}, domains); err == nil {
+	if _, err := NewScope("session", []egress.ProcessIdentity{process(1, 1)}, domains); err == nil {
 		t.Fatal("unbounded domain scope was accepted")
+	}
+	if _, err := NewScope("session", []egress.ProcessIdentity{process(1, 1), process(1, 2)}, []string{"api.example"}); err == nil {
+		t.Fatal("duplicate PID identities were accepted")
 	}
 }
 

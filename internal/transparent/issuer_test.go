@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/agentveil/agentveil/internal/egress"
 )
 
 func TestIssuerRestrictsLeafCertificatesToExactScope(t *testing.T) {
@@ -15,25 +17,27 @@ func TestIssuerRestrictsLeafCertificatesToExactScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ca.Remove()
-	scope, err := NewScope("session-a", []int{42}, []string{"api.example.com"})
+	scope, err := NewScope("session-a", []egress.ProcessIdentity{process(42, 100)}, []string{"api.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, request := range []struct {
 		session string
 		pid     int
+		started uint64
 		host    string
 	}{
-		{"session-b", 42, "api.example.com"},
-		{"session-a", 43, "api.example.com"},
-		{"session-a", 42, "sub.api.example.com"},
-		{"session-a", 42, "127.0.0.1"},
+		{"session-b", 42, 100, "api.example.com"},
+		{"session-a", 43, 100, "api.example.com"},
+		{"session-a", 42, 999, "api.example.com"},
+		{"session-a", 42, 100, "sub.api.example.com"},
+		{"session-a", 42, 100, "127.0.0.1"},
 	} {
-		if _, err := ca.IssueServerCertificate(scope, request.session, request.pid, request.host, now); err == nil {
+		if _, err := ca.IssueServerCertificate(scope, request.session, process(request.pid, request.started), request.host, now); err == nil {
 			t.Fatalf("out-of-scope certificate was issued: %+v", request)
 		}
 	}
-	leaf, err := ca.IssueServerCertificate(scope, "session-a", 42, "API.EXAMPLE.COM.", now)
+	leaf, err := ca.IssueServerCertificate(scope, "session-a", process(42, 100), "API.EXAMPLE.COM.", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +70,8 @@ func TestIssuerRejectsTamperedCAPermissions(t *testing.T) {
 	if err := os.Chmod(ca.KeyPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	scope, _ := NewScope("session", []int{1}, []string{"api.example.com"})
-	if _, err := ca.IssueServerCertificate(scope, "session", 1, "api.example.com", now); err == nil {
+	scope, _ := NewScope("session", []egress.ProcessIdentity{process(1, 1)}, []string{"api.example.com"})
+	if _, err := ca.IssueServerCertificate(scope, "session", process(1, 1), "api.example.com", now); err == nil {
 		t.Fatal("unsafe CA key permissions were accepted")
 	}
 }
