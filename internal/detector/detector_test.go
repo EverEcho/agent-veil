@@ -50,6 +50,24 @@ func TestEncryptedAndDSAPrivateKeysAreBlocked(t *testing.T) {
 	}
 }
 
+func TestFeatureAndPrefixPrefilterSkipsImpossibleRegexes(t *testing.T) {
+	scanner := NewDefault()
+	text := "ordinary prose without structured identifiers"
+	features := scanFeatures(text)
+	candidates := 0
+	for _, rule := range scanner.rules {
+		if scanner.isCandidate(rule, text, features) {
+			candidates++
+		}
+	}
+	if candidates >= len(scanner.rules)/2 {
+		t.Fatalf("prefilter retained %d of %d rules", candidates, len(scanner.rules))
+	}
+	if matches := scan(t, scanner, "ghp_abcdefghijklmnopqrstuvwxyz dev@example.com 4111111111111111 2001:db8::1"); len(matches) != 4 {
+		t.Fatalf("prefilter changed detection results: %+v", matches)
+	}
+}
+
 func TestProviderSecretFamilies(t *testing.T) {
 	text := "AKIAABCDEFGHIJKLMNOP xoxb-1234567890-abcdefghijklmnop glpat-abcdefghijklmnopqrst sk_live_abcdefghijklmnopqrst eyJabcdef.abcdefgh.abcdefgh"
 	if matches := scan(t, NewDefault(), text); len(matches) != 5 {

@@ -31,12 +31,14 @@ type Semantic interface {
 
 type Scanner struct {
 	rules            []rule
+	requiredFeatures map[string]featureSet
+	prefixes         map[string][]string
 	semantic         Semantic
 	semanticRequired bool
 }
 
 func NewDefault() *Scanner {
-	return &Scanner{rules: []rule{
+	scanner := &Scanner{rules: []rule{
 		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----`), nil, 0},
 		{"secret.github_pat", "secret.github_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`), nil, 0},
 		{"secret.openai_key", "secret.openai_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b`), nil, 0},
@@ -63,7 +65,54 @@ func NewDefault() *Scanner {
 		{"pii.ipv6", "pii.ipv6", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`[0-9A-Fa-f:]{2,39}`), validIPv6, 0},
 		{"pii.mac", "pii.mac", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`), nil, 0},
 	}}
+	scanner.requiredFeatures = map[string]featureSet{
+		"secret.private_key":    featureDash,
+		"secret.github_pat":     featureUnderscore,
+		"secret.openai_key":     featureDash,
+		"secret.anthropic_key":  featureDash,
+		"secret.slack_token":    featureDash,
+		"secret.gitlab_pat":     featureDash,
+		"secret.stripe_key":     featureUnderscore,
+		"secret.jwt":            featureDot,
+		"secret.database_url":   featureColon | featureSlash,
+		"secret.aws_secret_key": featureUnderscore | featureEqual,
+		"secret.assignment":     featureEqual,
+		"pii.email":             featureAt | featureDot,
+		"pii.us.ssn":            featureDash | featureDigit,
+		"pii.iban":              featureDigit,
+		"pii.bank_card":         featureDigit,
+		"pii.ipv4":              featureDigit | featureDot,
+		"pii.ipv6":              featureColon,
+		"pii.mac":               featureColon,
+	}
+	scanner.prefixes = map[string][]string{
+		"secret.private_key":    {"-----BEGIN "},
+		"secret.github_pat":     {"ghp_", "github_pat_"},
+		"secret.openai_key":     {"sk-"},
+		"secret.anthropic_key":  {"sk-ant-"},
+		"secret.google_key":     {"AIza"},
+		"secret.aws_access_key": {"AKIA", "ASIA"},
+		"secret.slack_token":    {"xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"},
+		"secret.gitlab_pat":     {"glpat-"},
+		"secret.stripe_key":     {"sk_live_", "rk_live_"},
+		"secret.jwt":            {"eyJ"},
+		"secret.database_url":   {"postgres://", "postgresql://", "mysql://", "mongodb://", "mongodb+srv://", "redis://"},
+	}
+	return scanner
 }
+
+type featureSet uint16
+
+const (
+	featureDigit featureSet = 1 << iota
+	featureAt
+	featureUnderscore
+	featureDash
+	featureDot
+	featureSlash
+	featureEqual
+	featureColon
+)
 
 func (s *Scanner) WithSemantic(semantic Semantic, required bool) *Scanner {
 	s.semantic = semantic
@@ -78,7 +127,11 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 			err = domain.NewError(domain.ErrDetectorFailure, "scan content", "detector panicked")
 		}
 	}()
+	features := scanFeatures(text)
 	for _, rule := range s.rules {
+		if !s.isCandidate(rule, text, features) {
+			continue
+		}
 		for _, indices := range rule.pattern.FindAllStringSubmatchIndex(text, -1) {
 			index := indices[:2]
 			if rule.group > 0 && rule.group*2+1 < len(indices) {
@@ -112,6 +165,48 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 		matches = append(matches, Match{Finding: finding, Value: text[finding.Location.Start:finding.Location.End]})
 	}
 	return Merge(matches), nil
+}
+
+func (s *Scanner) isCandidate(candidate rule, text string, features featureSet) bool {
+	required := s.requiredFeatures[candidate.id]
+	if features&required != required {
+		return false
+	}
+	prefixes := s.prefixes[candidate.id]
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if strings.Contains(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func scanFeatures(text string) featureSet {
+	var result featureSet
+	for index := 0; index < len(text); index++ {
+		switch character := text[index]; {
+		case character >= '0' && character <= '9':
+			result |= featureDigit
+		case character == '@':
+			result |= featureAt
+		case character == '_':
+			result |= featureUnderscore
+		case character == '-':
+			result |= featureDash
+		case character == '.':
+			result |= featureDot
+		case character == '/':
+			result |= featureSlash
+		case character == '=':
+			result |= featureEqual
+		case character == ':':
+			result |= featureColon
+		}
+	}
+	return result
 }
 
 func Merge(matches []Match) []Match {
