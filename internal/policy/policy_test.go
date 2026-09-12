@@ -29,3 +29,23 @@ func TestAskFailsClosedWhenNonInteractive(t *testing.T) {
 		t.Fatalf("ASK did not fail closed: %+v", decision)
 	}
 }
+
+func TestPolicyScopeRejectsSensitiveOrMalformedPersistence(t *testing.T) {
+	valid := Scope{AgentID: "codex", Workspace: "sha256:0123456789abcdef0123456789abcdef", Provider: "api.example.com", SurfaceID: "primary", FindingType: "pii.email"}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []Scope{
+		{AgentID: "dev@example.com"},
+		{Workspace: "/home/alice/private-project"},
+		{Provider: "api.example.com/path"},
+		{FindingType: "secret value"},
+	} {
+		if err := scope.Validate(); err == nil {
+			t.Fatalf("unsafe scope accepted: %+v", scope)
+		}
+	}
+	if _, err := (Engine{Default: domain.ActionRedact}).Decide(Scope{Workspace: "/raw/path"}, true); err == nil {
+		t.Fatal("unsafe runtime context accepted")
+	}
+}

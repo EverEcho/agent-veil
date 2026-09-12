@@ -29,8 +29,8 @@ func (d Document) Engine() (Engine, error) {
 		return Engine{}, domain.NewError(domain.ErrInvalidContract, "load policy", "unsupported schema or default action")
 	}
 	for _, rule := range d.Rules {
-		if !rule.Action.Valid() {
-			return Engine{}, domain.NewError(domain.ErrInvalidContract, "load policy", "invalid rule action")
+		if !rule.Action.Valid() || rule.Scope.Validate() != nil {
+			return Engine{}, domain.NewError(domain.ErrInvalidContract, "load policy", "invalid rule action or scope")
 		}
 	}
 	return Engine{Default: d.Default, Rules: append([]Rule(nil), d.Rules...)}, nil

@@ -1,7 +1,16 @@
 package policy
 
 import (
+	"net"
+	"regexp"
+	"strings"
+
 	"github.com/agentveil/agentveil/internal/domain"
+)
+
+var (
+	policyIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	workspaceRef     = regexp.MustCompile(`^sha256:[a-f0-9]{32}$`)
 )
 
 type Scope struct {
@@ -28,15 +37,33 @@ type Engine struct {
 	Rules   []Rule
 }
 
+func (s Scope) Validate() error {
+	for _, value := range []string{s.AgentID, s.SurfaceID, s.FindingType} {
+		if value != "" && !policyIdentifier.MatchString(value) {
+			return domain.NewError(domain.ErrInvalidContract, "validate policy scope", "identifier is invalid")
+		}
+	}
+	if s.Workspace != "" && !workspaceRef.MatchString(s.Workspace) {
+		return domain.NewError(domain.ErrInvalidContract, "validate policy scope", "workspace must be a hashed reference")
+	}
+	if s.Provider != "" && !validProvider(s.Provider) {
+		return domain.NewError(domain.ErrInvalidContract, "validate policy scope", "provider host is invalid")
+	}
+	return nil
+}
+
 func (e Engine) Decide(context Scope, interactive bool) (Decision, error) {
 	if !e.Default.Valid() {
 		return Decision{}, domain.NewError(domain.ErrInvalidContract, "evaluate policy", "default action is invalid")
+	}
+	if err := context.Validate(); err != nil {
+		return Decision{}, err
 	}
 	decision := Decision{Action: e.Default, Reason: "default policy"}
 	bestSpecificity := -1
 	for i := range e.Rules {
 		rule := &e.Rules[i]
-		if !rule.Action.Valid() {
+		if !rule.Action.Valid() || rule.Scope.Validate() != nil {
 			return Decision{}, domain.NewError(domain.ErrInvalidContract, "evaluate policy", "rule action is invalid")
 		}
 		specificity, matches := match(rule.Scope, context)
@@ -59,6 +86,26 @@ func (e Engine) Decide(context Scope, interactive bool) (Decision, error) {
 		decision.Reason = "ASK fails closed in a non-interactive context"
 	}
 	return decision, nil
+}
+
+func validProvider(value string) bool {
+	if len(value) > 253 || strings.TrimSpace(value) != value {
+		return false
+	}
+	if net.ParseIP(strings.Trim(value, "[]")) != nil {
+		return true
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func match(rule, context Scope) (int, bool) {
