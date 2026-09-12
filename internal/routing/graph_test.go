@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -25,5 +26,31 @@ func TestRoutingGraphRejectsUnknownKindsAndMisplacedEndpoints(t *testing.T) {
 		if err := graph.Validate(); err == nil {
 			t.Fatalf("invalid graph accepted: %+v", graph)
 		}
+	}
+}
+
+func TestRoutingGraphBoundsNodesAndText(t *testing.T) {
+	valid := Graph{Nodes: []Node{{"a", "Agent", NodeAgent}, {"v", "AgentVeil", NodeDLP}, {"p", "Provider", NodeProvider}}}
+	invalidUTF8 := string([]byte{0xff})
+	for _, graph := range []Graph{
+		{Nodes: append(append([]Node(nil), valid.Nodes...), make([]Node, MaxGraphNodes-2)...)},
+		{Nodes: []Node{{"not safe", "Agent", NodeAgent}, {"v", "AgentVeil", NodeDLP}, {"p", "Provider", NodeProvider}}},
+		{Nodes: []Node{{"a", strings.Repeat("n", maxNodeNameBytes+1), NodeAgent}, {"v", "AgentVeil", NodeDLP}, {"p", "Provider", NodeProvider}}},
+		{Nodes: []Node{{"a", invalidUTF8, NodeAgent}, {"v", "AgentVeil", NodeDLP}, {"p", "Provider", NodeProvider}}},
+	} {
+		if err := graph.ValidateStructure(); err == nil {
+			t.Fatalf("unbounded or malformed graph accepted: %+v", graph)
+		}
+	}
+}
+
+func TestRoutingRisksBoundsUnvalidatedInput(t *testing.T) {
+	nodes := make([]Node, MaxGraphNodes+100)
+	for index := range nodes {
+		nodes[index] = Node{ID: "n", Name: "Modifier", Kind: NodeContentModifier}
+	}
+	nodes[0] = Node{ID: "v", Name: "AgentVeil", Kind: NodeDLP}
+	if risks := (Graph{Nodes: nodes}).Risks("primary"); len(risks) != MaxGraphNodes-1 {
+		t.Fatalf("risk scan was not bounded: got %d risks", len(risks))
 	}
 }
