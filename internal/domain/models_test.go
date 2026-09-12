@@ -121,6 +121,14 @@ func TestPersistedIdentifiersAndCredentialSourcesRejectSensitiveText(t *testing.
 	if err := finding.Validate(1); err == nil {
 		t.Fatal("sensitive finding category was accepted for audit")
 	}
+	finding = Finding{RuleID: "pii.email", Category: "pii.email", Detector: "semantic", Severity: SeverityHigh, SuggestedAction: ActionBlock, Confidence: 1, Location: ContentLocation{Path: strings.Repeat("x", maxReferenceBytes+1), Start: 0, End: 1}}
+	if err := finding.Validate(1); err == nil {
+		t.Fatal("unbounded finding path was accepted")
+	}
+	finding.Location.Path = "safe\x00forged"
+	if err := finding.Validate(1); err == nil {
+		t.Fatal("finding path containing NUL was accepted")
+	}
 }
 
 func TestManifestRejectsUnboundedOrInvalidAgentMetadata(t *testing.T) {

@@ -171,6 +171,9 @@ const maxPendingApprovals = 1024
 
 func NewBroker() *Broker { return &Broker{pending: map[string]pendingApproval{}} }
 func (b *Broker) Request(ctx context.Context, finding domain.Finding) (domain.Action, error) {
+	if ctx == nil || finding.Validate(finding.Location.End) != nil {
+		return domain.ActionBlock, domain.NewError(domain.ErrInvalidContract, "request ASK", "context or finding is invalid")
+	}
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
 		return domain.ActionBlock, err

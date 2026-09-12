@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/agentveil/agentveil/internal/domain"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/agentveil/agentveil/internal/domain"
 )
 
 func TestPolicyStoreRoundTripAndPrivatePermissions(t *testing.T) {
@@ -122,15 +123,16 @@ func TestPolicyStoreRejectsDuplicateKeys(t *testing.T) {
 
 func TestASKBrokerIsOneTimeAndFailsClosedOnTimeout(t *testing.T) {
 	broker := NewBroker()
+	finding := approvalFinding()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	if action, err := broker.Request(ctx, domain.Finding{}); err == nil || action != domain.ActionBlock {
+	if action, err := broker.Request(ctx, finding); err == nil || action != domain.ActionBlock {
 		t.Fatal("timeout did not block")
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	result := make(chan domain.Action)
-	go func() { action, _ := broker.Request(ctx, domain.Finding{}); result <- action }()
+	go func() { action, _ := broker.Request(ctx, finding); result <- action }()
 	var id string
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
 		ids := broker.Pending()
@@ -152,7 +154,7 @@ func TestASKBrokerFailsClosedAtPendingCapacity(t *testing.T) {
 	for index := 0; index < maxPendingApprovals; index++ {
 		broker.pending[fmt.Sprintf("%032d", index)] = pendingApproval{channel: make(chan approvalResult, 1)}
 	}
-	action, err := broker.Request(context.Background(), domain.Finding{})
+	action, err := broker.Request(context.Background(), approvalFinding())
 	var veilErr *domain.VeilError
 	if action != domain.ActionBlock || !errors.As(err, &veilErr) || veilErr.Code != domain.ErrInteractionRequired || len(broker.pending) != maxPendingApprovals {
 		t.Fatalf("action=%s pending=%d err=%v", action, len(broker.pending), err)
@@ -163,4 +165,20 @@ func TestASKBrokerFailsClosedAtPendingCapacity(t *testing.T) {
 			t.Fatal("pending approvals are not deterministically sorted")
 		}
 	}
+}
+
+func TestASKBrokerRejectsInvalidFindingBeforeRetention(t *testing.T) {
+	broker := NewBroker()
+	finding := approvalFinding()
+	finding.Location.Path = strings.Repeat("x", 4097)
+	if action, err := broker.Request(context.Background(), finding); err == nil || action != domain.ActionBlock || len(broker.Pending()) != 0 {
+		t.Fatalf("action=%s pending=%d error=%v", action, len(broker.Pending()), err)
+	}
+	if action, err := broker.Request(nil, approvalFinding()); err == nil || action != domain.ActionBlock {
+		t.Fatalf("nil context action=%s error=%v", action, err)
+	}
+}
+
+func approvalFinding() domain.Finding {
+	return domain.Finding{RuleID: "pii.email", Category: "pii.email", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: "/input", Start: 0, End: 1}, Confidence: 1, Detector: "deterministic", SuggestedAction: domain.ActionRedact}
 }

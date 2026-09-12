@@ -183,6 +183,9 @@ func (f Finding) Validate(contentLength int) error {
 	if !f.Severity.Valid() || !f.SuggestedAction.Valid() || f.Confidence < 0 || f.Confidence > 1 {
 		return NewError(ErrInvalidContract, "validate finding", "severity, action or confidence is invalid")
 	}
+	if len(f.Location.Path) > maxReferenceBytes || !utf8.ValidString(f.Location.Path) || strings.ContainsRune(f.Location.Path, 0) {
+		return NewError(ErrInvalidContract, "validate finding", "content path is invalid")
+	}
 	if f.Location.Start < 0 || f.Location.End <= f.Location.Start || f.Location.End > contentLength {
 		return NewError(ErrInvalidContract, "validate finding", "content range is invalid")
 	}
