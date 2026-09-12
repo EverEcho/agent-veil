@@ -15,13 +15,18 @@ type credentials map[string]string
 func (c credentials) Resolve(source string) (string, error) { return c[source], nil }
 
 func TestAuthAppliedWithoutPersistingCredential(t *testing.T) {
-	request, _ := http.NewRequest(http.MethodPost, "https://api.example/v1", nil)
+	request, _ := http.NewRequest(http.MethodPost, "https://api.example/v1?key=stale", nil)
+	request.Header.Set("Authorization", "Bearer stale")
+	request.Header.Set("X-Api-Key", "stale")
 	strategy := domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:API_KEY"}
 	if err := (Applier{Credentials: credentials{"environment:API_KEY": "secret"}}).Apply(request, strategy); err != nil {
 		t.Fatal(err)
 	}
 	if request.Header.Get("Authorization") != "Bearer secret" {
 		t.Fatal("bearer auth missing")
+	}
+	if request.Header.Get("X-Api-Key") != "" || request.URL.Query().Get("key") != "" {
+		t.Fatal("stale client credentials survived configured authentication")
 	}
 	if strategy.Source == "secret" {
 		t.Fatal("strategy persisted the credential")

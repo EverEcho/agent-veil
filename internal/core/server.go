@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	veilauth "github.com/agentveil/agentveil/internal/auth"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -288,7 +289,12 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
 		}
-		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, Network: selected.Network, Auditor: s.auditor, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
+		authApplier, err := veilauth.NewRuntimeApplier(selected.Auth, upstream)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
+			return
+		}
+		handler, err := veilproxy.NewHandler(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, Policy: s.policy, Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return
