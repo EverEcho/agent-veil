@@ -79,3 +79,68 @@ func TestStoreDefaultLeakScanPreventsSensitivePersistence(t *testing.T) {
 		t.Fatalf("sensitive metadata reached disk: %s", persisted)
 	}
 }
+
+func TestStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
+	if _, err := NewStore("relative/audit.jsonl", time.Hour, nil); err == nil {
+		t.Fatal("relative audit path was accepted")
+	}
+	directory := t.TempDir()
+	path := filepath.Join(directory, "audit.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path, time.Hour, nil); err == nil {
+		t.Fatal("world-readable audit file was accepted")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxAuditFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(path, time.Hour, nil); err == nil {
+		t.Fatal("oversized audit file was accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(directory, "target.jsonl")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := NewStore(path, time.Hour, nil); err == nil {
+		t.Fatal("symlinked audit file was accepted")
+	}
+}
+
+func TestStoreCompactsOldestEventsBeforeCapacity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	store, err := NewStore(path, time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.maxBytes = 260
+	now := time.Now().UTC()
+	for _, agentID := range []string{"first", "second", "third"} {
+		if err := store.Append(domain.AuditEvent{Timestamp: now, AgentID: agentID, Action: domain.ActionAllow}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := store.Recent(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[len(events)-1].AgentID != "third" {
+		t.Fatalf("newest event was not retained: %+v", events)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > store.maxBytes {
+		t.Fatalf("audit size=%d max=%d", info.Size(), store.maxBytes)
+	}
+}

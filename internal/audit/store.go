@@ -18,16 +18,19 @@ type Store struct {
 	path      string
 	retention time.Duration
 	forbidden func() []string
+	maxBytes  int64
 }
 
+const maxAuditFileBytes int64 = 64 << 20
+
 func NewStore(path string, retention time.Duration, forbidden func() []string) (*Store, error) {
-	if path == "" || retention <= 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create audit store", "path and positive retention are required")
+	if path == "" || !filepath.IsAbs(path) || retention <= 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create audit store", "absolute path and positive retention are required")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	store := &Store{path: path, retention: retention, forbidden: forbidden}
+	store := &Store{path: path, retention: retention, forbidden: forbidden, maxBytes: maxAuditFileBytes}
 	if err := store.Prune(time.Now().UTC()); err != nil {
 		return nil, err
 	}
@@ -48,15 +51,19 @@ func (s *Store) Append(event domain.AuditEvent) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	record := append(payload, '\n')
+	if int64(len(record)) > s.maxBytes {
+		return domain.NewError(domain.ErrInvalidContract, "append audit", "audit event is too large")
+	}
+	if err := s.compactForAppendLocked(int64(len(record))); err != nil {
+		return err
+	}
+	file, err := openAuditAppend(s.path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	if err := file.Chmod(0600); err != nil {
-		return err
-	}
-	if _, err := file.Write(append(payload, '\n')); err != nil {
+	if _, err := file.Write(record); err != nil {
 		return err
 	}
 	return file.Sync()
@@ -100,7 +107,7 @@ func (s *Store) Prune(now time.Time) error {
 }
 
 func (s *Store) readLocked() ([]domain.AuditEvent, error) {
-	file, err := os.Open(s.path)
+	file, err := openAuditRead(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -108,8 +115,15 @@ func (s *Store) readLocked() ([]domain.AuditEvent, error) {
 		return nil, err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > s.maxBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file is too large")
+	}
 	var events []domain.AuditEvent
-	decoder := json.NewDecoder(bufio.NewReader(file))
+	decoder := json.NewDecoder(bufio.NewReader(io.LimitReader(file, s.maxBytes+1)))
 	for {
 		var event domain.AuditEvent
 		if err := decoder.Decode(&event); errors.Is(err, io.EOF) {
@@ -148,5 +162,117 @@ func (s *Store) replaceLocked(events []domain.AuditEvent) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, s.path)
+	if err := os.Rename(temporaryPath, s.path); err != nil {
+		return err
+	}
+	return syncAuditDirectory(directory)
+}
+
+func (s *Store) compactForAppendLocked(recordBytes int64) error {
+	info, err := os.Lstat(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := validateAuditFileInfo(info); err != nil {
+		return err
+	}
+	if info.Size()+recordBytes <= s.maxBytes {
+		return nil
+	}
+	events, err := s.readLocked()
+	if err != nil {
+		return err
+	}
+	remaining := s.maxBytes - recordBytes
+	start := len(events)
+	for start > 0 {
+		payload, err := json.Marshal(events[start-1])
+		if err != nil {
+			return err
+		}
+		size := int64(len(payload) + 1)
+		if size > remaining {
+			break
+		}
+		remaining -= size
+		start--
+	}
+	return s.replaceLocked(events[start:])
+}
+
+func openAuditRead(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAuditFileInfo(info); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !os.SameFile(info, opened) {
+		file.Close()
+		return nil, domain.NewError(domain.ErrInvalidContract, "open audit", "audit file changed during validation")
+	}
+	return file, nil
+}
+
+func openAuditAppend(path string) (*os.File, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_APPEND|os.O_WRONLY, 0600)
+			if errors.Is(createErr, os.ErrExist) {
+				continue
+			}
+			return file, createErr
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := validateAuditFileInfo(info); err != nil {
+			return nil, err
+		}
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, err
+		}
+		opened, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
+		if !os.SameFile(info, opened) {
+			file.Close()
+			continue
+		}
+		return file, nil
+	}
+	return nil, domain.NewError(domain.ErrInvalidContract, "open audit", "audit file changed during validation")
+}
+
+func validateAuditFileInfo(info os.FileInfo) error {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, "open audit", "audit file permissions or type are unsafe")
+	}
+	return nil
+}
+
+func syncAuditDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
