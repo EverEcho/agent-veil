@@ -79,7 +79,11 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 				baseURL = settings.Env["ANTHROPIC_BASE_URL"]
 			}
 		}
-		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "Claude login or ANTHROPIC_API_KEY"}, Rewritable: true, Required: true}}
+		auth := domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "Claude login"}
+		if value, ok := d.System.LookupEnv("ANTHROPIC_API_KEY"); ok && value != "" {
+			auth = domain.AuthStrategy{Type: domain.AuthAnthropicKey, Source: "environment:ANTHROPIC_API_KEY"}
+		}
+		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Rewritable: true, Required: true}}
 	case "hermes", "cursor":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}

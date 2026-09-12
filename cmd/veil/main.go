@@ -23,6 +23,7 @@ import (
 	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
+	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
 )
@@ -54,7 +55,7 @@ func run(args []string) error {
 		return writeInspection(os.Stdout, manifest)
 	case "run":
 		if len(args) < 2 {
-			return errors.New("usage: veil run codex [-- agent arguments]")
+			return errors.New("usage: veil run <codex|claude> [-- agent arguments]")
 		}
 		childArgs := args[2:]
 		if len(childArgs) > 0 && childArgs[0] == "--" {
@@ -67,7 +68,7 @@ func run(args []string) error {
 }
 
 func runProtected(ctx context.Context, name string, childArgs []string) error {
-	if name != "codex" {
+	if name != "codex" && name != "claude" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
 	endpoint, adminToken := os.Getenv("VEIL_CORE_ENDPOINT"), os.Getenv("VEIL_ADMIN_TOKEN")
@@ -85,6 +86,9 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if len(plan.Routes) != 1 || plan.Summary.Protected != plan.Summary.Total {
 		return errors.New("agent does not have exactly one fully protected route")
 	}
+	if name == "claude" && plan.Routes[0].Auth.Type != domain.AuthAnthropicKey {
+		return errors.New("protected Claude launch currently requires ANTHROPIC_API_KEY; OAuth mode has no verified capability-header injection")
+	}
 	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/agents", adminToken, manifest, nil); err != nil {
 		return err
 	}
@@ -99,11 +103,32 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 	if err != nil {
 		return err
 	}
-	args := protectedCodexArgs(endpoint+"/route/"+plan.Routes[0].ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
+	args := childArgs
+	if name == "codex" {
+		args = protectedCodexArgs(endpoint+"/route/"+plan.Routes[0].ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
+	} else {
+		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + plan.Routes[0].ID
+		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, created.Routes[0].Token)
+	}
 	command := exec.CommandContext(ctx, launch.Executable, args...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = append(os.Environ(), "VEIL_SESSION_ID="+created.Session.ID, "VEIL_PROTECTION_TOKEN="+created.Routes[0].Token, "VEIL_CORE_ENDPOINT="+endpoint)
+	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
 	return command.Run()
+}
+
+func overlayEnvironment(base []string, overrides map[string]string) []string {
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, found := strings.Cut(entry, "=")
+		if _, replaced := overrides[key]; found && replaced {
+			continue
+		}
+		result = append(result, entry)
+	}
+	for key, value := range overrides {
+		result = append(result, key+"="+value)
+	}
+	return result
 }
 
 func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []string {

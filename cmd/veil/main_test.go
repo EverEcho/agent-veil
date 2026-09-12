@@ -34,3 +34,11 @@ func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 		t.Fatalf("args=%v", args)
 	}
 }
+
+func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing.T) {
+	environment := overlayEnvironment([]string{"PATH=/bin", "ANTHROPIC_API_KEY=real-provider-key"}, map[string]string{"ANTHROPIC_API_KEY": "veil-v1:session:route", "VEIL_SESSION_ID": "session"})
+	joined := strings.Join(environment, "\n")
+	if strings.Contains(joined, "real-provider-key") || strings.Count(joined, "ANTHROPIC_API_KEY=") != 1 || !strings.Contains(joined, "ANTHROPIC_API_KEY=veil-v1:session:route") {
+		t.Fatalf("environment=%v", environment)
+	}
+}

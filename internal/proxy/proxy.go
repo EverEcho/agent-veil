@@ -24,6 +24,7 @@ import (
 const (
 	HeaderSession    = "X-Veil-Session"
 	HeaderRouteToken = "X-Veil-Route-Token"
+	CapabilityPrefix = "veil-v1:"
 )
 
 type Route struct {
@@ -44,6 +45,7 @@ type Route struct {
 	Auditor     interface {
 		Append(domain.AuditEvent) error
 	}
+	CapabilityHeader string
 }
 type configuredRoute struct {
 	Route
@@ -111,13 +113,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "UNKNOWN_ROUTE")
 		return
 	}
-	secret, ok := h.sessions.AuthorizeAndSecret(r.Header.Get(HeaderSession), routeID, r.Header.Get(HeaderRouteToken))
+	sessionID, routeToken := r.Header.Get(HeaderSession), r.Header.Get(HeaderRouteToken)
+	if route.CapabilityHeader != "" {
+		encoded := r.Header.Get(route.CapabilityHeader)
+		r.Header.Del(route.CapabilityHeader)
+		if decodedSession, decodedToken, valid := DecodeCapability(encoded); valid {
+			sessionID, routeToken = decodedSession, decodedToken
+		} else {
+			sessionID, routeToken = "", ""
+		}
+	}
+	secret, ok := h.sessions.AuthorizeAndSecret(sessionID, routeID, routeToken)
 	if !ok {
 		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
 		return
 	}
 	started := time.Now()
-	auditEvent := domain.AuditEvent{SessionID: r.Header.Get(HeaderSession), AgentID: route.AgentID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, Action: domain.ActionAllow, WorkspaceRef: route.WorkspaceRef}
+	auditEvent := domain.AuditEvent{SessionID: sessionID, AgentID: route.AgentID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, Action: domain.ActionAllow, WorkspaceRef: route.WorkspaceRef}
 	defer func() {
 		if route.Auditor == nil {
 			return
@@ -300,6 +312,25 @@ func splitRoutePath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return id, "/" + suffix, true
+}
+
+func EncodeCapability(sessionID, routeToken string) string {
+	return CapabilityPrefix + sessionID + ":" + routeToken
+}
+
+func DecodeCapability(value string) (string, string, bool) {
+	if !strings.HasPrefix(value, CapabilityPrefix) {
+		return "", "", false
+	}
+	value = strings.TrimPrefix(value, CapabilityPrefix)
+	if value == "" {
+		return "", "", false
+	}
+	sessionID, routeToken, found := strings.Cut(value, ":")
+	if !found || sessionID == "" || routeToken == "" || strings.Contains(routeToken, ":") {
+		return "", "", false
+	}
+	return sessionID, routeToken, true
 }
 func readLimited(reader io.Reader, limit int64) ([]byte, error) {
 	value, err := io.ReadAll(io.LimitReader(reader, limit+1))

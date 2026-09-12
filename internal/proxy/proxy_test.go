@@ -66,6 +66,33 @@ func (a *recordingAuditor) Append(event domain.AuditEvent) error {
 	return nil
 }
 
+type fixedCredentials map[string]string
+
+func (c fixedCredentials) Resolve(source string) (string, error) { return c[source], nil }
+
+func TestCapabilityCarrierIsRemovedBeforeProviderAuth(t *testing.T) {
+	var providerKey string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerKey = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	strategy := domain.AuthStrategy{Type: domain.AuthAnthropicKey, Source: "environment:ANTHROPIC_API_KEY"}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolAnthropic, Upstream: upstream, Auth: strategy, AuthApplier: veilauth.Applier{Credentials: fixedCredentials{strategy.Source: "real-provider-key"}}, CapabilityHeader: "X-Api-Key", Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/messages", strings.NewReader(`{"messages":[{"role":"user","content":"safe"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Api-Key", EncodeCapability(created.Session.ID, created.Routes[0].Token))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerKey != "real-provider-key" || strings.Contains(providerKey, created.Session.ID) {
+		t.Fatalf("status=%d provider key=%q", recorder.Code, providerKey)
+	}
+}
+
 func TestAuthorizedRequestsEmitMetadataOnlyAudit(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
