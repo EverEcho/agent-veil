@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/agentveil/agentveil/internal/domain"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/agentveil/agentveil/internal/domain"
 )
 
 type fakeSystem struct {
 	version, config string
 	environment     map[string]string
 	files           map[string]string
+	readErrors      map[string]error
 }
 
 type inventorySystem struct {
@@ -30,7 +33,7 @@ func (f inventorySystem) Version(_ context.Context, executable string) (string, 
 	name := strings.TrimPrefix(executable, "/bin/")
 	return f.installed[name], nil
 }
-func (f inventorySystem) ReadFile(string) ([]byte, error) { return nil, errors.New("unused") }
+func (f inventorySystem) ReadFile(string) ([]byte, error) { return nil, os.ErrNotExist }
 func (f inventorySystem) LookupEnv(string) (string, bool) { return "", false }
 func (f inventorySystem) HomeDir() (string, error)        { return "/home/test", nil }
 
@@ -38,11 +41,14 @@ func (f fakeSystem) LookPath(name string) (string, error)            { return "/
 func (f fakeSystem) Version(context.Context, string) (string, error) { return f.version, nil }
 
 func (f fakeSystem) ReadFile(path string) ([]byte, error) {
+	if err := f.readErrors[path]; err != nil {
+		return nil, err
+	}
 	if content, ok := f.files[path]; ok {
 		return []byte(content), nil
 	}
 	if f.config == "" {
-		return nil, errors.New("missing")
+		return nil, os.ErrNotExist
 	}
 	return []byte(f.config), nil
 }
@@ -290,6 +296,33 @@ func TestClaudeDiscoveryRejectsDuplicateConfigurationKeys(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "2.1.220", config: `{"env":{"ANTHROPIC_BASE_URL":"https://safe.example","ANTHROPIC_BASE_URL":"https://hidden.example"}}`}, Verified: map[string]map[string]struct{}{"claude": {"2.1.220": {}}}}
 	if _, err := d.Inspect(context.Background(), "claude"); err == nil {
 		t.Fatal("Claude settings with duplicate upstream were accepted")
+	}
+}
+
+func TestCodexAndClaudeDiscoveryFailClosedOnUnreadableConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name, version, path string
+	}{
+		{"codex", "0.153.4", "/home/test/.codex/config.toml"},
+		{"claude", "2.1.220", "/home/test/.claude/settings.json"},
+	} {
+		d := Discoverer{System: fakeSystem{version: test.version, readErrors: map[string]error{test.path: os.ErrPermission}}, Verified: map[string]map[string]struct{}{test.name: {test.version: {}}}}
+		if _, err := d.Inspect(context.Background(), test.name); err == nil {
+			t.Fatalf("%s unreadable configuration was treated as absent", test.name)
+		}
+	}
+}
+
+func TestOSSystemBoundsConfigurationReads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.json")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, maxAgentConfigBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (OSSystem{}).ReadFile(path); err == nil {
+		t.Fatal("oversized agent configuration was accepted")
 	}
 }
 
