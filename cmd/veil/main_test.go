@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -23,5 +24,13 @@ func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
 	}
 	if result.Manifest.Agent.ID != "a" || result.Plan.Summary.Unprotected != 1 || result.Plan.Summary.Protected != 0 {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
+	args := protectedCodexArgs("http://127.0.0.1:1234/route/primary/v1", []string{"exec", "hello"}, true)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "session-secret") || !strings.Contains(joined, "env_http_headers") || !strings.Contains(joined, "env_key") {
+		t.Fatalf("args=%v", args)
 	}
 }
