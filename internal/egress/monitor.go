@@ -8,20 +8,24 @@ import (
 )
 
 type Status string
+type Transport string
 
 const (
-	StatusContentProtected Status = "content_protected"
-	StatusObserved         Status = "observed"
-	StatusBlocked          Status = "blocked"
+	StatusContentProtected Status    = "content_protected"
+	StatusObserved         Status    = "observed"
+	StatusBlocked          Status    = "blocked"
+	TransportTCP           Transport = "tcp"
+	TransportUDP           Transport = "udp"
 )
 
 type Connection struct {
 	ProcessIdentity
-	ProcessName    string `json:"process_name,omitempty"`
-	Host           string `json:"host"`
-	Port           uint16 `json:"port"`
-	ThroughRouteID string `json:"through_route_id,omitempty"`
-	Blocked        bool   `json:"blocked"`
+	ProcessName    string    `json:"process_name,omitempty"`
+	Transport      Transport `json:"transport,omitempty"`
+	Host           string    `json:"host"`
+	Port           uint16    `json:"port"`
+	ThroughRouteID string    `json:"through_route_id,omitempty"`
+	Blocked        bool      `json:"blocked"`
 }
 type Expected struct {
 	ProcessIdentity

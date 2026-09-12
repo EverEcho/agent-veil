@@ -23,9 +23,10 @@ const (
 )
 
 // LinuxConnectionCollector associates a bounded set of process file
-// descriptors with their network-namespace TCP tables. It intentionally
+// descriptors with their network-namespace TCP and UDP tables. It intentionally
 // reports observed IP endpoints; reverse DNS is not evidence that a socket was
-// opened for a particular hostname.
+// opened for a particular hostname. Unconnected UDP sockets have no remote
+// endpoint and are omitted.
 type LinuxConnectionCollector struct {
 	Root            string
 	MaxProcesses    int
@@ -89,8 +90,13 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 		}
 
 		readTable := false
-		for _, name := range []string{"tcp", "tcp6"} {
-			tableEntries, records, err := readLinuxTCPTable(filepath.Join(processRoot, "net", name), name == "tcp6", tableLimit-tableRecords)
+		tables := []struct {
+			name      string
+			ipv6      bool
+			transport Transport
+		}{{"tcp", false, TransportTCP}, {"tcp6", true, TransportTCP}, {"udp", false, TransportUDP}, {"udp6", true, TransportUDP}}
+		for _, table := range tables {
+			tableEntries, records, err := readLinuxSocketTable(filepath.Join(processRoot, "net", table.name), table.ipv6, tableLimit-tableRecords)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
@@ -106,11 +112,11 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 				if len(connections) == connectionLimit {
 					return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "connection snapshot exceeds its limit")
 				}
-				connections = append(connections, Connection{ProcessIdentity: process.ProcessIdentity, Host: tableEntry.host, Port: tableEntry.port})
+				connections = append(connections, Connection{ProcessIdentity: process.ProcessIdentity, Transport: table.transport, Host: tableEntry.host, Port: tableEntry.port})
 			}
 		}
 		if !readTable {
-			return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "TCP connection tables are unavailable")
+			return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "network connection tables are unavailable")
 		}
 		if err := verifyProcessIdentity(processRoot, process.ProcessIdentity); err != nil {
 			return nil, domain.NewError(domain.ErrInvalidContract, "collect process connections", "process identity changed during collection")
@@ -123,6 +129,9 @@ func (c LinuxConnectionCollector) Connections(processes []Process) ([]Connection
 		}
 		if connections[i].StartedAt != connections[j].StartedAt {
 			return connections[i].StartedAt < connections[j].StartedAt
+		}
+		if connections[i].Transport != connections[j].Transport {
+			return connections[i].Transport < connections[j].Transport
 		}
 		if connections[i].Host != connections[j].Host {
 			return connections[i].Host < connections[j].Host
@@ -170,9 +179,9 @@ type linuxTCPEntry struct {
 	port  uint16
 }
 
-func readLinuxTCPTable(path string, ipv6 bool, limit int) ([]linuxTCPEntry, int, error) {
-	if limit < 1 {
-		return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP table exceeds its limit")
+func readLinuxSocketTable(path string, ipv6 bool, limit int) ([]linuxTCPEntry, int, error) {
+	if limit < 0 {
+		return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket table exceeds its limit")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -189,15 +198,15 @@ func readLinuxTCPTable(path string, ipv6 bool, limit int) ([]linuxTCPEntry, int,
 			continue
 		}
 		if line-1 > limit {
-			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP table exceeds its limit")
+			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket table exceeds its limit")
 		}
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 10 {
-			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP table record is malformed")
+			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket table record is malformed")
 		}
 		inode, err := strconv.ParseUint(fields[9], 10, 64)
 		if err != nil {
-			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP table inode is invalid")
+			return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket table inode is invalid")
 		}
 		host, port, err := parseLinuxEndpoint(fields[2], ipv6)
 		if err != nil {
@@ -212,7 +221,7 @@ func readLinuxTCPTable(path string, ipv6 bool, limit int) ([]linuxTCPEntry, int,
 		return nil, 0, err
 	}
 	if line == 0 {
-		return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP table header is missing")
+		return nil, 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket table header is missing")
 	}
 	return entries, line - 1, nil
 }
@@ -226,7 +235,7 @@ func parseLinuxEndpoint(value string, ipv6 bool) (string, uint16, error) {
 	address, err := hex.DecodeString(addressHex)
 	port, portErr := strconv.ParseUint(portHex, 16, 16)
 	if !ok || err != nil || portErr != nil || len(address) != expectedBytes {
-		return "", 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "TCP endpoint is invalid")
+		return "", 0, domain.NewError(domain.ErrInvalidContract, "parse process connections", "socket endpoint is invalid")
 	}
 	for offset := 0; offset < len(address); offset += 4 {
 		address[offset], address[offset+3] = address[offset+3], address[offset]

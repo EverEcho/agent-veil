@@ -56,9 +56,9 @@ conservatively than discovered traffic.
   explicit unknown risks;
 - scoped transparent-mode CA with private atomic activation, local signing
   revocation, restart-reconciled rotation, and a rollback-capable Linux
-  trust-store file adapter; bounded Linux process-tree/TCP egress collection and
-  process-egress assessment primitives. These are not yet a complete transparent
-  interception product or OS enforcement layer.
+  trust-store file adapter; bounded Linux process-tree and TCP/connected-UDP
+  egress collection plus process-egress assessment primitives. These are not yet
+  a complete transparent interception product or OS enforcement layer.
 
 ## Commands
 
