@@ -137,6 +137,52 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestManagementAuthenticationRejectsAmbiguousOrMalformedCredentials(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	for name, candidate := range map[string][]string{
+		"missing":        nil,
+		"duplicate":      {"Bearer " + token, "Bearer " + token},
+		"wrong scheme":   {"Basic " + token},
+		"missing scheme": {token},
+		"extra space":    {"Bearer  " + token},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := New(session.NewManager(), token)
+			request := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+			request.Header["Authorization"] = candidate
+			recorder := httptest.NewRecorder()
+			s.auth(s.health)(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	s, _ := New(session.NewManager(), token)
+	request := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+	request.Header.Set("Authorization", "bearer "+token)
+	recorder := httptest.NewRecorder()
+	s.auth(s.health)(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("case-insensitive bearer scheme rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCoreRejectsUnsafeAdminTokens(t *testing.T) {
+	for name, token := range map[string]string{
+		"short":      strings.Repeat("x", minAdminTokenBytes-1),
+		"space":      strings.Repeat("x", minAdminTokenBytes) + " ",
+		"control":    strings.Repeat("x", minAdminTokenBytes) + "\n",
+		"non-ascii":  strings.Repeat("x", minAdminTokenBytes) + "密",
+		"over-limit": strings.Repeat("x", maxAdminTokenBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New(session.NewManager(), token); err == nil {
+				t.Fatal("unsafe admin token accepted")
+			}
+		})
+	}
+}
+
 func TestCoreBackgroundCleanupRevokesIdleExpiredSessions(t *testing.T) {
 	manager := session.NewManager()
 	s, _ := New(manager, "01234567890123456789012345678901")

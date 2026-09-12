@@ -39,6 +39,8 @@ const defaultMaxConcurrentProxyRequests = 64
 const maxConcurrentProxyRequests = 4096
 const maxIntegrationLeaseSeconds = 3600
 const defaultSessionCleanupInterval = 100 * time.Millisecond
+const minAdminTokenBytes = 32
+const maxAdminTokenBytes = 4096
 
 type Server struct {
 	manager     *session.Manager
@@ -83,8 +85,8 @@ func (m *monitoredAuditor) Append(event domain.AuditEvent) error {
 func (s *Server) WithRegistry(value *registry.Registry) *Server { s.registry = value; return s }
 
 func New(manager *session.Manager, adminToken string) (*Server, error) {
-	if manager == nil || len(adminToken) < 32 {
-		return nil, errors.New("manager and an admin token of at least 32 characters are required")
+	if manager == nil || !validAdminToken(adminToken) {
+		return nil, errors.New("manager and a bounded visible-ASCII admin token of at least 32 characters are required")
 	}
 	scanner, err := detector.NewDefaultChunked()
 	if err != nil {
@@ -654,13 +656,36 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": string(domain.ErrInvalidOrigin)})
 			return
 		}
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !secureEqual(provided, s.adminToken) {
+		provided, ok := managementBearer(r.Header.Values("Authorization"))
+		if !ok || !secureEqual(provided, s.adminToken) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "UNAUTHORIZED_MANAGEMENT_API"})
 			return
 		}
 		next(w, r)
 	}
+}
+
+func validAdminToken(value string) bool {
+	if len(value) < minAdminTokenBytes || len(value) > maxAdminTokenBytes {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x21 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func managementBearer(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	scheme, credential, found := strings.Cut(values[0], " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") || !validAdminToken(credential) {
+		return "", false
+	}
+	return credential, true
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
