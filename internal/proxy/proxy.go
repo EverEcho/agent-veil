@@ -16,7 +16,6 @@ import (
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/security"
 	"github.com/agentveil/agentveil/internal/session"
-	veilstream "github.com/agentveil/agentveil/internal/stream"
 )
 
 const (
@@ -138,7 +137,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
-		h.streamResponse(w, response, vault, route.MaxResponseBytes)
+		h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol)
 		return
 	}
 	responseBody, err := readLimited(response.Body, route.MaxResponseBytes)
@@ -158,51 +157,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(restored)
 }
 
-func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64) {
-	guard, err := veilstream.NewGuard(h.scanner, vault, 256, int(maxBytes))
+func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) {
+	body, err := readLimited(response.Body, maxBytes)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, errorCode(err))
+		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
+		return
+	}
+	processed, err := pipeline.ProcessSSE(protocolType, body, h.scanner, vault)
+	if err != nil {
+		fail(w, http.StatusForbidden, errorCode(err))
 		return
 	}
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(response.StatusCode)
-	flusher, _ := w.(http.Flusher)
-	buffer := make([]byte, 4096)
-	var total int64
-	for {
-		count, readErr := response.Body.Read(buffer)
-		total += int64(count)
-		if total > maxBytes {
-			return
-		}
-		if count > 0 {
-			safe, guardErr := guard.Push(string(buffer[:count]))
-			if guardErr != nil {
-				return
-			}
-			if safe != "" {
-				_, _ = io.WriteString(w, safe)
-				if flusher != nil {
-					flusher.Flush()
-				}
-			}
-		}
-		if readErr == io.EOF {
-			tail, guardErr := guard.Close()
-			if guardErr == nil {
-				_, _ = io.WriteString(w, tail)
-				if flusher != nil {
-					flusher.Flush()
-				}
-			}
-			return
-		}
-		if readErr != nil {
-			return
-		}
-	}
+	_, _ = w.Write(processed)
 }
 
 func splitRoutePath(path string) (string, string, bool) {

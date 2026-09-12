@@ -97,6 +97,56 @@ func (v *Vault) Restore(input string) (string, error) {
 	return result.String(), nil
 }
 
+// RestoreParts restores placeholders that may cross logical protocol fields
+// while preserving the field sequence. Unknown or malformed tokens fail closed.
+func (v *Vault) RestoreParts(parts []string) ([]string, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.destroyed {
+		return nil, domain.NewError(domain.ErrVaultDestroyed, "restore placeholder", "request vault has been destroyed")
+	}
+	combined := strings.Join(parts, "")
+	indices := completeToken.FindAllStringIndex(combined, -1)
+	if possibleTokenOpen.MatchString(completeToken.ReplaceAllString(combined, "")) {
+		return nil, domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "malformed or incomplete placeholder")
+	}
+	boundaries := make([]int, len(parts)+1)
+	for i, part := range parts {
+		boundaries[i+1] = boundaries[i] + len(part)
+	}
+	result := append([]string(nil), parts...)
+	for i := len(indices) - 1; i >= 0; i-- {
+		index := indices[i]
+		token := combined[index[0]:index[1]]
+		original, ok := v.entries[token]
+		if !ok {
+			return nil, domain.NewError(domain.ErrUnknownPlaceholder, "restore placeholder", "placeholder is not present in this request vault")
+		}
+		startSegment, endSegment := segmentAt(boundaries, index[0]), segmentAt(boundaries, index[1]-1)
+		startLocal := index[0] - boundaries[startSegment]
+		endLocal := index[1] - boundaries[endSegment]
+		if startSegment == endSegment {
+			result[startSegment] = result[startSegment][:startLocal] + string(original) + result[startSegment][endLocal:]
+			continue
+		}
+		result[startSegment] = result[startSegment][:startLocal] + string(original)
+		for segment := startSegment + 1; segment < endSegment; segment++ {
+			result[segment] = ""
+		}
+		result[endSegment] = result[endSegment][endLocal:]
+	}
+	return result, nil
+}
+
+func segmentAt(boundaries []int, offset int) int {
+	for i := 1; i < len(boundaries); i++ {
+		if offset < boundaries[i] {
+			return i - 1
+		}
+	}
+	return len(boundaries) - 2
+}
+
 func (v *Vault) Destroy() {
 	v.mu.Lock()
 	defer v.mu.Unlock()

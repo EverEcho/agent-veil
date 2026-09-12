@@ -51,3 +51,12 @@ func TestRestoreRejectsUnknownAndMalformedPlaceholder(t *testing.T) {
 		t.Fatal("malformed placeholder was accepted")
 	}
 }
+
+func TestRestorePartsHandlesCrossFieldPlaceholder(t *testing.T) {
+	v, _ := NewVault([]byte(strings.Repeat("a", 32)), Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	placeholder, _ := v.Store("email", "dev@example.com")
+	parts, err := v.RestoreParts([]string{"before " + placeholder[:8], placeholder[8:20], placeholder[20:] + " after"})
+	if err != nil || strings.Join(parts, "") != "before dev@example.com after" {
+		t.Fatalf("parts=%v err=%v", parts, err)
+	}
+}

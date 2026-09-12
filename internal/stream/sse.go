@@ -2,6 +2,7 @@ package stream
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -12,6 +13,28 @@ type Event struct {
 	Event string
 	Data  string
 	Retry string
+}
+
+func Encode(events []Event) []byte {
+	var output strings.Builder
+	for _, event := range events {
+		if event.ID != "" {
+			fmt.Fprintf(&output, "id: %s\n", event.ID)
+		}
+		if event.Event != "" {
+			fmt.Fprintf(&output, "event: %s\n", event.Event)
+		}
+		if event.Retry != "" {
+			fmt.Fprintf(&output, "retry: %s\n", event.Retry)
+		}
+		for _, line := range strings.Split(event.Data, "\n") {
+			if event.Data != "" {
+				fmt.Fprintf(&output, "data: %s\n", line)
+			}
+		}
+		output.WriteByte('\n')
+	}
+	return []byte(output.String())
 }
 
 type Decoder struct {

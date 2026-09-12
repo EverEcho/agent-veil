@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -64,12 +65,15 @@ func TestMissingRouteCapabilityIsRejectedBeforeForward(t *testing.T) {
 func TestStreamingResponseRestoresPlaceholder(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
+		var requestBody map[string]any
+		_ = json.Unmarshal(payload, &requestBody)
+		event, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": requestBody["input"]})
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.(http.Flusher).Flush()
-		midpoint := len(payload) / 2
-		_, _ = w.Write([]byte("data: " + string(payload[:midpoint])))
+		midpoint := len(event) / 2
+		_, _ = w.Write([]byte("data: " + string(event[:midpoint])))
 		w.(http.Flusher).Flush()
-		_, _ = w.Write(append(payload[midpoint:], []byte("\n\n")...))
+		_, _ = w.Write(append(event[midpoint:], []byte("\n\n")...))
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)

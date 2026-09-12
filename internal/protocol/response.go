@@ -47,6 +47,42 @@ func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*
 	return document, nil
 }
 
+func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) {
+	var root any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data is not valid JSON")
+	}
+	document := &Document{Protocol: protocol, root: root}
+	switch protocol {
+	case domain.ProtocolOpenAIChat:
+		extractChatResponse(document)
+	case domain.ProtocolOpenAIResponses:
+		if object, ok := root.(map[string]any); ok {
+			if value, ok := object["delta"].(string); ok {
+				document.Fields = append(document.Fields, Field{Path: "/delta", Text: value, path: []any{"delta"}})
+			} else {
+				extractResponseInput(document, object["delta"], []any{"delta"}, 0)
+			}
+		}
+	case domain.ProtocolAnthropic:
+		if object, ok := root.(map[string]any); ok {
+			if delta, ok := object["delta"].(map[string]any); ok {
+				addString(document, delta, "text", []any{"delta"})
+				addString(document, delta, "partial_json", []any{"delta"})
+			}
+		}
+	case domain.ProtocolGemini:
+		extractGeminiResponse(document)
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+		extractMCP(document)
+	default:
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "protocol is unsupported")
+	}
+	return document, nil
+}
+
 func extractChatResponse(d *Document) {
 	root, ok := d.root.(map[string]any)
 	if !ok {
