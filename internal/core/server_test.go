@@ -94,6 +94,38 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestCoreRejectsDNSRebindingAuthorityAndCrossOriginManagement(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+
+	request, _ := http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/health", nil)
+	request.Host = "attacker.example"
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("external authority status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+
+	request, _ = http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/health", nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin management status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+}
+
 func TestDiscoveryAPIUsesAuthenticatedInjectedInventory(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	s.WithDiscoverer(fixedDiscoverer{{Agent: "codex", Executable: "/bin/codex", Version: "1.2.3", Status: discovery.DetectionUnverified}})

@@ -25,6 +25,7 @@ import (
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/security"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -151,7 +152,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
-	s.httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
+	mux.Handle("DELETE /route/", s.proxyHandler())
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !security.ValidLoopbackAuthority(r.Host) {
+			writeJSON(w, http.StatusMisdirectedRequest, map[string]string{"error": string(domain.ErrInvalidAuthority)})
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	s.httpServer = &http.Server{Handler: handler, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() { _ = s.httpServer.Serve(listener) }()
 	return nil
@@ -319,7 +328,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = io.WriteString(w, dashboardHTML)
 }
@@ -460,6 +469,10 @@ func (s *Server) Close(ctx context.Context) error {
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !security.ValidLocalOrigin(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": string(domain.ErrInvalidOrigin)})
+			return
+		}
 		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !secureEqual(provided, s.adminToken) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "UNAUTHORIZED_MANAGEMENT_API"})
