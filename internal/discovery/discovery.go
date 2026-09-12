@@ -88,7 +88,17 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			rewritable = true
 		}
 		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Rewritable: rewritable, Required: true}}
-	case "hermes", "cursor":
+	case "hermes":
+		config.ConfigSource = filepath.Join(home, ".hermes", "config.yaml")
+		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
+			config.Observed, config.LocalMCP, err = integration.ParseHermesConfig(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
+		}
+	case "cursor":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 	default:

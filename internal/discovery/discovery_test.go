@@ -53,6 +53,42 @@ func TestUnsupportedKnownAgentIsExplicitlyUnknown(t *testing.T) {
 	}
 }
 
+func TestHermesDiscoveryUsesVersionedConfigSurfaceEnumeration(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "Hermes Agent v0.20.6", config: hermesConfigFixtureForDiscovery}, Verified: map[string]map[string]struct{}{"hermes": {"0.20.6": {}}}}
+	manifest, err := d.Inspect(context.Background(), "hermes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 4 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	if manifest.Surfaces[0].ID != "primary" || manifest.Surfaces[0].Rewritable {
+		t.Fatalf("primary coverage overstated: %+v", manifest.Surfaces[0])
+	}
+	for _, surface := range manifest.Surfaces {
+		if strings.Contains(surface.Name, "secret") || strings.Contains(surface.ConfigSource, "secret") {
+			t.Fatalf("manifest retained a credential: %+v", surface)
+		}
+	}
+}
+
+const hermesConfigFixtureForDiscovery = `
+model:
+  provider: custom
+  base_url: https://models.example/v1
+  api_key: secret-value
+auxiliary:
+  vision:
+    provider: main
+mcp_servers:
+  local:
+    command: npx
+  remote:
+    url: https://mcp.example/rpc
+    headers:
+      Authorization: Bearer secret-value
+`
+
 func TestClaudeAPIKeyDiscoveryUsesIndirectRuntimeSource(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "2.1.220", environment: map[string]string{"ANTHROPIC_API_KEY": "must-not-enter-manifest"}}, Verified: map[string]map[string]struct{}{"claude": {"2.1.220": {}}}}
 	manifest, err := d.Inspect(context.Background(), "claude")
