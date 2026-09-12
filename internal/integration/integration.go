@@ -1,7 +1,10 @@
 package integration
 
 import (
+	"net"
 	"net/url"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,6 +118,15 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 	if agent.Mode != domain.ModeLaunch {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare launch", "agent is not configured for launch mode")
 	}
+	if !filepath.IsAbs(agent.Executable) || strings.ContainsRune(agent.Executable, 0) {
+		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare launch", "agent executable must be an absolute path")
+	}
+	if err := validateCoreEndpoint(coreEndpoint); err != nil {
+		return LaunchPlan{}, err
+	}
+	if !validCapabilityID(sessionID) || parentID != "" && !validCapabilityID(parentID) || !validRouteToken(routeToken) {
+		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare launch", "session identity or route capability is invalid")
+	}
 	for _, arg := range args {
 		lower := strings.ToLower(arg)
 		for _, conflict := range []string{"base-url", "base_url", "provider", "websocket", "compression"} {
@@ -138,4 +150,44 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 		environment["AI_BASE_URL"] = coreEndpoint
 	}
 	return LaunchPlan{Executable: agent.Executable, Args: append([]string(nil), args...), Environment: environment, Temporary: true}, nil
+}
+
+func validateCoreEndpoint(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return domain.NewError(domain.ErrInvalidContract, "prepare launch", "Core endpoint is invalid")
+	}
+	host, port, err := net.SplitHostPort(parsed.Host)
+	portNumber, portErr := strconv.ParseUint(port, 10, 16)
+	ip := net.ParseIP(host)
+	if err != nil || portErr != nil || portNumber == 0 || ip == nil || !ip.IsLoopback() {
+		return domain.NewError(domain.ErrInvalidContract, "prepare launch", "Core endpoint must use a loopback address and explicit port")
+	}
+	return nil
+}
+
+func validCapabilityID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validRouteToken(value string) bool {
+	if len(value) < 32 || len(value) > 512 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_~=+./", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }

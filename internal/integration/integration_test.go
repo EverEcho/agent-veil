@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -34,16 +35,43 @@ func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
 	if _, err := inspector.Inspect(Config{Kind: "codex", Version: "2.0"}); err == nil {
 		t.Fatal("unknown version accepted")
 	}
-	agent := domain.AgentInstance{ID: "c", Kind: "codex", Mode: domain.ModeLaunch, Executable: "codex"}
-	if _, err := PrepareLaunch(agent, []string{"--provider=direct"}, "http://127.0.0.1:1", "s", "", "t"); err == nil {
+	agent := domain.AgentInstance{ID: "c", Kind: "codex", Mode: domain.ModeLaunch, Executable: "/usr/bin/codex"}
+	sessionID := "0123456789abcdef"
+	routeToken := strings.Repeat("t", 32)
+	if _, err := PrepareLaunch(agent, []string{"--provider=direct"}, "http://127.0.0.1:1", sessionID, "", routeToken); err == nil {
 		t.Fatal("routing override accepted")
 	}
-	plan, err := PrepareLaunch(agent, []string{"exec"}, "http://127.0.0.1:1", "s", "parent", "short-lived")
+	plan, err := PrepareLaunch(agent, []string{"exec"}, "http://127.0.0.1:1", sessionID, "fedcba9876543210", routeToken)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Temporary || plan.Environment["VEIL_PARENT_SESSION"] != "parent" || plan.Environment["CODEX_DISABLE_WEBSOCKET"] != "1" {
+	if !plan.Temporary || plan.Environment["VEIL_PARENT_SESSION"] != "fedcba9876543210" || plan.Environment["CODEX_DISABLE_WEBSOCKET"] != "1" {
 		t.Fatalf("invalid launch plan: %+v", plan)
+	}
+}
+
+func TestPrepareLaunchRejectsUntrustedExecutionInputs(t *testing.T) {
+	base := domain.AgentInstance{ID: "c", Kind: "codex", Mode: domain.ModeLaunch, Executable: "/usr/bin/codex"}
+	sessionID := "0123456789abcdef"
+	token := strings.Repeat("t", 32)
+	for _, test := range []struct {
+		name     string
+		agent    domain.AgentInstance
+		endpoint string
+		session  string
+		token    string
+	}{
+		{"relative-executable", domain.AgentInstance{ID: "c", Kind: "codex", Mode: domain.ModeLaunch, Executable: "codex"}, "http://127.0.0.1:1", sessionID, token},
+		{"remote-core", base, "http://api.example:443", sessionID, token},
+		{"endpoint-path", base, "http://127.0.0.1:1/route", sessionID, token},
+		{"short-session", base, "http://127.0.0.1:1", "short", token},
+		{"short-token", base, "http://127.0.0.1:1", sessionID, "short"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := PrepareLaunch(test.agent, nil, test.endpoint, test.session, "", test.token); err == nil {
+				t.Fatal("unsafe launch input was accepted")
+			}
+		})
 	}
 }
 
