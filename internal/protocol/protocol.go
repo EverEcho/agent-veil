@@ -1,8 +1,10 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -46,10 +48,14 @@ func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Documen
 		}
 	}
 	var root any
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(&root); err != nil {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body is not valid JSON")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body contains trailing data")
 	}
 	document := &Document{Protocol: protocol, root: root}
 	switch protocol {

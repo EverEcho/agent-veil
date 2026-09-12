@@ -52,6 +52,20 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	}
 }
 
+func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
+	f.Add([]byte(`{"input":"hello"}`))
+	f.Add([]byte(`{"input":"hello"}{"second":true}`))
+	f.Fuzz(func(t *testing.T, body []byte) {
+		document, err := Parse("/v1/responses", "application/json", "", body)
+		if err == nil {
+			result, replaceErr := document.Replace(nil)
+			if replaceErr != nil || !json.Valid(result) {
+				t.Fatalf("accepted document did not round trip: %s %v", result, replaceErr)
+			}
+		}
+	})
+}
+
 func contains(text, part string) bool {
 	for i := 0; i+len(part) <= len(text); i++ {
 		if text[i:i+len(part)] == part {

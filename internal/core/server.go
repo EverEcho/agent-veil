@@ -95,9 +95,7 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var manifest domain.AgentManifest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxManagementBody+1))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := decodeManagement(r, &manifest); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MANIFEST"})
 		return
 	}
@@ -165,9 +163,7 @@ type createRequest struct {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var request createRequest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxManagementBody+1))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.TTLSeconds <= 0 {
+	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_REQUEST"})
 		return
 	}
@@ -177,6 +173,26 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+func decodeManagement(r *http.Request, destination any) error {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxManagementBody+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxManagementBody {
+		return errors.New("management request too large")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errors.New("management request contains trailing data")
+	}
+	return nil
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
