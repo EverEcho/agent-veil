@@ -114,18 +114,28 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 		target := endpoint + "/v1/agents/" + manifest.Agent.ID + "?generation=" + strconv.FormatUint(registered.Generation, 10)
 		_ = managementJSON(context.Background(), http.MethodDelete, target, adminToken, nil, nil)
 	}()
-	protectedRoute, err := singleProtectedRoute(registered)
+	protectedRoutes, err := fullyProtectedRoutes(registered)
 	if err != nil {
 		return err
 	}
+	if len(protectedRoutes) != 1 {
+		return errors.New("agent-specific multi-route launch injection is not verified")
+	}
+	protectedRoute := protectedRoutes[0]
+	routeIDs := []string{protectedRoute.ID}
 	var created session.Created
-	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": []string{protectedRoute.ID}, "ttl_seconds": 86400}, &created); err != nil {
+	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": routeIDs, "ttl_seconds": 86400}, &created); err != nil {
 		return err
 	}
 	defer func() {
 		_ = managementJSON(context.Background(), http.MethodDelete, endpoint+"/v1/sessions/"+created.Session.ID, adminToken, nil, nil)
 	}()
-	launch, err := integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", created.Routes[0].Token)
+	credentials, err := bindRouteCredentials(protectedRoutes, created)
+	if err != nil {
+		return err
+	}
+	routeToken := credentials[protectedRoute.ID]
+	launch, err := integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	if err != nil {
 		return err
 	}
@@ -137,7 +147,7 @@ func runProtected(ctx context.Context, name string, childArgs []string) error {
 		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
 	} else {
 		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
-		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, created.Routes[0].Token)
+		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, routeToken)
 	}
 	childContext, cancelChild := context.WithCancel(ctx)
 	leaseResult := make(chan error, 1)
@@ -174,11 +184,60 @@ func maintainIntegrationLease(ctx context.Context, cancel context.CancelFunc, en
 	}
 }
 
-func singleProtectedRoute(entry registry.Entry) (domain.ProtectedRoute, error) {
-	if entry.State != registry.StateActive || len(entry.Plan.Routes) != 1 || entry.Plan.Summary.Total == 0 || entry.Plan.Summary.Protected != entry.Plan.Summary.Total {
-		return domain.ProtectedRoute{}, errors.New("agent does not have exactly one fully protected route")
+func fullyProtectedRoutes(entry registry.Entry) ([]domain.ProtectedRoute, error) {
+	summary := entry.Plan.Summary
+	if entry.State != registry.StateActive || summary.Total == 0 || summary.Partial != 0 || summary.Observed != 0 || summary.Unprotected != 0 || summary.Protected+summary.Local != summary.Total || len(entry.Plan.Routes) != summary.Protected || len(entry.Plan.Routes) == 0 {
+		return nil, errors.New("agent does not have a fully protected route set")
 	}
-	return entry.Plan.Routes[0], nil
+	seen := make(map[string]struct{}, len(entry.Plan.Routes))
+	routes := append([]domain.ProtectedRoute(nil), entry.Plan.Routes...)
+	for _, route := range routes {
+		if route.ID == "" || route.SurfaceID == "" {
+			return nil, errors.New("protected route set contains an incomplete route")
+		}
+		if _, duplicate := seen[route.ID]; duplicate {
+			return nil, errors.New("protected route set contains duplicate route ids")
+		}
+		seen[route.ID] = struct{}{}
+	}
+	return routes, nil
+}
+
+func bindRouteCredentials(routes []domain.ProtectedRoute, created session.Created) (map[string]string, error) {
+	if len(routes) == 0 || len(created.Routes) != len(routes) || len(created.Session.RouteIDs) != len(routes) {
+		return nil, errors.New("Core returned an incomplete route credential set")
+	}
+	expected := make(map[string]struct{}, len(routes))
+	for _, route := range routes {
+		if route.ID == "" {
+			return nil, errors.New("protected route id is empty")
+		}
+		if _, duplicate := expected[route.ID]; duplicate {
+			return nil, errors.New("protected route id is duplicated")
+		}
+		expected[route.ID] = struct{}{}
+	}
+	credentials := make(map[string]string, len(routes))
+	for _, credential := range created.Routes {
+		if _, ok := expected[credential.RouteID]; !ok || credential.Token == "" {
+			return nil, errors.New("Core returned an unknown or empty route credential")
+		}
+		if _, duplicate := credentials[credential.RouteID]; duplicate {
+			return nil, errors.New("Core returned duplicate route credentials")
+		}
+		credentials[credential.RouteID] = credential.Token
+	}
+	sessionRoutes := make(map[string]struct{}, len(created.Session.RouteIDs))
+	for _, routeID := range created.Session.RouteIDs {
+		if _, ok := expected[routeID]; !ok {
+			return nil, errors.New("Core session contains an unknown route")
+		}
+		if _, duplicate := sessionRoutes[routeID]; duplicate {
+			return nil, errors.New("Core session contains a duplicate route")
+		}
+		sessionRoutes[routeID] = struct{}{}
+	}
+	return credentials, nil
 }
 
 func overlayEnvironment(base []string, overrides map[string]string) []string {

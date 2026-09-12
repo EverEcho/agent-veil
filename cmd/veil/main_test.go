@@ -110,14 +110,32 @@ func TestConfigureRuleStoreRequiresCanonicalTrustKey(t *testing.T) {
 }
 
 func TestProtectedLaunchUsesCorePublishedGenerationRoute(t *testing.T) {
-	entry := registry.Entry{State: registry.StateActive, Generation: 7, Plan: domain.ProtectionPlan{Routes: []domain.ProtectedRoute{{ID: "route-primary-g7"}}, Summary: domain.CoverageSummary{Total: 1, Protected: 1}}}
-	route, err := singleProtectedRoute(entry)
-	if err != nil || route.ID != "route-primary-g7" {
-		t.Fatalf("route=%+v err=%v", route, err)
+	entry := registry.Entry{State: registry.StateActive, Generation: 7, Plan: domain.ProtectionPlan{Routes: []domain.ProtectedRoute{{ID: "route-primary-g7", SurfaceID: "primary"}}, Summary: domain.CoverageSummary{Total: 1, Protected: 1}}}
+	routes, err := fullyProtectedRoutes(entry)
+	if err != nil || len(routes) != 1 || routes[0].ID != "route-primary-g7" {
+		t.Fatalf("routes=%+v err=%v", routes, err)
 	}
 	entry.State = registry.StateBlocked
-	if _, err := singleProtectedRoute(entry); err == nil {
+	if _, err := fullyProtectedRoutes(entry); err == nil {
 		t.Fatal("blocked Core registration was accepted for launch")
+	}
+}
+
+func TestProtectedLaunchBindsMultipleCredentialsByRouteID(t *testing.T) {
+	routes := []domain.ProtectedRoute{{ID: "route-primary", SurfaceID: "primary"}, {ID: "route-fallback", SurfaceID: "fallback"}}
+	entry := registry.Entry{State: registry.StateActive, Plan: domain.ProtectionPlan{Routes: routes, Summary: domain.CoverageSummary{Total: 3, Protected: 2, Local: 1}}}
+	validated, err := fullyProtectedRoutes(entry)
+	if err != nil || len(validated) != 2 {
+		t.Fatalf("routes=%+v err=%v", validated, err)
+	}
+	created := session.Created{Session: domain.NewProtectionSession("session-0123456789abcdef", "", "http://127.0.0.1:1", time.Now(), time.Now().Add(time.Hour), []string{"route-primary", "route-fallback"}, nil), Routes: []session.RouteCredential{{RouteID: "route-fallback", Token: "fallback-token"}, {RouteID: "route-primary", Token: "primary-token"}}}
+	credentials, err := bindRouteCredentials(routes, created)
+	if err != nil || credentials["route-primary"] != "primary-token" || credentials["route-fallback"] != "fallback-token" {
+		t.Fatalf("credentials=%+v err=%v", credentials, err)
+	}
+	created.Routes[1].RouteID = "route-unknown"
+	if _, err := bindRouteCredentials(routes, created); err == nil {
+		t.Fatal("unknown route credential was accepted")
 	}
 }
 
