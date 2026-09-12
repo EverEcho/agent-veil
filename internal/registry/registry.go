@@ -69,10 +69,10 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 		return cloneEntry(blocked), err
 	}
 	for _, coverage := range plan.Coverage {
-		if coverage.Status == domain.CoverageUnprotected && required(manifest, coverage.SurfaceID) {
+		if required(manifest, coverage.SurfaceID) && coverage.Status != domain.CoverageProtected && coverage.Status != domain.CoverageLocal {
 			blocked := Entry{Manifest: manifest, Plan: plan, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrPolicyBlocked}
 			r.entries[manifest.Agent.ID] = cloneEntry(blocked)
-			return cloneEntry(blocked), domain.NewError(domain.ErrPolicyBlocked, "reconcile integration", "required surface is unprotected")
+			return cloneEntry(blocked), domain.NewError(domain.ErrPolicyBlocked, "reconcile integration", "required surface is not fully protected or local")
 		}
 	}
 	entry := Entry{Manifest: manifest, Plan: plan, State: StateActive, Generation: generation, UpdatedAt: now}

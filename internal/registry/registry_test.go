@@ -48,6 +48,32 @@ func TestConfigChangeBlocksRequiredProtectionGap(t *testing.T) {
 	}
 }
 
+func TestRequiredPartialAndObservedSurfacesBlockRegistration(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	for name, capability := range map[string]planner.Capability{
+		"partial":  {RequestInspection: true, ResponseInspection: true, StreamInspection: false},
+		"observed": {Observable: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := manifest
+			candidate.Surfaces = append([]domain.EgressSurface(nil), manifest.Surfaces...)
+			if name == "observed" {
+				candidate.Surfaces[0].Rewritable = false
+			}
+			registry := New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: capability}})
+			entry, err := registry.Reconcile(candidate)
+			if err == nil || entry.State != StateBlocked || entry.ErrorCode != domain.ErrPolicyBlocked || len(entry.Plan.Routes) != 0 {
+				t.Fatalf("entry=%+v err=%v", entry, err)
+			}
+		})
+	}
+	local := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "local", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "mcp", Name: "Local MCP", Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, ConfigSource: "native", Required: true}}}
+	registry := New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}})
+	if entry, err := registry.Reconcile(local); err != nil || entry.State != StateActive || entry.Plan.Coverage[0].Status != domain.CoverageLocal {
+		t.Fatalf("required local surface was rejected: entry=%+v err=%v", entry, err)
+	}
+}
+
 func TestNestedCallTree(t *testing.T) {
 	tree, err := CallTree([]CallNode{{SessionID: "parent", Surfaces: []CallSurface{{RouteID: "route-acp", AgentID: "openclaw", SurfaceID: "acp", Coverage: domain.CoverageProtected}}}, {SessionID: "child", ParentSessionID: "parent", Surfaces: []CallSurface{{RouteID: "route-primary", AgentID: "codex", SurfaceID: "primary", Coverage: domain.CoverageProtected}}}})
 	if err != nil || len(tree["parent"]) != 1 || tree["parent"][0].Surfaces[0].AgentID != "codex" {
