@@ -114,6 +114,9 @@ func runProtected(ctx context.Context, name string, childArgs []string) (resultE
 	if _, err := core.ListenAddress(endpoint); err != nil {
 		return err
 	}
+	if err := requireCompatibleCore(ctx, endpoint, adminToken); err != nil {
+		return err
+	}
 	manifest, err := discovery.Default().Inspect(ctx, name)
 	if err != nil {
 		return err
@@ -342,6 +345,7 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept-Encoding", "identity")
+	request.Header.Set(core.APIVersionHeader, core.APIVersion)
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -350,12 +354,26 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 		return err
 	}
 	defer response.Body.Close()
+	if err := validateManagementAPIVersion(response); err != nil {
+		return err
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("core returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
 	if output != nil {
 		return decodeManagementResponse(response, output)
+	}
+	return nil
+}
+
+func requireCompatibleCore(ctx context.Context, endpoint, token string) error {
+	var health map[string]string
+	if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/health", token, nil, &health); err != nil {
+		return err
+	}
+	if health["api_version"] != core.APIVersion {
+		return fmt.Errorf("incompatible Core health API version: expected %s", core.APIVersion)
 	}
 	return nil
 }
@@ -384,6 +402,9 @@ func readManagementResponse(response *http.Response, limit int64) ([]byte, error
 	if response == nil || response.Body == nil || limit <= 0 {
 		return nil, errors.New("management response and positive size limit are required")
 	}
+	if err := validateManagementAPIVersion(response); err != nil {
+		return nil, err
+	}
 	contentTypes := response.Header.Values("Content-Type")
 	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/json") {
 		return nil, errors.New("management response requires one valid application/json content type")
@@ -403,6 +424,17 @@ func readManagementResponse(response *http.Response, limit int64) ([]byte, error
 		return nil, errors.New("management response contains invalid or ambiguous JSON")
 	}
 	return payload, nil
+}
+
+func validateManagementAPIVersion(response *http.Response) error {
+	if response == nil {
+		return errors.New("management response is required")
+	}
+	versions := response.Header.Values(core.APIVersionHeader)
+	if len(versions) != 1 || versions[0] != core.APIVersion {
+		return fmt.Errorf("incompatible Core management API version: expected %s", core.APIVersion)
+	}
+	return nil
 }
 
 func serve() error {
@@ -528,12 +560,16 @@ func status() error {
 	request, _ := http.NewRequest(http.MethodGet, endpoint+"/v1/health", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept-Encoding", "identity")
+	request.Header.Set(core.APIVersionHeader, core.APIVersion)
 	client := &http.Client{Timeout: 3 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+	if err := validateManagementAPIVersion(response); err != nil {
+		return err
+	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("core returned %s", response.Status)
 	}
@@ -559,11 +595,15 @@ func diagnostics() error {
 	}
 	request.Header.Set("Authorization", "Bearer "+os.Getenv("VEIL_ADMIN_TOKEN"))
 	request.Header.Set("Accept-Encoding", "identity")
+	request.Header.Set(core.APIVersionHeader, core.APIVersion)
 	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
+	if err := validateManagementAPIVersion(response); err != nil {
+		return err
+	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("core returned %s", response.Status)
 	}

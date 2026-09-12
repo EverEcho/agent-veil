@@ -46,6 +46,9 @@ const defaultSessionCleanupInterval = 100 * time.Millisecond
 const minAdminTokenBytes = 32
 const maxAdminTokenBytes = 4096
 
+const APIVersion = "v1"
+const APIVersionHeader = "X-AgentVeil-API-Version"
+
 type Server struct {
 	lifecycleMu sync.Mutex
 	manager     *session.Manager
@@ -818,6 +821,12 @@ func (s *Server) Close(ctx context.Context) error {
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(APIVersionHeader, APIVersion)
+		requestedVersions := r.Header.Values(APIVersionHeader)
+		if len(requestedVersions) > 1 || len(requestedVersions) == 1 && requestedVersions[0] != APIVersion {
+			writeJSON(w, http.StatusUpgradeRequired, map[string]string{"error": "INCOMPATIBLE_MANAGEMENT_API"})
+			return
+		}
 		if !security.ValidLocalOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": string(domain.ErrInvalidOrigin)})
 			return
@@ -855,7 +864,7 @@ func managementBearer(values []string) (string, bool) {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	result := map[string]string{"status": "ok", "api_version": "v1", "audit": "disabled"}
+	result := map[string]string{"status": "ok", "api_version": APIVersion, "audit": "disabled"}
 	if s.auditMonitor != nil {
 		result["audit"] = "ok"
 		if failures := s.auditMonitor.failures.Load(); failures > 0 {

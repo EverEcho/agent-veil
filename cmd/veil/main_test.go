@@ -174,6 +174,14 @@ func TestManagementJSONRejectsUnboundedOrAmbiguousResponses(t *testing.T) {
 		body    string
 	}{
 		{name: "missing content type", body: `{}`},
+		{name: "missing API version", headers: func(header http.Header) {
+			header.Del(core.APIVersionHeader)
+			header.Set("Content-Type", "application/json")
+		}, body: `{}`},
+		{name: "incompatible API version", headers: func(header http.Header) {
+			header.Set(core.APIVersionHeader, "v2")
+			header.Set("Content-Type", "application/json")
+		}, body: `{}`},
 		{name: "duplicate content type", headers: func(header http.Header) {
 			header.Add("Content-Type", "application/json")
 			header.Add("Content-Type", "application/json")
@@ -189,6 +197,7 @@ func TestManagementJSONRejectsUnboundedOrAmbiguousResponses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(core.APIVersionHeader, core.APIVersion)
 				if test.headers != nil {
 					test.headers(w.Header())
 				}
@@ -203,6 +212,7 @@ func TestManagementJSONRejectsUnboundedOrAmbiguousResponses(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(bytes.Repeat([]byte{'x'}, maxManagementResponseBytes+1))
@@ -216,6 +226,7 @@ func TestManagementJSONRejectsUnboundedOrAmbiguousResponses(t *testing.T) {
 
 func TestManagementJSONDecodesStrictBoundedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
@@ -233,6 +244,10 @@ func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
 		if request.Header.Get("Accept-Encoding") != "identity" {
 			t.Errorf("Accept-Encoding=%q", request.Header.Get("Accept-Encoding"))
 		}
+		if request.Header.Get(core.APIVersionHeader) != core.APIVersion {
+			t.Errorf("management API version=%q", request.Header.Get(core.APIVersionHeader))
+		}
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{}`)
 	}))
@@ -243,13 +258,25 @@ func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
 	}
 }
 
+func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok","api_version":"v2"}`)
+	}))
+	defer server.Close()
+	if err := requireCompatibleCore(context.Background(), server.URL, "01234567890123456789012345678901"); err == nil {
+		t.Fatal("mismatched health API version was accepted before protected launch")
+	}
+}
+
 func TestManagementPayloadRejectsAmbiguousDiagnostics(t *testing.T) {
 	for _, body := range []string{
 		`{"schema_version":"v1"}{"schema_version":"v1"}`,
 		`{"schema_version":"v1","schema_version":"forged"}`,
 	} {
 		response := &http.Response{
-			Header: http.Header{"Content-Type": {"application/json"}},
+			Header: http.Header{"Content-Type": {"application/json"}, core.APIVersionHeader: {core.APIVersion}},
 			Body:   io.NopCloser(strings.NewReader(body)),
 		}
 		if _, err := readManagementResponse(response, maxManagementResponseBytes); err == nil {

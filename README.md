@@ -10,8 +10,8 @@ conservatively than discovered traffic.
 - domain models for agents, egress surfaces, manifests, routes, plans, sessions,
   findings, policies, networking and audit events;
 - a loopback-only Core with capability-authenticated routes, lifecycle-bound
-  sessions, management APIs, ASK decisions, bounded concurrency, and safe
-  shutdown;
+  sessions, version-negotiated management APIs, ASK decisions, bounded
+  concurrency, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
   Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
 - incremental SSE protection with cross-chunk secret detection and placeholder
@@ -22,8 +22,9 @@ conservatively than discovered traffic.
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
 - persistent policy and privacy-safe audit stores with retention, plus signed,
   versioned rule-pack and semantic-model artifact stores with rollback; verified
-  rule packs can be installed, listed, activated, deactivated, and removed through
-  the authenticated management API without exposing a partially switched data plane;
+  rule packs can be installed, listed, activated, deactivated, and removed
+  through the authenticated management API without exposing a partially switched
+  data plane;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
   coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
 - an authenticated, bounded diagnostics export that omits routes and paths,

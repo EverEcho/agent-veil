@@ -176,6 +176,9 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	if err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("authorized health failed: %v", err)
 	}
+	if response.Header.Get(APIVersionHeader) != APIVersion {
+		t.Fatalf("management API version header=%q", response.Header.Get(APIVersionHeader))
+	}
 	response.Body.Close()
 	request, _ = http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/compatibility", nil)
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
@@ -265,6 +268,35 @@ func TestManagementAuthenticationRejectsAmbiguousOrMalformedCredentials(t *testi
 	s.auth(s.health)(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("case-insensitive bearer scheme rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestManagementAPIRejectsIncompatibleRequestedVersionBeforeHandler(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	for name, versions := range map[string][]string{
+		"future":    {"v2"},
+		"duplicate": {APIVersion, APIVersion},
+	} {
+		t.Run(name, func(t *testing.T) {
+			called := false
+			handler := s.auth(func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/change", nil)
+			request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+			for _, version := range versions {
+				request.Header.Add(APIVersionHeader, version)
+			}
+			recorder := httptest.NewRecorder()
+			handler(recorder, request)
+			if recorder.Code != http.StatusUpgradeRequired || called {
+				t.Fatalf("status=%d called=%t body=%s", recorder.Code, called, recorder.Body.String())
+			}
+			if recorder.Header().Get(APIVersionHeader) != APIVersion {
+				t.Fatalf("response API version=%q", recorder.Header().Get(APIVersionHeader))
+			}
+		})
 	}
 }
 
