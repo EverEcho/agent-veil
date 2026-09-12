@@ -39,6 +39,9 @@ func New(options planner.Options) *Registry {
 // "protected" claim.
 func (r *Registry) Reconcile(manifest domain.AgentManifest) (Entry, error) {
 	plan, err := planner.Build(manifest, r.capabilities)
+	if err != nil && manifest.Agent.ID == "" {
+		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: r.now(), ErrorCode: domain.ErrInvalidContract}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	previous := r.entries[manifest.Agent.ID]

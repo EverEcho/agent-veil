@@ -3,12 +3,17 @@ package domain
 import (
 	"fmt"
 	"net"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
 func (m AgentManifest) Validate() error {
-	if m.SchemaVersion == "" || m.Agent.ID == "" || m.Agent.Kind == "" {
+	if m.SchemaVersion != "v1" || m.Agent.ID == "" || m.Agent.Kind == "" {
 		return NewError(ErrInvalidContract, "validate manifest", "schema version and agent identity are required")
+	}
+	if len(m.Surfaces) == 0 {
+		return NewError(ErrInvalidContract, "validate manifest", "at least one egress surface is required")
 	}
 	seen := make(map[string]struct{}, len(m.Surfaces))
 	for i, surface := range m.Surfaces {
@@ -31,25 +36,34 @@ func (s EgressSurface) Validate() error {
 		return NewError(ErrInvalidContract, "validate surface", "surface type or protocol is invalid")
 	}
 	if s.Protocol == ProtocolUnknown || s.Type == SurfaceUnknown {
+		if s.Auth.Type != "" {
+			return s.Auth.Validate()
+		}
 		return nil
 	}
 	if s.Protocol == ProtocolLocalStdio {
 		if s.Upstream != nil {
 			return NewError(ErrInvalidContract, "validate surface", "local stdio cannot have a network upstream")
 		}
+		if s.Type != SurfaceMCPStdio {
+			return NewError(ErrInvalidContract, "validate surface", "local stdio protocol requires an MCP stdio surface")
+		}
 		return nil
 	}
 	if s.Upstream == nil {
 		return NewError(ErrInvalidContract, "validate surface", "network surface requires an upstream")
 	}
-	return s.Upstream.Validate()
+	if err := s.Upstream.Validate(); err != nil {
+		return err
+	}
+	return s.Auth.Validate()
 }
 
 func (u Upstream) Validate() error {
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return NewError(ErrInvalidContract, "validate upstream", "scheme must be https or http")
 	}
-	if strings.TrimSpace(u.Host) == "" || strings.ContainsAny(u.Host, "/@?#") {
+	if strings.TrimSpace(u.Host) == "" || strings.TrimSpace(u.Host) != u.Host || strings.ContainsAny(u.Host, "/@?# \t\r\n") {
 		return NewError(ErrInvalidContract, "validate upstream", "host is empty or malformed")
 	}
 	if u.Port == 0 {
@@ -57,6 +71,42 @@ func (u Upstream) Validate() error {
 	}
 	if u.Scheme == "http" && !isLoopbackHost(u.Host) {
 		return NewError(ErrUpstreamDenied, "validate upstream", "plaintext HTTP is allowed only for loopback")
+	}
+	return nil
+}
+
+func (a AuthStrategy) Validate() error {
+	if !a.Type.Valid() {
+		return NewError(ErrInvalidContract, "validate auth", "authentication type is invalid")
+	}
+	if a.Type != AuthPassthrough && strings.TrimSpace(a.Source) == "" {
+		return NewError(ErrInvalidContract, "validate auth", "non-passthrough authentication requires a credential source")
+	}
+	return nil
+}
+
+func (n NetworkRoute) Validate() error {
+	if !n.Type.Valid() {
+		return NewError(ErrInvalidContract, "validate network route", "network route type is invalid")
+	}
+	if n.Type == NetworkDirect || n.Type == NetworkSystemProxy {
+		if n.Endpoint != "" {
+			return NewError(ErrInvalidContract, "validate network route", "direct and system routes cannot have an explicit endpoint")
+		}
+		return nil
+	}
+	endpoint, err := url.Parse(n.Endpoint)
+	if err != nil || endpoint.Hostname() == "" || endpoint.Port() == "" || endpoint.User != nil || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return NewError(ErrInvalidContract, "validate network route", "proxy endpoint must be an origin without embedded credentials")
+	}
+	if port, err := strconv.ParseUint(endpoint.Port(), 10, 16); err != nil || port == 0 {
+		return NewError(ErrInvalidContract, "validate network route", "proxy endpoint port is invalid")
+	}
+	if n.Type == NetworkHTTPProxy && endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+		return NewError(ErrInvalidContract, "validate network route", "HTTP proxy endpoint scheme is invalid")
+	}
+	if n.Type == NetworkSOCKS5 && endpoint.Scheme != "socks5" {
+		return NewError(ErrInvalidContract, "validate network route", "SOCKS5 endpoint scheme is invalid")
 	}
 	return nil
 }

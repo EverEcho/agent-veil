@@ -65,11 +65,15 @@ func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
 			}
 			upstream = &domain.Upstream{Scheme: parsed.Scheme, Host: parsed.Hostname(), Port: port}
 		}
-		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: slot.ID, Name: slot.Name, Type: slot.Type, Protocol: slot.Protocol, Upstream: upstream, Auth: slot.Auth, ConfigSource: config.ConfigSource, Rewritable: slot.Rewritable, Required: slot.Required})
+		auth := slot.Auth
+		if auth.Type == "" {
+			auth.Type = domain.AuthPassthrough
+		}
+		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: slot.ID, Name: slot.Name, Type: slot.Type, Protocol: slot.Protocol, Upstream: upstream, Auth: auth, ConfigSource: config.ConfigSource, Rewritable: slot.Rewritable, Required: slot.Required})
 	}
 	for _, name := range config.LocalMCP {
 		id := "mcp-" + strings.NewReplacer(" ", "-", "/", "-").Replace(strings.ToLower(name))
-		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: id, Name: name, Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, ConfigSource: config.ConfigSource})
+		manifest.Surfaces = append(manifest.Surfaces, domain.EgressSurface{ID: id, Name: name, Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: config.ConfigSource})
 	}
 	if err := manifest.Validate(); err != nil {
 		return domain.AgentManifest{}, err

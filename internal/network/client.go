@@ -21,6 +21,9 @@ func NewHTTPClient(transport http.RoundTripper, allowlist *security.UpstreamAllo
 }
 
 func NewTransport(route domain.NetworkRoute) (*http.Transport, error) {
+	if err := route.Validate(); err != nil {
+		return nil, err
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	switch route.Type {

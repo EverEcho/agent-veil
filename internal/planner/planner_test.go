@@ -12,9 +12,9 @@ func TestBuildNeverMarksIncompleteCapabilityProtected(t *testing.T) {
 		Agent: domain.AgentInstance{ID: "codex-1", Kind: "codex"},
 		Surfaces: []domain.EgressSurface{
 			{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses,
-				Upstream: &domain.Upstream{Scheme: "https", Host: "api.openai.com", Port: 443}, ConfigSource: "fixture", Rewritable: true},
+				Upstream: &domain.Upstream{Scheme: "https", Host: "api.openai.com", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true},
 			{ID: "browser", Name: "Browser", Type: domain.SurfaceBrowser, Protocol: domain.ProtocolMCPHTTP,
-				Upstream: &domain.Upstream{Scheme: "https", Host: "browser.example", Port: 443}, ConfigSource: "fixture", Rewritable: false},
+				Upstream: &domain.Upstream{Scheme: "https", Host: "browser.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: false},
 			{ID: "stdio", Name: "Local MCP", Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, ConfigSource: "fixture"},
 			{ID: "mystery", Name: "Mystery", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, ConfigSource: "fixture"},
 		}}
@@ -41,8 +41,8 @@ func TestBuildCreatesRouteOnlyForFullCapability(t *testing.T) {
 	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"},
 		Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary,
 			Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443},
-			ConfigSource: "fixture", Rewritable: true}}}
-	plan, err := Build(manifest, Options{DefaultPolicy: "default", Capabilities: map[domain.Protocol]Capability{
+			Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true}}}
+	plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]Capability{
 		domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true},
 	}})
 	if err != nil {
@@ -50,5 +50,20 @@ func TestBuildCreatesRouteOnlyForFullCapability(t *testing.T) {
 	}
 	if len(plan.Routes) != 1 || plan.Coverage[0].Status != domain.CoverageProtected {
 		t.Fatalf("expected one protected route, got %+v", plan)
+	}
+}
+
+func TestBuildRejectsInvalidNetworkAndRouteIDCollision(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"}, Surfaces: []domain.EgressSurface{
+		{ID: "model/a", Name: "One", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true},
+		{ID: "model-a", Name: "Two", Type: domain.SurfaceModelFallback, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true},
+	}}
+	capabilities := map[domain.Protocol]Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}
+	if _, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: capabilities}); err == nil {
+		t.Fatal("colliding route ids were accepted")
+	}
+	manifest.Surfaces = manifest.Surfaces[:1]
+	if _, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkHTTPProxy, Endpoint: "http://user:secret@127.0.0.1:8080"}, Capabilities: capabilities}); err == nil {
+		t.Fatal("network route with embedded credentials was accepted")
 	}
 }

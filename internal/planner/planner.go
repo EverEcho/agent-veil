@@ -25,12 +25,28 @@ func Build(manifest domain.AgentManifest, options Options) (domain.ProtectionPla
 	if err := manifest.Validate(); err != nil {
 		return domain.ProtectionPlan{}, err
 	}
+	if options.DefaultPolicy == "" {
+		return domain.ProtectionPlan{}, domain.NewError(domain.ErrInvalidContract, "build protection plan", "default policy id is required")
+	}
+	if err := options.Network.Validate(); err != nil {
+		return domain.ProtectionPlan{}, err
+	}
+	for protocolType, capability := range options.Capabilities {
+		if capability.Protocol != "" && capability.Protocol != protocolType {
+			return domain.ProtectionPlan{}, domain.NewError(domain.ErrInvalidContract, "build protection plan", "capability protocol does not match its registry key")
+		}
+	}
 	plan := domain.ProtectionPlan{SchemaVersion: manifest.SchemaVersion, ManifestID: manifest.Agent.ID}
+	routeIDs := map[string]struct{}{}
 	for _, surface := range manifest.Surfaces {
 		coverage, route, risks := classify(surface, options)
 		plan.Coverage = append(plan.Coverage, coverage)
 		plan.Risks = append(plan.Risks, risks...)
 		if route != nil {
+			if _, exists := routeIDs[route.ID]; exists {
+				return domain.ProtectionPlan{}, domain.NewError(domain.ErrInvalidContract, "build protection plan", "surface ids produce a duplicate protected route id")
+			}
+			routeIDs[route.ID] = struct{}{}
 			plan.Routes = append(plan.Routes, *route)
 		}
 		addSummary(&plan.Summary, coverage.Status)

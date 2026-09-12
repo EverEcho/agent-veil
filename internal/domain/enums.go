@@ -122,6 +122,15 @@ const (
 	AuthCustom       AuthType = "custom"
 )
 
+func (v AuthType) Valid() bool {
+	switch v {
+	case AuthPassthrough, AuthBearer, AuthAnthropicKey, AuthGoogleKey, AuthAWSSigV4, AuthVertexOAuth, AuthCustom:
+		return true
+	default:
+		return false
+	}
+}
+
 type NetworkType string
 
 const (
@@ -130,6 +139,15 @@ const (
 	NetworkSOCKS5      NetworkType = "socks5"
 	NetworkSystemProxy NetworkType = "system_proxy"
 )
+
+func (v NetworkType) Valid() bool {
+	switch v {
+	case NetworkDirect, NetworkHTTPProxy, NetworkSOCKS5, NetworkSystemProxy:
+		return true
+	default:
+		return false
+	}
+}
 
 type IntegrationMode string
 

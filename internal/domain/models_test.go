@@ -28,6 +28,13 @@ func TestManifestRejectsDuplicateSurfaceID(t *testing.T) {
 	}
 }
 
+func TestManifestCannotClaimCoverageWithoutSurfaces(t *testing.T) {
+	manifest := AgentManifest{SchemaVersion: "v1", Agent: AgentInstance{ID: "a", Kind: "codex"}}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("empty manifest was accepted")
+	}
+}
+
 func TestSessionSecretIsNeverSerialized(t *testing.T) {
 	session := NewProtectionSession("s", "", "http://127.0.0.1:1234", time.Now(), time.Now().Add(time.Hour), []string{"r"}, []byte(strings.Repeat("x", 32)))
 	payload, err := json.Marshal(session)
@@ -45,5 +52,29 @@ func TestRemotePlaintextUpstreamFailsClosed(t *testing.T) {
 	}
 	if err := (Upstream{Scheme: "http", Host: "127.0.0.1", Port: 8080}).Validate(); err != nil {
 		t.Fatalf("expected explicit loopback HTTP to be allowed: %v", err)
+	}
+}
+
+func TestNetworkSurfaceRequiresValidAuthAndNetworkRoute(t *testing.T) {
+	surface := EgressSurface{ID: "primary", Name: "Primary", Type: SurfaceModelPrimary, Protocol: ProtocolOpenAIResponses, Upstream: &Upstream{Scheme: "https", Host: "api.example", Port: 443}, ConfigSource: "fixture", Rewritable: true}
+	if err := surface.Validate(); err == nil {
+		t.Fatal("network surface without explicit authentication was accepted")
+	}
+	surface.Auth = AuthStrategy{Type: AuthBearer}
+	if err := surface.Validate(); err == nil {
+		t.Fatal("non-passthrough authentication without source was accepted")
+	}
+	surface.Auth.Source = "environment:API_KEY"
+	if err := surface.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []NetworkRoute{
+		{Type: NetworkDirect, Endpoint: "http://127.0.0.1:8080"},
+		{Type: NetworkSOCKS5, Endpoint: "http://127.0.0.1:1080"},
+		{Type: NetworkHTTPProxy, Endpoint: "http://user:secret@127.0.0.1:8080"},
+	} {
+		if err := route.Validate(); err == nil {
+			t.Fatalf("invalid route accepted: %+v", route)
+		}
 	}
 }
