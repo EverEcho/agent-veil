@@ -67,9 +67,27 @@ func TestManagerRejectsInvalidLimits(t *testing.T) {
 		{MaxSessions: 1, MaxRoutes: 1, MaxTTL: 0},
 		{MaxSessions: 1, MaxRoutes: 0, MaxTTL: time.Minute},
 		{MaxSessions: 0, MaxRoutes: 1, MaxTTL: time.Minute},
+		{MaxSessions: MaximumSessions + 1, MaxRoutes: 1, MaxTTL: time.Minute},
+		{MaxSessions: 1, MaxRoutes: MaximumRoutes + 1, MaxTTL: time.Minute},
+		{MaxSessions: 1, MaxRoutes: 1, MaxTTL: MaximumTTL + time.Second},
 	} {
 		if _, err := NewManagerWithLimits(limits); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("invalid limits accepted or unsafe error returned: %+v err=%v", limits, err)
+		}
+	}
+}
+
+func TestManagerRejectsUnsafeSessionReferences(t *testing.T) {
+	m := NewManager()
+	invalidUTF8 := string([]byte{0xff})
+	for _, endpoint := range []string{"", strings.Repeat("x", maxEndpointBytes+1), "local\x00endpoint", invalidUTF8} {
+		if _, err := m.Create("", endpoint, []string{"route"}, time.Minute); err == nil {
+			t.Fatalf("unsafe endpoint accepted: %q", endpoint)
+		}
+	}
+	for _, routeID := range []string{"", "unsafe route", "../route", strings.Repeat("r", 129)} {
+		if _, err := m.Create("", "local", []string{routeID}, time.Minute); err == nil {
+			t.Fatalf("unsafe route id accepted: %q", routeID)
 		}
 	}
 }

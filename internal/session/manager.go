@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
@@ -50,7 +53,13 @@ const (
 	DefaultMaxSessions = 1024
 	DefaultMaxRoutes   = 256
 	DefaultMaxTTL      = 24 * time.Hour
+	MaximumSessions    = 4096
+	MaximumRoutes      = 256
+	MaximumTTL         = 7 * 24 * time.Hour
+	maxEndpointBytes   = 4096
 )
+
+var routeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 func NewManager() *Manager {
 	manager, _ := NewManagerWithLimits(Limits{MaxSessions: DefaultMaxSessions, MaxRoutes: DefaultMaxRoutes, MaxTTL: DefaultMaxTTL})
@@ -58,8 +67,8 @@ func NewManager() *Manager {
 }
 
 func NewManagerWithLimits(limits Limits) (*Manager, error) {
-	if limits.MaxSessions < 1 || limits.MaxRoutes < 1 || limits.MaxTTL <= 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create session manager", "positive session, route, and TTL limits are required")
+	if limits.MaxSessions < 1 || limits.MaxSessions > MaximumSessions || limits.MaxRoutes < 1 || limits.MaxRoutes > MaximumRoutes || limits.MaxTTL <= 0 || limits.MaxTTL > MaximumTTL {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create session manager", "session, route, and TTL limits must be within configured bounds")
 	}
 	return &Manager{sessions: make(map[string]*managedSession), now: time.Now, limits: limits}, nil
 }
@@ -68,10 +77,13 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 	if ttl <= 0 || ttl > m.limits.MaxTTL || len(routeIDs) == 0 || len(routeIDs) > m.limits.MaxRoutes {
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "ttl and route count must be within configured limits")
 	}
+	if endpoint == "" || len(endpoint) > maxEndpointBytes || !utf8.ValidString(endpoint) || strings.ContainsRune(endpoint, 0) {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "core endpoint is invalid")
+	}
 	seen := make(map[string]struct{}, len(routeIDs))
 	for _, routeID := range routeIDs {
-		if routeID == "" {
-			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "route id cannot be empty")
+		if !routeIDPattern.MatchString(routeID) {
+			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "route id is invalid")
 		}
 		if _, ok := seen[routeID]; ok {
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "duplicate route id")
