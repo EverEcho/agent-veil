@@ -117,3 +117,40 @@ func TestHermesConfigLeavesUnresolvedReferencesUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestHermesConfigReadsDefaultModelAndMergesLegacyFallbacks(t *testing.T) {
+	content := []byte(`
+model:
+  default: primary-model
+  provider: custom
+  base_url: https://primary.example/v1
+fallback_providers:
+  - provider: first
+    model: one
+    base_url: https://one.example/v1
+fallback_model:
+  - provider: first
+    model: one
+    base_url: https://one.example/v1/
+  - provider: second
+    model: two
+    base_url: https://two.example/v1
+`)
+	slots, _, err := ParseHermesConfig(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 3 || slots[0].Metadata["model_ref"] != "primary-model" || slots[1].Metadata["model_ref"] != "one" || slots[2].Metadata["model_ref"] != "two" {
+		t.Fatalf("slots=%+v", slots)
+	}
+}
+
+func TestHermesConfigAcceptsCurrentScalarPrimaryModel(t *testing.T) {
+	slots, _, err := ParseHermesConfig([]byte("model: openrouter/example-model\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 1 || slots[0].Metadata["model_ref"] != "openrouter/example-model" || slots[0].Protocol != domain.ProtocolUnknown || slots[0].BaseURL != "" {
+		t.Fatalf("scalar primary model was guessed or lost: %+v", slots)
+	}
+}

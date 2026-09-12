@@ -14,10 +14,60 @@ const maxHermesConfigBytes = 1 << 20
 type hermesRoute struct {
 	Provider          string        `yaml:"provider"`
 	Model             string        `yaml:"model"`
+	Default           string        `yaml:"default"`
 	BaseURL           string        `yaml:"base_url"`
 	APIMode           string        `yaml:"api_mode"`
 	FallbackChain     []hermesRoute `yaml:"fallback_chain"`
 	FallbackProviders []hermesRoute `yaml:"fallback_providers"`
+}
+
+func (r *hermesRoute) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		if node.Tag != "!!str" || strings.TrimSpace(node.Value) == "" {
+			return domain.NewError(domain.ErrInvalidContract, "parse hermes config", "model route is invalid")
+		}
+		*r = hermesRoute{Model: strings.TrimSpace(node.Value)}
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return domain.NewError(domain.ErrInvalidContract, "parse hermes config", "model route must be a string or mapping")
+	}
+	type rawHermesRoute hermesRoute
+	var decoded rawHermesRoute
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = hermesRoute(decoded)
+	return nil
+}
+
+type hermesRouteList []hermesRoute
+
+func (r *hermesRouteList) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case 0, yaml.ScalarNode:
+		if node.Tag == "!!null" || strings.TrimSpace(node.Value) == "" {
+			*r = nil
+			return nil
+		}
+		return domain.NewError(domain.ErrInvalidContract, "parse hermes config", "fallback_model must be a mapping or list")
+	case yaml.MappingNode:
+		var route hermesRoute
+		if err := node.Decode(&route); err != nil {
+			return err
+		}
+		*r = []hermesRoute{route}
+		return nil
+	case yaml.SequenceNode:
+		var routes []hermesRoute
+		if err := node.Decode(&routes); err != nil {
+			return err
+		}
+		*r = routes
+		return nil
+	default:
+		return domain.NewError(domain.ErrInvalidContract, "parse hermes config", "fallback_model must be a mapping or list")
+	}
 }
 
 type hermesProvider struct {
@@ -39,7 +89,7 @@ type hermesConfig struct {
 	Providers         map[string]hermesProvider  `yaml:"providers"`
 	Auxiliary         map[string]hermesRoute     `yaml:"auxiliary"`
 	FallbackProviders []hermesRoute              `yaml:"fallback_providers"`
-	FallbackModel     *hermesRoute               `yaml:"fallback_model"`
+	FallbackModel     hermesRouteList            `yaml:"fallback_model"`
 	Delegation        hermesRoute                `yaml:"delegation"`
 	MCPServers        map[string]hermesMCPServer `yaml:"mcp_servers"`
 }
@@ -58,7 +108,11 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 	primary := resolveHermesRoute(config.Model, config.Providers, nil)
 	slots := []Slot{hermesSlot("primary", "Primary model", domain.SurfaceModelPrimary, primary, true)}
 
-	for index, fallback := range effectiveHermesFallbacks(config) {
+	fallbacks, err := effectiveHermesFallbacks(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	for index, fallback := range fallbacks {
 		resolved := resolveHermesRoute(fallback, config.Providers, &primary)
 		slots = append(slots, hermesSlot(fmt.Sprintf("fallback-%d", index+1), fmt.Sprintf("Fallback model %d", index+1), domain.SurfaceModelFallback, resolved, false))
 	}
@@ -133,12 +187,22 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 type resolvedHermesRoute struct {
 	baseURL  string
 	protocol domain.Protocol
+	model    string
+	provider string
 }
 
 func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, inherited *resolvedHermesRoute) resolvedHermesRoute {
 	providerName := strings.TrimSpace(route.Provider)
+	model := strings.TrimSpace(route.Model)
+	if model == "" {
+		model = strings.TrimSpace(route.Default)
+	}
 	if providerName == "main" && inherited != nil {
-		return *inherited
+		result := *inherited
+		if model != "" {
+			result.model = model
+		}
+		return result
 	}
 	baseURL := strings.TrimSpace(route.BaseURL)
 	mode := strings.TrimSpace(route.APIMode)
@@ -160,7 +224,7 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 	if strings.Contains(baseURL, "${") {
 		return resolvedHermesRoute{}
 	}
-	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType}
+	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType, model: model, provider: providerName}
 }
 
 func hermesProtocol(value string) domain.Protocol {
@@ -181,25 +245,46 @@ func hermesSlot(id, name string, surfaceType domain.SurfaceType, route resolvedH
 	if protocolType == "" {
 		protocolType = domain.ProtocolUnknown
 	}
-	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Rewritable: false, Required: required}
+	metadata := map[string]string{}
+	if route.model != "" {
+		metadata["model_ref"] = route.model
+	}
+	if route.provider != "" {
+		metadata["provider"] = route.provider
+	}
+	if len(metadata) == 0 {
+		metadata = nil
+	}
+	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Metadata: metadata, Rewritable: false, Required: required}
 }
 
 func hermesAuth() domain.AuthStrategy {
 	return domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:hermes-credentials"}
 }
 
-func effectiveHermesFallbacks(config hermesConfig) []hermesRoute {
-	if len(config.FallbackProviders) > 0 {
-		return config.FallbackProviders
+func effectiveHermesFallbacks(config hermesConfig) ([]hermesRoute, error) {
+	result := make([]hermesRoute, 0, len(config.FallbackProviders)+len(config.FallbackModel))
+	seen := map[string]struct{}{}
+	for _, route := range append(append([]hermesRoute(nil), config.FallbackProviders...), config.FallbackModel...) {
+		model := strings.TrimSpace(route.Model)
+		if model == "" {
+			model = strings.TrimSpace(route.Default)
+		}
+		if strings.TrimSpace(route.Provider) == "" || model == "" {
+			return nil, domain.NewError(domain.ErrInvalidContract, "parse hermes config", "fallback route is incomplete")
+		}
+		identity := strings.ToLower(strings.TrimSpace(route.Provider) + "\x00" + model + "\x00" + strings.TrimSuffix(strings.TrimSpace(route.BaseURL), "/"))
+		if _, duplicate := seen[identity]; duplicate {
+			continue
+		}
+		seen[identity] = struct{}{}
+		result = append(result, route)
 	}
-	if config.FallbackModel != nil && configuredHermesRoute(*config.FallbackModel) {
-		return []hermesRoute{*config.FallbackModel}
-	}
-	return nil
+	return result, nil
 }
 
 func configuredHermesRoute(route hermesRoute) bool {
-	return strings.TrimSpace(route.Provider) != "" || strings.TrimSpace(route.Model) != "" || strings.TrimSpace(route.BaseURL) != "" || strings.TrimSpace(route.APIMode) != ""
+	return strings.TrimSpace(route.Provider) != "" || strings.TrimSpace(route.Model) != "" || strings.TrimSpace(route.Default) != "" || strings.TrimSpace(route.BaseURL) != "" || strings.TrimSpace(route.APIMode) != ""
 }
 
 func safeHermesName(value string) bool {
