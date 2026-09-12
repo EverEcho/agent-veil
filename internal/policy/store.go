@@ -41,9 +41,11 @@ type Store struct {
 	mu   sync.Mutex
 }
 
+const maxPolicyBytes = 1 << 20
+
 func NewStore(path string) (*Store, error) {
-	if path == "" {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create policy store", "path is required")
+	if path == "" || !filepath.IsAbs(path) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create policy store", "path must be absolute")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -82,14 +84,39 @@ func (s *Store) Save(document Document) error {
 	if err = file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temp, s.path)
+	if err := os.Rename(temp, s.path); err != nil {
+		return err
+	}
+	return syncPolicyDirectory(filepath.Dir(s.path))
 }
 func (s *Store) Load() (Document, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	payload, err := os.ReadFile(s.path)
+	info, err := os.Lstat(s.path)
 	if err != nil {
 		return Document{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return Document{}, domain.NewError(domain.ErrInvalidContract, "load policy", "policy file permissions or type are unsafe")
+	}
+	file, err := os.Open(s.path)
+	if err != nil {
+		return Document{}, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return Document{}, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return Document{}, domain.NewError(domain.ErrInvalidContract, "load policy", "policy file changed during validation")
+	}
+	payload, err := io.ReadAll(io.LimitReader(file, maxPolicyBytes+1))
+	if err != nil {
+		return Document{}, err
+	}
+	if len(payload) > maxPolicyBytes {
+		return Document{}, domain.NewError(domain.ErrInvalidContract, "load policy", "policy file is too large")
 	}
 	var document Document
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -105,6 +132,15 @@ func (s *Store) Load() (Document, error) {
 		return Document{}, err
 	}
 	return document, nil
+}
+
+func syncPolicyDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 type Approval struct {

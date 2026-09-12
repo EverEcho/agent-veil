@@ -5,6 +5,7 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,44 @@ func TestPolicyStoreRoundTripAndPrivatePermissions(t *testing.T) {
 	info, _ := os.Stat(path)
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("mode=%o", info.Mode().Perm())
+	}
+}
+
+func TestPolicyStoreRejectsRelativeUnsafeAndOversizedFiles(t *testing.T) {
+	if _, err := NewStore("relative/policy.json"); err == nil {
+		t.Fatal("relative policy path was accepted")
+	}
+	directory := t.TempDir()
+	path := filepath.Join(directory, "policy.json")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := `{"schema_version":"v1","default":"redact","rules":[]}`
+	if err := os.WriteFile(path, []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("world-readable policy file was accepted")
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxPolicyBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("oversized policy file was accepted")
+	}
+	target := filepath.Join(directory, "target.json")
+	if err := os.WriteFile(target, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := store.Load(); err == nil {
+		t.Fatal("symlinked policy file was accepted")
 	}
 }
 func TestASKBrokerIsOneTimeAndFailsClosedOnTimeout(t *testing.T) {
