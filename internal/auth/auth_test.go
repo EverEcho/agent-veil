@@ -33,10 +33,50 @@ func TestAuthAppliedWithoutPersistingCredential(t *testing.T) {
 	}
 }
 
+func TestResolvedCredentialsMustBeBoundedVisibleASCII(t *testing.T) {
+	for name, value := range map[string]string{
+		"empty":      "",
+		"space":      "provider secret",
+		"tab":        "provider\tsecret",
+		"newline":    "provider\nsecret",
+		"non-ascii":  "密钥",
+		"over-limit": strings.Repeat("x", MaxCredentialBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, _ := http.NewRequest(http.MethodPost, "https://api.example/v1", nil)
+			err := (Applier{Credentials: credentials{"environment:API_KEY": value}}).Apply(request, domain.AuthStrategy{Type: domain.AuthBearer, Source: "environment:API_KEY"})
+			if err == nil || request.Header.Get("Authorization") != "" {
+				t.Fatalf("credential accepted or installed: error=%v headers=%v", err, request.Header)
+			}
+		})
+	}
+}
+
 type awsCredentials struct{}
 
 func (awsCredentials) ResolveAWS(string) (AWSCredentials, error) {
 	return AWSCredentials{AccessKey: "AKIDEXAMPLE", SecretKey: "secret", SessionToken: "session"}, nil
+}
+
+type invalidAWSCredentials struct{ credentials AWSCredentials }
+
+func (c invalidAWSCredentials) ResolveAWS(string) (AWSCredentials, error) { return c.credentials, nil }
+
+func TestSigV4RejectsMalformedCredentialMaterial(t *testing.T) {
+	for name, candidate := range map[string]AWSCredentials{
+		"access key control": {AccessKey: "AKID\nEXAMPLE", SecretKey: "secret"},
+		"secret whitespace":  {AccessKey: "AKIDEXAMPLE", SecretKey: "secret value"},
+		"session control":    {AccessKey: "AKIDEXAMPLE", SecretKey: "secret", SessionToken: "session\rvalue"},
+		"oversized session":  {AccessKey: "AKIDEXAMPLE", SecretKey: "secret", SessionToken: strings.Repeat("x", MaxCredentialBytes+1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request, _ := http.NewRequest(http.MethodPost, "https://bedrock.us-east-1.amazonaws.com/model/invoke", strings.NewReader(`{"input":"redacted"}`))
+			signer := AWSSigner{Region: "us-east-1", Service: "bedrock", Credentials: invalidAWSCredentials{credentials: candidate}}
+			if err := signer.Apply(request); err == nil || request.Header.Get("Authorization") != "" {
+				t.Fatalf("malformed credentials accepted: headers=%v error=%v", request.Header, err)
+			}
+		})
+	}
 }
 
 func TestSigV4SignsFinalBodyAndPreservesIt(t *testing.T) {

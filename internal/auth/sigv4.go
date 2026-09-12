@@ -27,7 +27,7 @@ func (s AWSSigner) Apply(request *http.Request) error {
 		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "signer is incomplete")
 	}
 	credentials, err := s.Credentials.ResolveAWS(s.Source)
-	if err != nil || credentials.AccessKey == "" || credentials.SecretKey == "" {
+	if err != nil || !validCredentialValue(credentials.AccessKey) || !validCredentialValue(credentials.SecretKey) || credentials.SessionToken != "" && !validCredentialValue(credentials.SessionToken) {
 		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "credentials are unavailable")
 	}
 	body, err := io.ReadAll(request.Body)

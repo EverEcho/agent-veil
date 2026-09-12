@@ -7,6 +7,8 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 )
 
+const MaxCredentialBytes = 4096
+
 type Credentials interface {
 	Resolve(source string) (string, error)
 }
@@ -29,7 +31,7 @@ func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) erro
 			return domain.NewError(domain.ErrInvalidContract, "apply auth", "credential resolver is unavailable")
 		}
 		value, err := a.Credentials.Resolve(strategy.Source)
-		if err != nil || value == "" {
+		if err != nil || !validCredentialValue(value) {
 			return domain.NewError(domain.ErrInvalidContract, "apply auth", "credential resolution failed")
 		}
 		switch strategy.Type {
@@ -52,6 +54,18 @@ func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) erro
 	default:
 		return domain.NewError(domain.ErrInvalidContract, "apply auth", "unknown authentication strategy")
 	}
+}
+
+func validCredentialValue(value string) bool {
+	if len(value) == 0 || len(value) > MaxCredentialBytes {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x21 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func clearProviderCredentials(request *http.Request) {
