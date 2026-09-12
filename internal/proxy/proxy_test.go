@@ -115,6 +115,27 @@ type fixedCredentials map[string]string
 
 func (c fixedCredentials) Resolve(source string) (string, error) { return c[source], nil }
 
+func TestProxyRejectsUnboundedRoutesAndBodies(t *testing.T) {
+	manager := session.NewManager()
+	upstream, _ := url.Parse("https://api.example")
+	base := Route{ID: "primary", Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}
+	routes := make([]Route, MaxProxyRoutes+1)
+	for index := range routes {
+		routes[index] = base
+	}
+	for _, candidate := range [][]Route{
+		nil,
+		routes,
+		{{ID: "unsafe/route", Upstream: upstream, MaxRequestBytes: 4096, MaxResponseBytes: 4096}},
+		{{ID: "primary", Upstream: upstream, MaxRequestBytes: MaxProxyBodyBytes + 1, MaxResponseBytes: 4096}},
+		{{ID: "primary", Upstream: upstream, MaxRequestBytes: 4096, MaxResponseBytes: MaxProxyBodyBytes + 1}},
+	} {
+		if _, err := NewHandler(manager, candidate, http.DefaultClient); err == nil {
+			t.Fatalf("unbounded proxy configuration accepted: routes=%d", len(candidate))
+		}
+	}
+}
+
 func TestCopyHeadersRemovesConnectionNominatedFields(t *testing.T) {
 	source := http.Header{
 		"Connection": {"X-Hop, Keep-Alive"},

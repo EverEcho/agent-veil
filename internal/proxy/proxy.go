@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,11 @@ const (
 	CapabilityPrefix    = "veil-v1:"
 	defaultChunkBytes   = detector.DefaultChunkBytes
 	defaultOverlapBytes = detector.DefaultOverlapBytes
+	MaxProxyRoutes      = 256
+	MaxProxyBodyBytes   = 64 << 20
 )
+
+var routeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type Route struct {
 	ID                                          string
@@ -77,9 +82,12 @@ func NewHandlerWithScanner(sessions *session.Manager, routes []Route, client *ht
 	if scanner == nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "content scanner is required")
 	}
+	if len(routes) == 0 || len(routes) > MaxProxyRoutes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "route count must be within its configured bounds")
+	}
 	h := &Handler{sessions: sessions, routes: make(map[string]configuredRoute, len(routes)), client: client, scanner: scanner}
 	for _, route := range routes {
-		if route.ID == "" || route.Upstream == nil || route.MaxRequestBytes <= 0 || route.MaxResponseBytes <= 0 {
+		if !routeIDPattern.MatchString(route.ID) || route.Upstream == nil || route.MaxRequestBytes <= 0 || route.MaxRequestBytes > MaxProxyBodyBytes || route.MaxResponseBytes <= 0 || route.MaxResponseBytes > MaxProxyBodyBytes {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "route is incomplete")
 		}
 		port := uint16(443)
