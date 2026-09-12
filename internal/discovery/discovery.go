@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
+	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/integration"
 )
@@ -39,7 +41,7 @@ type Discoverer struct {
 }
 
 func Default() Discoverer {
-	return Discoverer{System: OSSystem{}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}, "claude": {"2.1.220": {}}, "hermes": {"0.20.6": {}}, "cursor": {"3.19.19": {}}}}
+	return Discoverer{System: OSSystem{}, Verified: compatibility.VerifiedVersions(runtime.GOOS)}
 }
 
 func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManifest, error) {

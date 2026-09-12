@@ -12,11 +12,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/audit"
+	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -246,9 +248,10 @@ func writeInspection(writer io.Writer, manifest domain.AgentManifest) error {
 		return err
 	}
 	result := struct {
-		Manifest domain.AgentManifest  `json:"manifest"`
-		Plan     domain.ProtectionPlan `json:"protection_plan"`
-	}{manifest, plan}
+		Manifest      domain.AgentManifest   `json:"manifest"`
+		Plan          domain.ProtectionPlan  `json:"protection_plan"`
+		Compatibility []compatibility.Record `json:"compatibility"`
+	}{manifest, plan, compatibility.ForAgent(manifest.Agent.Kind, manifest.Agent.Version, runtime.GOOS)}
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(result)

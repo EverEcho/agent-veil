@@ -57,6 +57,18 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	if err != nil || response.StatusCode != http.StatusOK {
 		t.Fatalf("authorized health failed: %v", err)
 	}
+	response.Body.Close()
+	request, _ = http.NewRequest(http.MethodGet, s.Endpoint()+"/v1/compatibility", nil)
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("compatibility API failed: %v", err)
+	}
+	var records []map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&records); err != nil || len(records) == 0 {
+		t.Fatalf("compatibility records=%v err=%v", records, err)
+	}
+	response.Body.Close()
 }
 
 func TestSessionLifecycleAPI(t *testing.T) {

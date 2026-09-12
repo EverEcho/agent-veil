@@ -17,6 +17,7 @@ import (
 
 	"github.com/agentveil/agentveil/internal/audit"
 	veilauth "github.com/agentveil/agentveil/internal/auth"
+	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -114,6 +115,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
 	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
+	mux.HandleFunc("GET /v1/compatibility", s.auth(s.getCompatibility))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -145,6 +147,9 @@ func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
 	engine := s.policyEngine()
 	writeJSON(w, http.StatusOK, policy.Document{SchemaVersion: "v1", Default: engine.Default, Rules: engine.Rules})
+}
+func (s *Server) getCompatibility(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, compatibility.Current())
 }
 func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request) {
 	var document policy.Document
