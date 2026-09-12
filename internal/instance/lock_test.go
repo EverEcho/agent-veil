@@ -119,6 +119,25 @@ func TestCoreLockRejectsRelativeAndSymlinkPaths(t *testing.T) {
 	}
 }
 
+func TestCoreLockRejectsUnsafeExistingFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "core.lock")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Acquire(path); err == nil {
+		t.Fatal("world-readable lock file was accepted")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Acquire(path); err == nil {
+		t.Fatal("directory lock path was accepted")
+	}
+}
+
 func hasCode(err error, code domain.ErrorCode) bool {
 	var veil *domain.VeilError
 	return errors.As(err, &veil) && veil.Code == code

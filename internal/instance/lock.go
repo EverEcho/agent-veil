@@ -21,12 +21,17 @@ func Acquire(path string) (*Lock, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock directory is unavailable")
 	}
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock path cannot be a symbolic link")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := createLockFile(path); err != nil {
+		return nil, err
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
 		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock path is unavailable")
 	}
-	file := flock.New(path)
+	if err := validateLockFile(before); err != nil {
+		return nil, err
+	}
+	file := flock.New(path, flock.SetPermissions(0o600))
 	locked, err := file.TryLock()
 	if err != nil {
 		_ = file.Close()
@@ -36,12 +41,34 @@ func Acquire(path string) (*Lock, error) {
 		_ = file.Close()
 		return nil, domain.NewError(domain.ErrCoreAlreadyRunning, "acquire core lock", "another AgentVeil Core holds the lock")
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	after, err := os.Lstat(path)
+	if err != nil || validateLockFile(after) != nil || !os.SameFile(before, after) {
 		_ = file.Unlock()
 		_ = file.Close()
-		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock permissions could not be restricted")
+		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock file changed during acquisition")
 	}
 	return &Lock{file: file}, nil
+}
+
+func createLockFile(path string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock file could not be created")
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return syncStateDirectory(filepath.Dir(path))
+}
+
+func validateLockFile(info os.FileInfo) error {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock file permissions or type are unsafe")
+	}
+	return nil
 }
 
 func (l *Lock) Close() error {
