@@ -109,6 +109,33 @@ func TestOpenClawDiscoveryUsesManagedDiscoveryOnlySurfaces(t *testing.T) {
 	}
 }
 
+func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "OpenClaw 9.9.9", config: `{
+  agents: { defaults: { model: "corp/main" } },
+  models: { providers: { corp: { baseUrl: "https://models.example/v1", api: "openai-completions" } } },
+}`}, Verified: map[string]map[string]struct{}{}}
+	manifest, err := d.Inspect(context.Background(), "openclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Agent.Metadata["compatibility"] != "unverified" || len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Rewritable {
+		t.Fatalf("manifest=%+v", manifest)
+	}
+}
+
+func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
+	for _, name := range []string{"opencode", "cursor", "zed", "cline"} {
+		d := Discoverer{System: fakeSystem{version: name + " 9.9.9"}, Verified: map[string]map[string]struct{}{}}
+		manifest, err := d.Inspect(context.Background(), name)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Type != domain.SurfaceUnknown || manifest.Agent.Metadata["compatibility"] != "unverified" {
+			t.Fatalf("%s manifest=%+v", name, manifest)
+		}
+	}
+}
+
 const hermesConfigFixtureForDiscovery = `
 model:
   provider: custom

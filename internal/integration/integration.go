@@ -31,14 +31,19 @@ type Inspector struct {
 }
 
 func (i Inspector) Inspect(config Config) (domain.AgentManifest, error) {
-	versions, ok := i.VerifiedVersions[config.Kind]
-	if !ok {
-		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "inspect agent", "agent kind has no compatibility record")
-	}
-	if _, ok := versions[config.Version]; !ok {
-		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "inspect agent", "agent version is not verified")
+	versions := i.VerifiedVersions[config.Kind]
+	_, verified := versions[config.Version]
+	if !verified {
+		for _, slot := range append(append([]Slot(nil), config.Slots...), config.Observed...) {
+			if slot.Rewritable {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "inspect agent", "unverified agent version cannot claim a rewritable surface")
+			}
+		}
 	}
 	manifest := domain.AgentManifest{SchemaVersion: "v1", GeneratedAt: time.Now().UTC(), Agent: domain.AgentInstance{ID: config.AgentID, Kind: config.Kind, Version: config.Version, Executable: config.Executable, Mode: config.Mode}}
+	if !verified {
+		manifest.Agent.Metadata = map[string]string{"compatibility": "unverified"}
+	}
 	all := append(append([]Slot(nil), config.Slots...), config.Observed...)
 	for _, slot := range all {
 		var upstream *domain.Upstream

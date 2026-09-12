@@ -150,7 +150,7 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		} else {
 			config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 		}
-	case "cursor":
+	case "cursor", "opencode", "zed", "cline":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 	default:

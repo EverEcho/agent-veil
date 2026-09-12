@@ -47,6 +47,20 @@ func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
 	}
 }
 
+func TestUnverifiedVersionCanOnlyProduceDiscoveryOnlyManifest(t *testing.T) {
+	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{}}
+	manifest, err := inspector.Inspect(Config{AgentID: "openclaw", Kind: "openclaw", Version: "9.9.9", ConfigSource: "fixture", Mode: domain.ModeManaged, Observed: []Slot{{ID: "unknown", Name: "Unknown", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Agent.Metadata["compatibility"] != "unverified" || len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Rewritable {
+		t.Fatalf("manifest=%+v", manifest)
+	}
+	if _, err := inspector.Inspect(Config{AgentID: "unsafe", Kind: "unsafe", Version: "9.9.9", ConfigSource: "fixture", Mode: domain.ModeLaunch, Slots: []Slot{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://api.example", Rewritable: true, Required: true}}}); err == nil {
+		t.Fatal("unverified version claimed a rewritable surface")
+	}
+}
+
 func TestInspectorPreservesSafeUpstreamBasePath(t *testing.T) {
 	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{"agent": {"1.0": {}}}}
 	base := Config{AgentID: "a", Kind: "agent", Version: "1.0", ConfigSource: "fixture", Mode: domain.ModeLaunch, Slots: []Slot{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://api.example.com/gateway/v1/", Rewritable: true, Required: true}}}

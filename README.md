@@ -32,6 +32,8 @@ conservatively than discovered traffic.
   redirect revalidation, and preserved custom Gateway base paths;
 - version-gated Codex and Claude Code discovery/protected launch, plus
   discovery-only Hermes and Cursor compatibility records;
+- risk-only inspection for unverified Agent versions, which cannot publish a
+  rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
   surfaces without retaining credentials;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
@@ -59,6 +61,7 @@ go run ./cmd/veil discover
 go run ./cmd/veil inspect codex
 go run ./cmd/veil inspect claude
 go run ./cmd/veil inspect hermes
+go run ./cmd/veil inspect openclaw
 go run ./cmd/veil run codex -- --help
 ```
 

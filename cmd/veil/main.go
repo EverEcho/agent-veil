@@ -60,7 +60,7 @@ func run(args []string) error {
 		return encoder.Encode(discovery.Default().DetectAll(context.Background()))
 	case "inspect":
 		if len(args) != 2 {
-			return errors.New("usage: veil inspect <codex|claude|hermes|cursor>")
+			return errors.New("usage: veil inspect <codex|claude|hermes|openclaw|opencode|cursor|zed|cline>")
 		}
 		manifest, err := discovery.Default().Inspect(context.Background(), args[1])
 		if err != nil {
