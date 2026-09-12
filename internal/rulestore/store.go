@@ -190,6 +190,26 @@ func (s *Store) Activate(version string) error {
 	return writePrivateAtomic(filepath.Join(s.root, "active.json"), append(payload, '\n'))
 }
 
+// Deactivate removes only the active pointer so callers can immediately fall
+// back to built-in rules without deleting any verified rollback versions.
+func (s *Store) Deactivate() error {
+	activePath := filepath.Join(s.root, "active.json")
+	info, err := os.Lstat(activePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return domain.NewError(domain.ErrInvalidContract, "deactivate rule pack", "active rule pointer is a directory")
+	}
+	if err := os.Remove(activePath); err != nil {
+		return err
+	}
+	return syncDirectory(s.root)
+}
+
 func (s *Store) OpenActive() (detector.RulePack, Manifest, error) {
 	payload, err := readPrivateFile(filepath.Join(s.root, "active.json"), maxManifestBytes)
 	if err != nil {

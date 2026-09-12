@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,6 +100,44 @@ func TestStoreRejectsBadSignatureInvalidRulesAndTampering(t *testing.T) {
 	}
 	if _, err := store.List(); err == nil {
 		t.Fatal("tampered rule pack was omitted from inventory")
+	}
+}
+
+func TestStoreDeactivatesWithoutDeletingVerifiedRulePacks(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := rulePayload(t, "custom.ticket")
+	if err := store.Install(signedManifest(t, private, "1.0.0", payload), bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Deactivate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Deactivate(); err != nil {
+		t.Fatalf("idempotent deactivation failed: %v", err)
+	}
+	if _, _, err := store.OpenActive(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deactivated rule pack remained active: %v", err)
+	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 1 || versions[0].Version != "1.0.0" {
+		t.Fatalf("deactivation removed installed versions: versions=%+v error=%v", versions, err)
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatalf("verified rule pack could not be reactivated: %v", err)
+	}
+	pack, manifest, err := store.OpenActive()
+	if err != nil || manifest.Version != "1.0.0" || len(pack.Rules) != 1 || pack.Rules[0].ID != "custom.ticket" {
+		t.Fatalf("pack=%+v manifest=%+v error=%v", pack, manifest, err)
 	}
 }
 
