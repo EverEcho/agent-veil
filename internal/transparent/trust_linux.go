@@ -135,6 +135,17 @@ func (s *LinuxTrustStore) Uninstall(ctx context.Context, receipt TrustReceipt) e
 	return nil
 }
 
+func (s *LinuxTrustStore) Receipt(ca CA) (TrustReceipt, error) {
+	if s == nil {
+		return TrustReceipt{}, domain.NewError(domain.ErrInvalidContract, "create Linux trust receipt", "trust store is unavailable")
+	}
+	_, fingerprint, err := trustedCAPayload(ca)
+	if err != nil {
+		return TrustReceipt{}, err
+	}
+	return TrustReceipt{Fingerprint: fingerprint, CertificatePath: filepath.Join(s.root, "agentveil-"+fingerprint+".crt")}, nil
+}
+
 func (s *LinuxTrustStore) refresh(ctx context.Context) error {
 	return s.runner.Run(ctx, s.updateExecutable, s.updateArgs...)
 }

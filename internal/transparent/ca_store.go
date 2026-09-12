@@ -70,6 +70,18 @@ func (s *CAStore) Active() (CA, bool, error) {
 	return s.activeLocked()
 }
 
+// DeactivateActive removes signing eligibility but preserves the CA material
+// so a platform trust adapter can uninstall the public certificate and retry
+// safely after interruption.
+func (s *CAStore) DeactivateActive() (CA, bool, error) {
+	if s == nil {
+		return CA{}, false, domain.NewError(domain.ErrInvalidContract, "deactivate transparent CA", "CA store is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deactivateLocked()
+}
+
 // RevokeActive removes signing eligibility before deleting the active private
 // key. Trust-store removal must be completed by the platform adapter.
 func (s *CAStore) RevokeActive() (bool, error) {
@@ -78,17 +90,25 @@ func (s *CAStore) RevokeActive() (bool, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	active, ok, err := s.activeLocked()
+	active, ok, err := s.deactivateLocked()
 	if err != nil || !ok {
-		return false, err
-	}
-	if err := removeCAState(filepath.Join(s.root, "active.json"), s.root); err != nil {
 		return false, err
 	}
 	if err := active.Remove(); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *CAStore) deactivateLocked() (CA, bool, error) {
+	active, ok, err := s.activeLocked()
+	if err != nil || !ok {
+		return CA{}, false, err
+	}
+	if err := removeCAState(filepath.Join(s.root, "active.json"), s.root); err != nil {
+		return CA{}, false, err
+	}
+	return active, true, nil
 }
 
 func (s *CAStore) activeLocked() (CA, bool, error) {

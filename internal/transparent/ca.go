@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -167,7 +168,7 @@ func LoadCAs(root string) ([]CA, error) {
 	}
 	entries, readErr := directory.ReadDir(maxStoredCAs + 1)
 	closeErr := directory.Close()
-	if readErr != nil {
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return nil, readErr
 	}
 	if closeErr != nil {
