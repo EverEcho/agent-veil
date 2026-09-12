@@ -42,10 +42,10 @@ export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
 go run ./cmd/veil serve
 ```
 
-Point other commands at the printed loopback endpoint:
+Other commands discover the active random loopback endpoint from a 0600 local
+state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
-export VEIL_CORE_ENDPOINT='http://127.0.0.1:PORT'
 go run ./cmd/veil status
 go run ./cmd/veil inspect codex
 go run ./cmd/veil inspect claude
