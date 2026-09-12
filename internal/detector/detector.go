@@ -20,6 +20,7 @@ type Match struct {
 type ContentScanner interface {
 	ScanChecked(path, text string) ([]Match, error)
 }
+
 type rule struct {
 	id, category string
 	severity     domain.Severity
@@ -184,7 +185,7 @@ func (s *Scanner) ScanChecked(path, text string) (matches []Match, err error) {
 		return Merge(matches), nil
 	}
 	for _, finding := range findings {
-		if err := finding.Validate(len(text)); err != nil {
+		if err := finding.Validate(len(text)); err != nil || finding.Location.Path != path {
 			return nil, domain.NewError(domain.ErrDetectorFailure, "semantic detection", "semantic detector returned an invalid finding")
 		}
 		matches = append(matches, Match{Finding: finding, Value: text[finding.Location.Start:finding.Location.End]})
@@ -283,6 +284,9 @@ func scanFeatures(text string) featureSet {
 
 func Merge(matches []Match) []Match {
 	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Finding.Location.Path != matches[j].Finding.Location.Path {
+			return matches[i].Finding.Location.Path < matches[j].Finding.Location.Path
+		}
 		if matches[i].Finding.Location.Start != matches[j].Finding.Location.Start {
 			return matches[i].Finding.Location.Start < matches[j].Finding.Location.Start
 		}
@@ -290,13 +294,25 @@ func Merge(matches []Match) []Match {
 	})
 	result := make([]Match, 0, len(matches))
 	for _, candidate := range matches {
-		if len(result) == 0 || candidate.Finding.Location.Start >= result[len(result)-1].Finding.Location.End {
+		if len(result) == 0 || candidate.Finding.Location.Path != result[len(result)-1].Finding.Location.Path || candidate.Finding.Location.Start >= result[len(result)-1].Finding.Location.End {
 			result = append(result, candidate)
 			continue
 		}
-		if priority(candidate) > priority(result[len(result)-1]) {
-			result[len(result)-1] = candidate
+		current := result[len(result)-1]
+		unionEnd := current.Finding.Location.End
+		unionValue := current.Value
+		if candidate.Finding.Location.End > unionEnd {
+			unionValue += candidate.Value[unionEnd-candidate.Finding.Location.Start:]
+			unionEnd = candidate.Finding.Location.End
 		}
+		if priority(candidate) > priority(current) {
+			current = candidate
+		}
+		current.Finding.Location.Start = result[len(result)-1].Finding.Location.Start
+		current.Finding.Location.End = unionEnd
+		current.Finding.Location.Path = result[len(result)-1].Finding.Location.Path
+		current.Value = unionValue
+		result[len(result)-1] = current
 	}
 	return result
 }

@@ -1,9 +1,18 @@
 package detector
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/agentveil/agentveil/internal/domain"
 )
+
+type wrongPathSemantic struct{}
+
+func (wrongPathSemantic) Detect(string, string) ([]domain.Finding, error) {
+	return []domain.Finding{{RuleID: "pii.semantic_name", Category: "pii.semantic_name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: "/other", Start: 0, End: 1}, Confidence: 0.8, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
+}
 
 func TestValidatedPIIAndSecrets(t *testing.T) {
 	s := NewDefault()
@@ -13,6 +22,39 @@ func TestValidatedPIIAndSecrets(t *testing.T) {
 	}
 	if got := scan(t, s, "invalid card 4111111111111112 invalid id 110105194912310021"); len(got) != 0 {
 		t.Fatalf("validators accepted invalid values: %+v", got)
+	}
+}
+
+func TestMergeProtectsEntireOverlappingUnion(t *testing.T) {
+	tests := []struct {
+		name    string
+		matches []Match
+		winner  string
+	}{
+		{"later-secret-wins", []Match{
+			{Finding: domain.Finding{Category: "pii.generic", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: "/x", Start: 0, End: 6}}, Value: "abcdef"},
+			{Finding: domain.Finding{Category: "secret.token", Severity: domain.SeverityCritical, Location: domain.ContentLocation{Path: "/x", Start: 4, End: 10}}, Value: "efghij"},
+		}, "secret.token"},
+		{"earlier-high-severity-wins", []Match{
+			{Finding: domain.Finding{Category: "pii.critical", Severity: domain.SeverityCritical, Location: domain.ContentLocation{Path: "/x", Start: 0, End: 6}}, Value: "abcdef"},
+			{Finding: domain.Finding{Category: "pii.medium", Severity: domain.SeverityMedium, Location: domain.ContentLocation{Path: "/x", Start: 4, End: 10}}, Value: "efghij"},
+		}, "pii.critical"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			merged := Merge(test.matches)
+			if len(merged) != 1 || merged[0].Finding.Category != test.winner || merged[0].Finding.Location.Start != 0 || merged[0].Finding.Location.End != 10 || merged[0].Value != "abcdefghij" {
+				t.Fatalf("merged=%+v", merged)
+			}
+		})
+	}
+}
+
+func TestSemanticDetectorCannotReturnAnotherFieldPath(t *testing.T) {
+	_, err := NewDefault().WithSemantic(wrongPathSemantic{}, true).ScanChecked("/input", "safe")
+	var veil *domain.VeilError
+	if !errors.As(err, &veil) || veil.Code != domain.ErrDetectorFailure {
+		t.Fatalf("error=%v", err)
 	}
 }
 
