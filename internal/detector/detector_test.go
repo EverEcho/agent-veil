@@ -179,6 +179,27 @@ func TestProviderSecretFamilies(t *testing.T) {
 	}
 }
 
+func TestDomesticCloudAccessKeyFamilies(t *testing.T) {
+	values := map[string]string{
+		"secret.alibaba_access_key":    "LTAI5tExampleKey123456",
+		"secret.tencent_secret_id":     "AKIDabcdefghijklmnopqrstuvwxyz123456",
+		"secret.volcengine_access_key": "AKLTYWViMTVmZGYzM2E0NDI5Mzk2MDZjNjFmMjc2MjRjMzg",
+	}
+	text := "aliyun=" + values["secret.alibaba_access_key"] + " tencent=" + values["secret.tencent_secret_id"] + " volcengine=" + values["secret.volcengine_access_key"]
+	matches := scan(t, NewDefault(), text)
+	if len(matches) != len(values) {
+		t.Fatalf("matches=%+v", matches)
+	}
+	for _, match := range matches {
+		if want := values[match.Finding.Category]; want == "" || match.Value != want || match.Finding.SuggestedAction != domain.ActionRedact {
+			t.Fatalf("unexpected domestic cloud finding: %+v", match)
+		}
+	}
+	if matches := scan(t, NewDefault(), "ordinary LTAIshort AKIDexample AKLTsample identifiers"); len(matches) != 0 {
+		t.Fatalf("short lookalikes matched: %+v", matches)
+	}
+}
+
 func TestStructuredChineseValidators(t *testing.T) {
 	scanner := NewDefault()
 	valid := scan(t, scanner, "id 11010519491231002X uscc 91350211M000100Y46 tel 010-12345678")
