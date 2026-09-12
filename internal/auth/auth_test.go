@@ -91,3 +91,19 @@ func TestSigV4SignsFinalBodyAndPreservesIt(t *testing.T) {
 		t.Fatalf("headers=%v body=%s", request.Header, body)
 	}
 }
+
+func TestAuthenticationRejectsMissingOrOversizedRequests(t *testing.T) {
+	if err := (Applier{}).Apply(nil, domain.AuthStrategy{Type: domain.AuthPassthrough}); err == nil {
+		t.Fatal("nil request was accepted")
+	}
+	request, _ := http.NewRequest(http.MethodPost, "https://bedrock.us-east-1.amazonaws.com/model/invoke", strings.NewReader("123456789"))
+	request.ContentLength = -1
+	signer := AWSSigner{Region: "us-east-1", Service: "bedrock", Credentials: awsCredentials{}, MaxBodyBytes: 8}
+	if err := signer.Apply(request); err == nil || request.Header.Get("Authorization") != "" {
+		t.Fatalf("oversized signing body accepted: headers=%v error=%v", request.Header, err)
+	}
+	empty, _ := http.NewRequest(http.MethodPost, "https://bedrock.us-east-1.amazonaws.com/model/invoke", nil)
+	if err := signer.Apply(empty); err != nil || empty.Header.Get("Authorization") == "" {
+		t.Fatalf("empty signing body rejected: headers=%v error=%v", empty.Header, err)
+	}
+}

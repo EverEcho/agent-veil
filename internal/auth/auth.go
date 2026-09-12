@@ -20,6 +20,12 @@ type Applier struct {
 
 // Apply must be invoked only after the final request body has been installed.
 func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) error {
+	if request == nil || request.URL == nil {
+		return domain.NewError(domain.ErrInvalidContract, "apply auth", "request and URL are required")
+	}
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
 	if strategy.Type != domain.AuthPassthrough {
 		clearProviderCredentials(request)
 	}

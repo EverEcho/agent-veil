@@ -20,19 +20,38 @@ type AWSSigner struct {
 	Region, Service, Source string
 	Credentials             AWSCredentialProvider
 	Now                     func() time.Time
+	MaxBodyBytes            int64
 }
 
+const MaxSigningBodyBytes int64 = 64 << 20
+
 func (s AWSSigner) Apply(request *http.Request) error {
-	if s.Credentials == nil || s.Region == "" || s.Service == "" {
+	if request == nil || request.URL == nil || request.URL.Host == "" || s.Credentials == nil || s.Region == "" || s.Service == "" {
 		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "signer is incomplete")
+	}
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
+	limit := s.MaxBodyBytes
+	if limit == 0 {
+		limit = MaxSigningBodyBytes
+	}
+	if limit < 1 || limit > MaxSigningBodyBytes || request.ContentLength > limit {
+		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "request body exceeds its signing limit")
 	}
 	credentials, err := s.Credentials.ResolveAWS(s.Source)
 	if err != nil || !validCredentialValue(credentials.AccessKey) || !validCredentialValue(credentials.SecretKey) || credentials.SessionToken != "" && !validCredentialValue(credentials.SessionToken) {
 		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "credentials are unavailable")
 	}
-	body, err := io.ReadAll(request.Body)
+	body := []byte(nil)
+	if request.Body != nil {
+		body, err = io.ReadAll(io.LimitReader(request.Body, limit+1))
+	}
 	if err != nil {
 		return err
+	}
+	if int64(len(body)) > limit {
+		return domain.NewError(domain.ErrInvalidContract, "sign SigV4", "request body exceeds its signing limit")
 	}
 	request.Body = io.NopCloser(strings.NewReader(string(body)))
 	request.ContentLength = int64(len(body))
