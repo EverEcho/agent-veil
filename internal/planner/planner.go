@@ -111,8 +111,12 @@ func classify(surface domain.EgressSurface, options Options) (domain.SurfaceCove
 	}
 	routeID := "route-" + sanitizeID(surface.ID)
 	coverage.Status, coverage.Reason, coverage.RouteID = domain.CoverageProtected, "request, response and stream inspection are available", routeID
+	network := options.Network
+	if surface.Network != nil {
+		network = *surface.Network
+	}
 	route := &domain.ProtectedRoute{ID: routeID, SurfaceID: surface.ID, Protocol: surface.Protocol,
-		Upstream: *surface.Upstream, Auth: surface.Auth, Network: options.Network,
+		Upstream: *surface.Upstream, Auth: surface.Auth, Network: network,
 		PolicyID: options.DefaultPolicy, RequiresStream: true}
 	return coverage, route, nil
 }

@@ -35,6 +35,7 @@ type EgressSurface struct {
 	Protocol     Protocol          `json:"protocol"`
 	Upstream     *Upstream         `json:"upstream,omitempty"`
 	Auth         AuthStrategy      `json:"auth"`
+	Network      *NetworkRoute     `json:"network,omitempty"`
 	ConfigSource string            `json:"config_source"`
 	Rewritable   bool              `json:"rewritable"`
 	Required     bool              `json:"required"`

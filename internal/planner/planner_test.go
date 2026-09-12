@@ -107,6 +107,23 @@ func TestBuildCreatesRouteOnlyForFullCapability(t *testing.T) {
 	}
 }
 
+func TestBuildUsesIndependentSurfaceNetworkRoutes(t *testing.T) {
+	direct := domain.NetworkRoute{Type: domain.NetworkDirect}
+	proxyRoute := domain.NetworkRoute{Type: domain.NetworkHTTPProxy, Endpoint: "http://127.0.0.1:8080"}
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"}, Surfaces: []domain.EgressSurface{
+		{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "one.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, Network: &direct, ConfigSource: "fixture", Rewritable: true},
+		{ID: "fallback", Name: "Fallback", Type: domain.SurfaceModelFallback, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "two.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, Network: &proxyRoute, ConfigSource: "fixture", Rewritable: true},
+	}}
+	capabilities := map[domain.Protocol]Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}
+	plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkSystemProxy}, Capabilities: capabilities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Routes) != 2 || plan.Routes[0].Network.Type != domain.NetworkDirect || plan.Routes[1].Network != proxyRoute {
+		t.Fatalf("routes did not preserve per-surface networks: %+v", plan.Routes)
+	}
+}
+
 func TestBuildRejectsInvalidNetworkAndRouteIDCollision(t *testing.T) {
 	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"}, Surfaces: []domain.EgressSurface{
 		{ID: "model/a", Name: "One", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Rewritable: true},

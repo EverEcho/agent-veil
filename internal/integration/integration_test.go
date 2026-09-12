@@ -80,3 +80,17 @@ func TestInspectorPreservesSafeUpstreamBasePath(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectorCopiesSurfaceNetworkRoute(t *testing.T) {
+	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{"agent": {"1.0": {}}}}
+	network := domain.NetworkRoute{Type: domain.NetworkSOCKS5, Endpoint: "socks5://127.0.0.1:1080"}
+	config := Config{AgentID: "a", Kind: "agent", Version: "1.0", ConfigSource: "fixture", Mode: domain.ModeLaunch, Slots: []Slot{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, BaseURL: "https://api.example", Network: &network, Rewritable: true, Required: true}}}
+	manifest, err := inspector.Inspect(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	network.Endpoint = "socks5://127.0.0.1:9999"
+	if manifest.Surfaces[0].Network == nil || manifest.Surfaces[0].Network.Endpoint != "socks5://127.0.0.1:1080" {
+		t.Fatalf("network route was not independently copied: %+v", manifest.Surfaces[0].Network)
+	}
+}

@@ -41,6 +41,11 @@ func (s EgressSurface) Validate() error {
 	if !s.Type.Valid() || !s.Protocol.Valid() {
 		return NewError(ErrInvalidContract, "validate surface", "surface type or protocol is invalid")
 	}
+	if s.Network != nil {
+		if err := s.Network.Validate(); err != nil {
+			return err
+		}
+	}
 	if s.Protocol == ProtocolUnknown || s.Type == SurfaceUnknown {
 		if s.Auth.Type != "" {
 			return s.Auth.Validate()
@@ -48,6 +53,9 @@ func (s EgressSurface) Validate() error {
 		return nil
 	}
 	if s.Protocol == ProtocolLocalStdio {
+		if s.Network != nil {
+			return NewError(ErrInvalidContract, "validate surface", "local stdio cannot bind a network route")
+		}
 		if s.Upstream != nil {
 			return NewError(ErrInvalidContract, "validate surface", "local stdio cannot have a network upstream")
 		}

@@ -88,6 +88,15 @@ func TestNetworkSurfaceRequiresValidAuthAndNetworkRoute(t *testing.T) {
 			t.Fatalf("invalid route accepted: %+v", route)
 		}
 	}
+	invalid := NetworkRoute{Type: NetworkHTTPProxy, Endpoint: "http://user:secret@127.0.0.1:8080"}
+	surface.Network = &invalid
+	if err := surface.Validate(); err == nil {
+		t.Fatal("surface accepted an invalid bound network route")
+	}
+	local := EgressSurface{ID: "local", Name: "Local", Type: SurfaceMCPStdio, Protocol: ProtocolLocalStdio, Auth: AuthStrategy{Type: AuthPassthrough}, Network: &NetworkRoute{Type: NetworkDirect}, ConfigSource: "fixture"}
+	if err := local.Validate(); err == nil {
+		t.Fatal("local stdio accepted a network route")
+	}
 }
 
 func TestPersistedIdentifiersAndCredentialSourcesRejectSensitiveText(t *testing.T) {
