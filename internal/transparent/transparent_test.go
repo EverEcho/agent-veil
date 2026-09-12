@@ -1,9 +1,11 @@
 package transparent
 
 import (
+	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -42,10 +44,79 @@ func TestCALifecycleIsShortLivedAndRemovable(t *testing.T) {
 	if !certificate.IsCA || certificate.NotAfter.Sub(certificate.NotBefore) > 25*time.Hour {
 		t.Fatal("CA is not session-scoped")
 	}
+	keyContent, err := os.ReadFile(ca.KeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode(keyContent)
+	if keyBlock == nil {
+		t.Fatal("CA key is not PEM encoded")
+	}
+	parsedKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey, ok := parsedKey.(*ecdsa.PrivateKey)
+	if !ok || !privateKey.PublicKey.Equal(certificate.PublicKey) {
+		t.Fatal("published CA certificate and private key do not match")
+	}
 	if err := ca.Remove(); err != nil {
 		t.Fatal(err)
 	}
+	if err := ca.Remove(); err != nil {
+		t.Fatalf("idempotent removal failed: %v", err)
+	}
 	if _, err := os.Stat(ca.KeyPath); !os.IsNotExist(err) {
 		t.Fatal("CA key was not removed")
+	}
+}
+
+func TestCACreationPublishesIndependentAtomicDirectories(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "transparent")
+	now := time.Now().UTC()
+	first, err := CreateCA(root, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CreateCA(root, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(first.KeyPath) == filepath.Dir(second.KeyPath) {
+		t.Fatal("CA rotation overwrote the active key pair")
+	}
+	if err := first.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(second.KeyPath); err != nil {
+		t.Fatalf("removing old CA damaged replacement: %v", err)
+	}
+	if err := second.Remove(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCARejectsRelativeAndUnsafeDirectories(t *testing.T) {
+	if _, err := CreateCA("relative-ca", time.Now().UTC()); err == nil {
+		t.Fatal("relative CA directory was accepted")
+	}
+	parent := t.TempDir()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "linked")
+	if err := os.Symlink(target, root); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := CreateCA(root, time.Now().UTC()); err == nil {
+		t.Fatal("symlinked CA directory was accepted")
+	}
+	fileRoot := filepath.Join(parent, "file")
+	if err := os.WriteFile(fileRoot, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateCA(fileRoot, time.Now().UTC()); err == nil {
+		t.Fatal("non-directory CA root was accepted")
 	}
 }
