@@ -146,3 +146,31 @@ func TestRegistrySnapshotsCannotMutateStoredProtectionState(t *testing.T) {
 		t.Fatalf("list result mutated registry: %+v", stored)
 	}
 }
+
+func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
+	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
+	registry := New(options)
+	now := time.Now()
+	registry.now = func() time.Time { return now }
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	entry, err := registry.ReconcileLeased(manifest, time.Minute)
+	if err != nil || entry.ExpiresAt != now.Add(time.Minute) {
+		t.Fatalf("lease registration: entry=%+v err=%v", entry, err)
+	}
+	now = now.Add(30 * time.Second)
+	entry, err = registry.Heartbeat("native", entry.Generation, time.Minute)
+	if err != nil || entry.ExpiresAt != now.Add(time.Minute) || entry.Generation != 1 {
+		t.Fatalf("lease heartbeat: entry=%+v err=%v", entry, err)
+	}
+	if _, err := registry.Heartbeat("native", entry.Generation+1, time.Minute); err == nil {
+		t.Fatal("stale or unknown generation renewed lease")
+	}
+	now = now.Add(time.Minute)
+	entry, ok := registry.Get("native")
+	if !ok || entry.State != StateBlocked || entry.Generation != 2 || entry.ErrorCode != domain.ErrIntegrationExpired || len(entry.Plan.Routes) != 0 || !entry.ExpiresAt.IsZero() {
+		t.Fatalf("expired lease retained active protection: %+v", entry)
+	}
+	if _, err := registry.Heartbeat("native", 1, time.Minute); err == nil {
+		t.Fatal("expired generation renewed lease")
+	}
+}

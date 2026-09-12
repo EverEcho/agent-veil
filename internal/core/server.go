@@ -30,6 +30,7 @@ import (
 
 const maxManagementBody = 64 << 10
 const defaultMaxConcurrentProxyRequests = 64
+const maxIntegrationLeaseSeconds = 3600
 
 type Server struct {
 	manager     *session.Manager
@@ -134,6 +135,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/agents", s.auth(s.listAgents))
 	mux.HandleFunc("GET /v1/agents/{id}", s.auth(s.getAgent))
 	mux.HandleFunc("POST /v1/agents", s.auth(s.registerAgent))
+	mux.HandleFunc("POST /v1/agents/leases", s.auth(s.registerLeasedAgent))
+	mux.HandleFunc("POST /v1/agents/{id}/heartbeat", s.auth(s.heartbeatAgent))
 	mux.HandleFunc("DELETE /v1/agents/{id}", s.auth(s.deleteAgent))
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
@@ -333,6 +336,48 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) registerLeasedAgent(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	var request struct {
+		Manifest   domain.AgentManifest `json:"manifest"`
+		TTLSeconds int64                `json:"ttl_seconds"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds < 1 || request.TTLSeconds > maxIntegrationLeaseSeconds {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_INTEGRATION_LEASE"})
+		return
+	}
+	entry, err := s.registry.ReconcileLeased(request.Manifest, time.Duration(request.TTLSeconds)*time.Second)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, entry)
+		return
+	}
+	writeJSON(w, http.StatusCreated, entry)
+}
+
+func (s *Server) heartbeatAgent(w http.ResponseWriter, r *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	var request struct {
+		Generation uint64 `json:"generation"`
+		TTLSeconds int64  `json:"ttl_seconds"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.Generation == 0 || request.TTLSeconds < 1 || request.TTLSeconds > maxIntegrationLeaseSeconds {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_INTEGRATION_HEARTBEAT"})
+		return
+	}
+	entry, err := s.registry.Heartbeat(r.PathValue("id"), request.Generation, time.Duration(request.TTLSeconds)*time.Second)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
 }
 
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {

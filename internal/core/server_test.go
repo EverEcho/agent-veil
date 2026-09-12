@@ -133,6 +133,39 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 }
 
+func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	payload, _ := json.Marshal(map[string]any{"manifest": manifest, "ttl_seconds": 60})
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/leases", bytes.NewReader(payload))
+	recorder := httptest.NewRecorder()
+	s.registerLeasedAgent(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("registration status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var entry registry.Entry
+	if err := json.Unmarshal(recorder.Body.Bytes(), &entry); err != nil || entry.Generation != 1 || entry.ExpiresAt.IsZero() {
+		t.Fatalf("leased entry=%+v err=%v", entry, err)
+	}
+	heartbeat, _ := json.Marshal(map[string]any{"generation": entry.Generation, "ttl_seconds": 120})
+	request = httptest.NewRequest(http.MethodPost, "/v1/agents/native/heartbeat", bytes.NewReader(heartbeat))
+	request.SetPathValue("id", "native")
+	recorder = httptest.NewRecorder()
+	s.heartbeatAgent(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("heartbeat status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/agents/native/heartbeat", bytes.NewReader([]byte(`{"generation":2,"ttl_seconds":120}`)))
+	request.SetPathValue("id", "native")
+	recorder = httptest.NewRecorder()
+	s.heartbeatAgent(recorder, request)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("stale heartbeat status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
 	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}})

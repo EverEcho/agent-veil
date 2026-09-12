@@ -18,6 +18,7 @@ const (
 	ErrPolicyBlocked        ErrorCode = "POLICY_BLOCKED"
 	ErrInteractionRequired  ErrorCode = "INTERACTION_REQUIRED"
 	ErrCoreAlreadyRunning   ErrorCode = "CORE_ALREADY_RUNNING"
+	ErrIntegrationExpired   ErrorCode = "INTEGRATION_EXPIRED"
 )
 
 type VeilError struct {

@@ -22,6 +22,7 @@ type Entry struct {
 	State      State                 `json:"state"`
 	Generation uint64                `json:"generation"`
 	UpdatedAt  time.Time             `json:"updated_at"`
+	ExpiresAt  time.Time             `json:"expires_at,omitempty"`
 	ErrorCode  domain.ErrorCode      `json:"error_code,omitempty"`
 }
 type Registry struct {
@@ -39,45 +40,81 @@ func New(options planner.Options) *Registry {
 // validate. A failed change marks the agent blocked instead of retaining a stale
 // "protected" claim.
 func (r *Registry) Reconcile(manifest domain.AgentManifest) (Entry, error) {
+	return r.reconcile(manifest, 0)
+}
+
+func (r *Registry) ReconcileLeased(manifest domain.AgentManifest, ttl time.Duration) (Entry, error) {
+	if ttl <= 0 {
+		return Entry{}, domain.NewError(domain.ErrInvalidContract, "reconcile leased integration", "positive lease ttl is required")
+	}
+	return r.reconcile(manifest, ttl)
+}
+
+func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (Entry, error) {
 	plan, err := planner.Build(manifest, r.capabilities)
 	if err != nil && manifest.Agent.ID == "" {
 		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: r.now(), ErrorCode: domain.ErrInvalidContract}, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := r.now()
+	r.expireLocked(now)
 	previous := r.entries[manifest.Agent.ID]
 	generation := previous.Generation + 1
 	if err != nil {
-		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: r.now(), ErrorCode: domain.ErrInvalidContract}
+		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}
 		r.entries[manifest.Agent.ID] = cloneEntry(blocked)
 		return cloneEntry(blocked), err
 	}
 	for _, coverage := range plan.Coverage {
 		if coverage.Status == domain.CoverageUnprotected && required(manifest, coverage.SurfaceID) {
-			blocked := Entry{Manifest: manifest, Plan: plan, State: StateBlocked, Generation: generation, UpdatedAt: r.now(), ErrorCode: domain.ErrPolicyBlocked}
+			blocked := Entry{Manifest: manifest, Plan: plan, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrPolicyBlocked}
 			r.entries[manifest.Agent.ID] = cloneEntry(blocked)
 			return cloneEntry(blocked), domain.NewError(domain.ErrPolicyBlocked, "reconcile integration", "required surface is unprotected")
 		}
 	}
-	entry := Entry{Manifest: manifest, Plan: plan, State: StateActive, Generation: generation, UpdatedAt: r.now()}
+	entry := Entry{Manifest: manifest, Plan: plan, State: StateActive, Generation: generation, UpdatedAt: now}
+	if ttl > 0 {
+		entry.ExpiresAt = now.Add(ttl)
+	}
 	r.entries[manifest.Agent.ID] = cloneEntry(entry)
 	return cloneEntry(entry), nil
 }
 
 func (r *Registry) Get(agentID string) (Entry, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.expireLocked(r.now())
 	entry, ok := r.entries[agentID]
 	return cloneEntry(entry), ok
 }
 func (r *Registry) List() []Entry {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.expireLocked(r.now())
 	values := make([]Entry, 0, len(r.entries))
 	for _, entry := range r.entries {
 		values = append(values, cloneEntry(entry))
 	}
 	return values
+}
+
+func (r *Registry) Heartbeat(agentID string, generation uint64, ttl time.Duration) (Entry, error) {
+	if agentID == "" || generation == 0 || ttl <= 0 {
+		return Entry{}, domain.NewError(domain.ErrInvalidContract, "renew integration lease", "agent id, generation and positive ttl are required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	r.expireLocked(now)
+	entry, ok := r.entries[agentID]
+	if !ok || entry.State != StateActive || entry.ExpiresAt.IsZero() || entry.Generation != generation {
+		return cloneEntry(entry), domain.NewError(domain.ErrUnauthorizedRoute, "renew integration lease", "active lease generation was not found")
+	}
+	entry.ExpiresAt = now.Add(ttl)
+	entry.UpdatedAt = now
+	r.entries[agentID] = entry
+	return cloneEntry(entry), nil
 }
 func (r *Registry) Remove(agentID string) {
 	r.mu.Lock()
@@ -136,6 +173,21 @@ func cloneStrings(source map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+func (r *Registry) expireLocked(now time.Time) {
+	for agentID, entry := range r.entries {
+		if entry.State != StateActive || entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(now) {
+			continue
+		}
+		entry.State = StateBlocked
+		entry.Plan = domain.ProtectionPlan{}
+		entry.Generation++
+		entry.UpdatedAt = now
+		entry.ExpiresAt = time.Time{}
+		entry.ErrorCode = domain.ErrIntegrationExpired
+		r.entries[agentID] = entry
+	}
 }
 func required(manifest domain.AgentManifest, id string) bool {
 	for _, surface := range manifest.Surfaces {
