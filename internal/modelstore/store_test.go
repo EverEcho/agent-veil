@@ -36,6 +36,10 @@ func TestStoreInstallsActivatesAndRollsBackVerifiedModels(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 2 || versions[0].Version != "1.0.0" || versions[1].Version != "1.1.0" {
+		t.Fatalf("verified versions=%+v err=%v", versions, err)
+	}
 	if err := store.Activate("1.1.0"); err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +95,9 @@ func TestStoreRejectsBadSignatureSizeAndTampering(t *testing.T) {
 	if _, _, err := store.Open("valid"); err == nil {
 		t.Fatal("tampered installed model was accepted")
 	}
+	if _, err := store.List(); err == nil {
+		t.Fatal("tampered installed model was omitted from inventory")
+	}
 }
 
 func TestStoreRejectsUnsafeRootsAndVersions(t *testing.T) {
@@ -107,5 +114,10 @@ func TestStoreRejectsUnsafeRootsAndVersions(t *testing.T) {
 	}
 	if _, _, err := store.Open("../escape"); err == nil {
 		t.Fatal("unsafe model version was accepted")
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(store.root, "versions", "linked")); err == nil {
+		if _, err := store.List(); err == nil {
+			t.Fatal("symlinked model version was accepted by inventory")
+		}
 	}
 }

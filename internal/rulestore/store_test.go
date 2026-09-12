@@ -45,6 +45,10 @@ func TestStoreInstallsActivatesAndRollsBackVerifiedRulePacks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	versions, err := store.List()
+	if err != nil || len(versions) != 2 || versions[0].Version != "1.0.0" || versions[1].Version != "1.1.0" {
+		t.Fatalf("verified versions=%+v err=%v", versions, err)
+	}
 	if err := store.Activate("1.1.0"); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +97,9 @@ func TestStoreRejectsBadSignatureInvalidRulesAndTampering(t *testing.T) {
 	if _, _, err := store.Open("valid"); err == nil {
 		t.Fatal("tampered rule pack was accepted")
 	}
+	if _, err := store.List(); err == nil {
+		t.Fatal("tampered rule pack was omitted from inventory")
+	}
 }
 
 func TestStoreRejectsUnsafeRootVersionAndAmbiguousJSON(t *testing.T) {
@@ -113,5 +120,10 @@ func TestStoreRejectsUnsafeRootVersionAndAmbiguousJSON(t *testing.T) {
 	ambiguous := []byte(`{"schema_version":"v1","schema_version":"v1","rules":[]}`)
 	if err := store.Install(signedManifest(t, private, "ambiguous", ambiguous), bytes.NewReader(ambiguous)); err == nil {
 		t.Fatal("ambiguous signed JSON was accepted")
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(store.root, "versions", "linked")); err == nil {
+		if _, err := store.List(); err == nil {
+			t.Fatal("symlinked rule version was accepted by inventory")
+		}
 	}
 }

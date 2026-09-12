@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/agentveil/agentveil/internal/detector"
@@ -21,8 +22,9 @@ import (
 )
 
 const (
-	MaxArtifactBytes int64 = 1 << 20
-	maxManifestBytes int64 = 16 << 10
+	MaxArtifactBytes     int64 = 1 << 20
+	maxManifestBytes     int64 = 16 << 10
+	maxInstalledVersions       = 256
 )
 
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -117,6 +119,9 @@ func (s *Store) Open(version string) (detector.RulePack, Manifest, error) {
 		return detector.RulePack{}, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open rule pack", "rule version is invalid")
 	}
 	directory := filepath.Join(s.root, "versions", version)
+	if err := validateRuleVersionDirectory(directory); err != nil {
+		return detector.RulePack{}, Manifest{}, err
+	}
 	manifestPayload, err := readPrivateFile(filepath.Join(directory, "manifest.json"), maxManifestBytes)
 	if err != nil {
 		return detector.RulePack{}, Manifest{}, err
@@ -140,6 +145,38 @@ func (s *Store) Open(version string) (detector.RulePack, Manifest, error) {
 		return detector.RulePack{}, Manifest{}, err
 	}
 	return pack, manifest, nil
+}
+
+// List returns only versions whose signed manifest and rule payload verify.
+func (s *Store) List() ([]Manifest, error) {
+	directory, err := os.Open(filepath.Join(s.root, "versions"))
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := directory.ReadDir(maxInstalledVersions + 1)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(entries) > maxInstalledVersions {
+		return nil, domain.NewError(domain.ErrInvalidContract, "list rule packs", "installed rule versions exceed their limit")
+	}
+	result := make([]Manifest, 0, len(entries))
+	for _, entry := range entries {
+		if !versionPattern.MatchString(entry.Name()) || !entry.IsDir() {
+			return nil, domain.NewError(domain.ErrInvalidContract, "list rule packs", "rule versions directory contains an invalid entry")
+		}
+		_, manifest, err := s.Open(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, manifest)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
+	return result, nil
 }
 
 func (s *Store) Activate(version string) error {
@@ -269,6 +306,18 @@ func writePrivateAtomic(path string, payload []byte) error {
 		return err
 	}
 	return syncDirectory(filepath.Dir(path))
+}
+
+func validateRuleVersionDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, "open rule version", "rule version directory permissions or type are unsafe")
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "manifest.json" || entries[1].Name() != "rules.json" {
+		return domain.NewError(domain.ErrInvalidContract, "open rule version", "rule version directory contents are invalid")
+	}
+	return nil
 }
 
 func syncDirectory(path string) error {

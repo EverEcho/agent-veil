@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -22,6 +23,7 @@ import (
 const MaxArtifactBytes int64 = 512 << 20
 
 const maxManifestBytes = 16 << 10
+const maxInstalledVersions = 256
 
 var versionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
@@ -128,6 +130,9 @@ func (s *Store) Open(version string) (*os.File, Manifest, error) {
 		return nil, Manifest{}, domain.NewError(domain.ErrInvalidContract, "open model", "model version is invalid")
 	}
 	directory := filepath.Join(s.root, "versions", version)
+	if err := validateVersionDirectory(directory, "model.onnx"); err != nil {
+		return nil, Manifest{}, err
+	}
 	manifestPayload, err := readPrivateFile(filepath.Join(directory, "manifest.json"), maxManifestBytes)
 	if err != nil {
 		return nil, Manifest{}, err
@@ -159,6 +164,41 @@ func (s *Store) Open(version string) (*os.File, Manifest, error) {
 		return nil, Manifest{}, err
 	}
 	return artifact, manifest, nil
+}
+
+// List returns only versions whose signed manifest and artifact both verify.
+func (s *Store) List() ([]Manifest, error) {
+	directory, err := os.Open(filepath.Join(s.root, "versions"))
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := directory.ReadDir(maxInstalledVersions + 1)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(entries) > maxInstalledVersions {
+		return nil, domain.NewError(domain.ErrInvalidContract, "list models", "installed model versions exceed their limit")
+	}
+	result := make([]Manifest, 0, len(entries))
+	for _, entry := range entries {
+		if !versionPattern.MatchString(entry.Name()) || !entry.IsDir() {
+			return nil, domain.NewError(domain.ErrInvalidContract, "list models", "model versions directory contains an invalid entry")
+		}
+		file, manifest, err := s.Open(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
+		result = append(result, manifest)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Version < result[j].Version })
+	return result, nil
 }
 
 func (s *Store) Activate(version string) error {
@@ -246,6 +286,18 @@ func openPrivateRegular(path string) (*os.File, error) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "open model file", "model file changed during validation")
 	}
 	return file, nil
+}
+
+func validateVersionDirectory(path, artifactName string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, "open model version", "model version directory permissions or type are unsafe")
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "manifest.json" || entries[1].Name() != artifactName {
+		return domain.NewError(domain.ErrInvalidContract, "open model version", "model version directory contents are invalid")
+	}
+	return nil
 }
 
 func writePrivateAtomic(path string, payload []byte) error {
