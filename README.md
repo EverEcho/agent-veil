@@ -23,6 +23,8 @@ conservatively than discovered traffic.
 - persistent policy and privacy-safe audit stores with retention;
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
+- atomic Native/Managed registry reconciliation plus revision-aware monitoring
+  that blocks stale protection claims during invalid configuration gaps;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   redirect revalidation, and preserved custom Gateway base paths;
 - version-gated Codex and Claude Code discovery/protected launch, plus

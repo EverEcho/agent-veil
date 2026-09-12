@@ -84,6 +84,24 @@ func (r *Registry) Remove(agentID string) {
 	defer r.mu.Unlock()
 	delete(r.entries, agentID)
 }
+
+// Block invalidates any prior active protection claim while retaining the last
+// known manifest for diagnostics.
+func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {
+	if agentID == "" || code == "" {
+		return Entry{}, domain.NewError(domain.ErrInvalidContract, "block integration", "agent id and error code are required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	previous := r.entries[agentID]
+	manifest := previous.Manifest
+	if manifest.Agent.ID == "" {
+		manifest = domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: agentID, Kind: "managed", Mode: domain.ModeManaged}}
+	}
+	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: previous.Generation + 1, UpdatedAt: r.now(), ErrorCode: code}
+	r.entries[agentID] = entry
+	return entry, domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
+}
 func required(manifest domain.AgentManifest, id string) bool {
 	for _, surface := range manifest.Surfaces {
 		if surface.ID == id {
