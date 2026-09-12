@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"crypto/sha256"
 	"errors"
 	"strings"
 	"testing"
@@ -52,5 +53,37 @@ func TestChunkOverlapFindsBoundaryEntity(t *testing.T) {
 				t.Fatal("cache retained request path")
 			}
 		}
+	}
+}
+
+func TestChunkCacheEvictsOldestEntryAtLimit(t *testing.T) {
+	scanner, err := NewChunkedWithCacheLimit(NewDefault(), 256, 64, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := sha256.Sum256([]byte("first"))
+	second := sha256.Sum256([]byte("second"))
+	third := sha256.Sum256([]byte("third"))
+	scanner.store(first, []domain.Finding{{RuleID: "first"}})
+	scanner.store(second, []domain.Finding{{RuleID: "second"}})
+	scanner.store(third, []domain.Finding{{RuleID: "third"}})
+
+	if len(scanner.cache) != 2 || len(scanner.cacheOrder) != 2 {
+		t.Fatalf("cache grew beyond limit: entries=%d order=%d", len(scanner.cache), len(scanner.cacheOrder))
+	}
+	if _, ok := scanner.cached(first); ok {
+		t.Fatal("oldest cache entry was not evicted")
+	}
+	if _, ok := scanner.cached(second); !ok {
+		t.Fatal("second cache entry was unexpectedly evicted")
+	}
+	if _, ok := scanner.cached(third); !ok {
+		t.Fatal("newest cache entry was unexpectedly evicted")
+	}
+}
+
+func TestChunkCacheRejectsInvalidLimit(t *testing.T) {
+	if _, err := NewChunkedWithCacheLimit(NewDefault(), 256, 64, 0); err == nil {
+		t.Fatal("expected zero cache limit to be rejected")
 	}
 }

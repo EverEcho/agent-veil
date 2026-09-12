@@ -12,13 +12,28 @@ type ChunkedScanner struct {
 	ChunkBytes, OverlapBytes int
 	mu                       sync.RWMutex
 	cache                    map[[32]byte][]domain.Finding
+	cacheOrder               [][32]byte
+	maxCacheEntries          int
 }
 
+const defaultChunkCacheEntries = 1024
+
 func NewChunked(scanner *Scanner, chunkBytes, overlapBytes int) (*ChunkedScanner, error) {
-	if scanner == nil || chunkBytes < 256 || overlapBytes < 32 || overlapBytes >= chunkBytes {
-		return nil, domain.NewError(domain.ErrInvalidContract, "create chunk scanner", "invalid chunk or overlap size")
+	return NewChunkedWithCacheLimit(scanner, chunkBytes, overlapBytes, defaultChunkCacheEntries)
+}
+
+func NewChunkedWithCacheLimit(scanner *Scanner, chunkBytes, overlapBytes, maxCacheEntries int) (*ChunkedScanner, error) {
+	if scanner == nil || chunkBytes < 256 || overlapBytes < 32 || overlapBytes >= chunkBytes || maxCacheEntries < 1 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create chunk scanner", "invalid chunk, overlap, or cache limit")
 	}
-	return &ChunkedScanner{Scanner: scanner, ChunkBytes: chunkBytes, OverlapBytes: overlapBytes, cache: map[[32]byte][]domain.Finding{}}, nil
+	return &ChunkedScanner{
+		Scanner:         scanner,
+		ChunkBytes:      chunkBytes,
+		OverlapBytes:    overlapBytes,
+		cache:           map[[32]byte][]domain.Finding{},
+		cacheOrder:      make([][32]byte, 0, maxCacheEntries),
+		maxCacheEntries: maxCacheEntries,
+	}, nil
 }
 
 func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
@@ -77,5 +92,14 @@ func (s *ChunkedScanner) cached(hash [32]byte) ([]domain.Finding, bool) {
 func (s *ChunkedScanner) store(hash [32]byte, findings []domain.Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.cache[hash]; exists {
+		return
+	}
+	if len(s.cacheOrder) == s.maxCacheEntries {
+		delete(s.cache, s.cacheOrder[0])
+		copy(s.cacheOrder, s.cacheOrder[1:])
+		s.cacheOrder = s.cacheOrder[:len(s.cacheOrder)-1]
+	}
 	s.cache[hash] = append([]domain.Finding(nil), findings...)
+	s.cacheOrder = append(s.cacheOrder, hash)
 }
