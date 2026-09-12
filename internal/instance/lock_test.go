@@ -41,7 +41,7 @@ func TestExclusiveCoreLockReleasesCleanly(t *testing.T) {
 }
 
 func TestOperatingSystemReleasesCoreLockAfterCrash(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "core.lock")
+	path := filepath.Join(t.TempDir(), "agentveil", "core.lock")
 	command := exec.Command(os.Args[0], "-test.run=TestCoreLockCrashHelper")
 	command.Env = append(os.Environ(), "VEIL_LOCK_CRASH_HELPER="+path)
 	stdout, err := command.StdoutPipe()
@@ -106,6 +106,9 @@ func TestCoreLockRejectsRelativeAndSymlinkPaths(t *testing.T) {
 		t.Fatal("relative lock path accepted")
 	}
 	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(directory, "target")
 	if err := os.WriteFile(target, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -120,7 +123,11 @@ func TestCoreLockRejectsRelativeAndSymlinkPaths(t *testing.T) {
 }
 
 func TestCoreLockRejectsUnsafeExistingFiles(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "core.lock")
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "core.lock")
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +142,27 @@ func TestCoreLockRejectsUnsafeExistingFiles(t *testing.T) {
 	}
 	if _, err := Acquire(path); err == nil {
 		t.Fatal("directory lock path was accepted")
+	}
+}
+
+func TestCoreLockRejectsUnsafeDirectories(t *testing.T) {
+	wide := filepath.Join(t.TempDir(), "wide")
+	if err := os.Mkdir(wide, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Acquire(filepath.Join(wide, "core.lock")); err == nil {
+		t.Fatal("world-accessible lock directory was accepted")
+	}
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(target, linked); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+	if _, err := Acquire(filepath.Join(linked, "core.lock")); err == nil {
+		t.Fatal("symlinked lock directory was accepted")
 	}
 }
 

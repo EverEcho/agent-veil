@@ -18,8 +18,8 @@ func Acquire(path string) (*Lock, error) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock path must be absolute")
 	}
 	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return nil, domain.NewError(domain.ErrInvalidContract, "acquire core lock", "lock directory is unavailable")
+	if err := ensurePrivateDirectory(directory, "acquire core lock"); err != nil {
+		return nil, err
 	}
 	if err := createLockFile(path); err != nil {
 		return nil, err

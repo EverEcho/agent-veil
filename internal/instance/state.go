@@ -32,7 +32,7 @@ func WriteState(path string, state State) error {
 	if path == "" || !filepath.IsAbs(path) {
 		return domain.NewError(domain.ErrInvalidContract, "write core state", "state path must be absolute")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := ensurePrivateDirectory(filepath.Dir(path), "write core state"); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(state)
@@ -70,6 +70,9 @@ func WriteState(path string, state State) error {
 func LoadState(path string) (State, error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return State{}, domain.NewError(domain.ErrInvalidContract, "load core state", "state path must be absolute")
+	}
+	if err := validatePrivateDirectory(filepath.Dir(path), "load core state"); err != nil {
+		return State{}, err
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -120,6 +123,11 @@ func RemoveState(path string) error {
 	if path == "" || !filepath.IsAbs(path) {
 		return domain.NewError(domain.ErrInvalidContract, "remove core state", "state path must be absolute")
 	}
+	if err := validatePrivateDirectory(filepath.Dir(path), "remove core state"); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	err := os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -128,6 +136,24 @@ func RemoveState(path string) error {
 		return err
 	}
 	return syncStateDirectory(filepath.Dir(path))
+}
+
+func ensurePrivateDirectory(path, operation string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return domain.NewError(domain.ErrInvalidContract, operation, "private directory is unavailable")
+	}
+	return validatePrivateDirectory(path, operation)
+}
+
+func validatePrivateDirectory(path, operation string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, operation, "directory permissions or type are unsafe")
+	}
+	return nil
 }
 
 func syncStateDirectory(path string) error {
