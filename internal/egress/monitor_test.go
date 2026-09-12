@@ -7,7 +7,7 @@ import (
 )
 
 func TestUnexpectedEgressIsNeverCalledProtected(t *testing.T) {
-	results := Assess([]Connection{{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, ThroughRouteID: "route"}, {ProcessIdentity: identity(2, 20), Host: "unknown.example", Port: 443}}, []Expected{{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}})
+	results := Assess([]Connection{{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, ThroughRouteID: "route"}, {ProcessIdentity: identity(2, 20), Transport: TransportTCP, Host: "unknown.example", Port: 443}}, []Expected{{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}})
 	if results[0].Status != StatusContentProtected || results[0].SurfaceID != "primary" || results[1].Status != StatusObserved || results[1].Risk == nil || results[1].Risk.Code != domain.RiskUnexpectedEgress {
 		t.Fatalf("results=%+v", results)
 	}
@@ -15,10 +15,10 @@ func TestUnexpectedEgressIsNeverCalledProtected(t *testing.T) {
 
 func TestBlockedEgressIsDistinctFromContentProtection(t *testing.T) {
 	connections := []Connection{
-		{ProcessIdentity: identity(1, 10), Host: "API.EXAMPLE.", Port: 443, ThroughRouteID: "route", Blocked: true},
-		{ProcessIdentity: identity(2, 20), Host: "blocked.example", Port: 443, Blocked: true},
+		{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "API.EXAMPLE.", Port: 443, ThroughRouteID: "route", Blocked: true},
+		{ProcessIdentity: identity(2, 20), Transport: TransportTCP, Host: "blocked.example", Port: 443, Blocked: true},
 	}
-	expected := []Expected{{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}}
+	expected := []Expected{{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}}
 	results := Assess(connections, expected)
 	for _, result := range results {
 		if result.Status != StatusBlocked || result.Status == StatusContentProtected || result.Risk == nil {
@@ -28,10 +28,11 @@ func TestBlockedEgressIsDistinctFromContentProtection(t *testing.T) {
 }
 
 func TestIncompleteExpectedRouteCannotClaimContentProtection(t *testing.T) {
-	connection := Connection{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443}
+	connection := Connection{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443}
 	for _, expected := range []Expected{
-		{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, SurfaceID: "primary"},
-		{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, RouteID: "route"},
+		{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, SurfaceID: "primary"},
+		{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, RouteID: "route"},
+		{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"},
 	} {
 		result := Assess([]Connection{connection}, []Expected{expected})[0]
 		if result.Status != StatusObserved || result.Risk == nil {
@@ -41,11 +42,20 @@ func TestIncompleteExpectedRouteCannotClaimContentProtection(t *testing.T) {
 }
 
 func TestReusedProcessIDCannotClaimContentProtection(t *testing.T) {
-	connection := Connection{ProcessIdentity: identity(1, 20), Host: "api.example", Port: 443, ThroughRouteID: "route"}
-	expected := Expected{ProcessIdentity: identity(1, 10), Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}
+	connection := Connection{ProcessIdentity: identity(1, 20), Transport: TransportTCP, Host: "api.example", Port: 443, ThroughRouteID: "route"}
+	expected := Expected{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}
 	result := Assess([]Connection{connection}, []Expected{expected})[0]
 	if result.Status != StatusObserved || result.Risk == nil || result.SurfaceID != "" {
 		t.Fatalf("PID-reused process was trusted: %+v", result)
+	}
+}
+
+func TestDifferentTransportCannotClaimContentProtection(t *testing.T) {
+	connection := Connection{ProcessIdentity: identity(1, 10), Transport: TransportUDP, Host: "api.example", Port: 443, ThroughRouteID: "route"}
+	expected := Expected{ProcessIdentity: identity(1, 10), Transport: TransportTCP, Host: "api.example", Port: 443, RouteID: "route", SurfaceID: "primary"}
+	result := Assess([]Connection{connection}, []Expected{expected})[0]
+	if result.Status != StatusObserved || result.Risk == nil || result.SurfaceID != "" {
+		t.Fatalf("cross-transport egress was trusted: %+v", result)
 	}
 }
 
