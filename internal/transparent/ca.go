@@ -11,11 +11,14 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
+
+const maxStoredCAs = 1024
 
 type CA struct {
 	CertificatePath string
@@ -85,22 +88,83 @@ func CreateCA(directory string, now time.Time) (CA, error) {
 		_ = os.Remove(finalDirectory)
 		return CA{}, err
 	}
-	certificatePath := filepath.Join(finalDirectory, "ca-cert.pem")
-	keyPath := filepath.Join(finalDirectory, "ca-key.pem")
-	directoryInfo, directoryErr := os.Lstat(finalDirectory)
-	certificateInfo, certificateErr := os.Lstat(certificatePath)
-	keyInfo, keyErr := os.Lstat(keyPath)
-	if directoryErr != nil || certificateErr != nil || keyErr != nil {
-		_ = os.Remove(keyPath)
-		_ = os.Remove(certificatePath)
+	created, err := OpenCA(finalDirectory)
+	if err != nil {
+		_ = os.Remove(filepath.Join(finalDirectory, "ca-key.pem"))
+		_ = os.Remove(filepath.Join(finalDirectory, "ca-cert.pem"))
 		_ = os.Remove(finalDirectory)
 		return CA{}, domain.NewError(domain.ErrInvalidContract, "create transparent CA", "published CA identity could not be verified")
 	}
-	return CA{CertificatePath: certificatePath, KeyPath: keyPath, directory: finalDirectory, directoryInfo: directoryInfo, certificateInfo: certificateInfo, keyInfo: keyInfo}, nil
+	return created, nil
+}
+
+// OpenCA reconstructs a removable CA handle after a process restart. It only
+// accepts an exact private CA directory created by AgentVeil.
+func OpenCA(directory string) (CA, error) {
+	if !validCADirectoryPath(directory) {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA directory path is invalid")
+	}
+	directoryInfo, err := os.Lstat(directory)
+	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode().Perm()&0o077 != 0 {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA directory permissions or type are unsafe")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "ca-cert.pem" || entries[1].Name() != "ca-key.pem" {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA directory contents are invalid")
+	}
+	certificatePath := filepath.Join(directory, "ca-cert.pem")
+	keyPath := filepath.Join(directory, "ca-key.pem")
+	certificateInfo, certificateErr := os.Lstat(certificatePath)
+	keyInfo, keyErr := os.Lstat(keyPath)
+	if certificateErr != nil || keyErr != nil || !certificateInfo.Mode().IsRegular() || certificateInfo.Mode().Perm()&0o022 != 0 || !keyInfo.Mode().IsRegular() || keyInfo.Mode().Perm() != 0o600 {
+		return CA{}, domain.NewError(domain.ErrInvalidContract, "open transparent CA", "CA material permissions or type are unsafe")
+	}
+	return CA{CertificatePath: certificatePath, KeyPath: keyPath, directory: directory, directoryInfo: directoryInfo, certificateInfo: certificateInfo, keyInfo: keyInfo}, nil
+}
+
+// LoadCAs returns every recoverable CA beneath a private store root. Matching
+// but malformed entries fail closed so crash cleanup cannot silently skip
+// attacker-replaced material.
+func LoadCAs(root string) ([]CA, error) {
+	if !filepath.IsAbs(root) || strings.ContainsRune(root, 0) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "load transparent CAs", "CA root path is invalid")
+	}
+	rootInfo, err := os.Lstat(root)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode().Perm()&0o077 != 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "load transparent CAs", "CA root permissions or type are unsafe")
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := directory.ReadDir(maxStoredCAs + 1)
+	closeErr := directory.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(entries) > maxStoredCAs {
+		return nil, domain.NewError(domain.ErrInvalidContract, "load transparent CAs", "CA store contains too many entries")
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	result := make([]CA, 0, len(entries))
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "ca-") {
+			continue
+		}
+		ca, err := OpenCA(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, ca)
+	}
+	return result, nil
 }
 
 func (c CA) Remove() error {
-	if c.directory == "" || !filepath.IsAbs(c.directory) || !strings.HasPrefix(filepath.Base(c.directory), "ca-") || c.CertificatePath != filepath.Join(c.directory, "ca-cert.pem") || c.KeyPath != filepath.Join(c.directory, "ca-key.pem") || c.directoryInfo == nil || c.certificateInfo == nil || c.keyInfo == nil {
+	if !validCADirectoryPath(c.directory) || c.CertificatePath != filepath.Join(c.directory, "ca-cert.pem") || c.KeyPath != filepath.Join(c.directory, "ca-key.pem") || c.directoryInfo == nil || c.certificateInfo == nil || c.keyInfo == nil {
 		return domain.NewError(domain.ErrInvalidContract, "remove transparent CA", "CA paths are invalid")
 	}
 	directoryExists, err := sameCAFile(c.directory, c.directoryInfo)
@@ -134,6 +198,10 @@ func (c CA) Remove() error {
 		return nil
 	}
 	return syncCADirectory(parent)
+}
+
+func validCADirectoryPath(directory string) bool {
+	return directory != "" && filepath.IsAbs(directory) && !strings.ContainsRune(directory, 0) && strings.HasPrefix(filepath.Base(directory), "ca-")
 }
 
 func sameCAFile(path string, expected os.FileInfo) (bool, error) {

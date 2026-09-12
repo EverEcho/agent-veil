@@ -188,6 +188,50 @@ func TestCARemovalRejectsReplacedMaterialBeforeDeletingAnything(t *testing.T) {
 	}
 }
 
+func TestLoadCAsRecoversIndependentHandlesAfterRestart(t *testing.T) {
+	root := privateCARoot(t)
+	first, err := CreateCA(root, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CreateCA(root, time.Now().UTC().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadCAs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 || loaded[0].directory == loaded[1].directory {
+		t.Fatalf("recovered CAs=%+v", loaded)
+	}
+	for _, ca := range loaded {
+		if err := ca.Remove(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := first.Remove(); err != nil {
+		t.Fatalf("original first handle was not idempotent after recovery cleanup: %v", err)
+	}
+	if err := second.Remove(); err != nil {
+		t.Fatalf("original second handle was not idempotent after recovery cleanup: %v", err)
+	}
+}
+
+func TestLoadCAsFailsClosedOnMalformedMatchingDirectory(t *testing.T) {
+	root := privateCARoot(t)
+	malformed := filepath.Join(root, "ca-malformed")
+	if err := os.Mkdir(malformed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(malformed, "unexpected"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCAs(root); err == nil {
+		t.Fatal("malformed CA directory was silently skipped")
+	}
+}
+
 func privateCARoot(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "transparent")
