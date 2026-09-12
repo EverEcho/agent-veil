@@ -233,6 +233,22 @@ func TestChineseCivilianLicensePlateValidator(t *testing.T) {
 	}
 }
 
+func TestChineseOrdinaryPassportFormats(t *testing.T) {
+	matches := scan(t, NewDefault(), "old G12345678 electronic E12345678 current EA1234567")
+	if len(matches) != 3 {
+		t.Fatalf("valid ordinary passports were not detected: %+v", matches)
+	}
+	for _, match := range matches {
+		if match.Finding.Category != "pii.cn.passport" || match.Finding.Detector != "structured" || match.Finding.SuggestedAction != domain.ActionRedact {
+			t.Fatalf("passport was not structurally attributed: %+v", match)
+		}
+	}
+	invalid := scan(t, NewDefault(), "E1234567 E123456789 EI1234567 EO1234567 g12345678")
+	if len(invalid) != 0 {
+		t.Fatalf("invalid ordinary passports accepted: %+v", invalid)
+	}
+}
+
 func TestInternationalStructuredPIIValidators(t *testing.T) {
 	scanner := NewDefault()
 	matches := scan(t, scanner, "ssn 123-45-6789 iban GB82WEST12345698765432 ipv6 2001:db8::1 loopback ::1")

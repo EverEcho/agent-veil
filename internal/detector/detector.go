@@ -37,6 +37,7 @@ type Semantic interface {
 var structuredRuleIDs = map[string]struct{}{
 	"pii.cn.id_card":       {},
 	"pii.cn.license_plate": {},
+	"pii.cn.passport":      {},
 	"pii.cn.uscc":          {},
 	"pii.us.ssn":           {},
 	"pii.iban":             {},
@@ -80,6 +81,7 @@ func NewDefault() *Scanner {
 		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},
 		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID, 0},
 		{"pii.cn.license_plate", "pii.cn.license_plate", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`(?:^|[^京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼A-Z0-9])([京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼][A-Z][·•]?[A-Z0-9]{5,6})(?:$|[^A-Z0-9])`), validCNLicensePlate, 1},
+		{"pii.cn.passport", "pii.cn.passport", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:[EG][0-9]{8}|E[A-HJ-NP-Z][0-9]{7})\b`), nil, 0},
 		{"pii.cn.uscc", "pii.cn.uscc", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9ABCDEFGHJKLMNPQRTUWXY]{18}\b`), validUSCC, 0},
 		{"pii.us.ssn", "pii.us.ssn", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b`), validUSSSN, 0},
 		{"pii.iban", "pii.iban", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\b`), validIBAN, 0},
@@ -105,6 +107,7 @@ func NewDefault() *Scanner {
 		"pii.cn.landline":       featureDigit,
 		"pii.cn.id_card":        featureDigit,
 		"pii.cn.license_plate":  featureUpper,
+		"pii.cn.passport":       featureUpper | featureDigit,
 		"pii.us.ssn":            featureDash | featureDigit,
 		"pii.iban":              featureDigit,
 		"pii.bank_card":         featureDigit,
