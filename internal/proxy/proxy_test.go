@@ -95,6 +95,16 @@ func (a *recordingAuditor) Append(event domain.AuditEvent) error {
 	return nil
 }
 
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (r *deadlineRecorder) SetWriteDeadline(deadline time.Time) error {
+	r.deadlines = append(r.deadlines, deadline)
+	return nil
+}
+
 type fixedCredentials map[string]string
 
 func (c fixedCredentials) Resolve(source string) (string, error) { return c[source], nil }
@@ -305,6 +315,27 @@ func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || providerMethod != http.MethodGet || !strings.Contains(recorder.Body.String(), `"value":"safe"`) {
 		t.Fatalf("status=%d method=%q body=%s", recorder.Code, providerMethod, recorder.Body.String())
+	}
+}
+
+func TestStreamingResponseClearsServerWriteDeadline(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"delta\":\"safe\"}\n\n"))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || len(recorder.deadlines) != 1 || !recorder.deadlines[0].IsZero() {
+		t.Fatalf("status=%d deadlines=%v body=%s", recorder.Code, recorder.deadlines, recorder.Body.String())
 	}
 }
 

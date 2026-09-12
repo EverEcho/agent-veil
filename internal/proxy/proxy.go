@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -285,6 +286,10 @@ func joinBasePath(basePath, endpoint string) string {
 }
 
 func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) error {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		fail(w, http.StatusInternalServerError, "STREAM_DEADLINE_FAILURE")
+		return domain.NewError(domain.ErrInvalidContract, "stream response", "cannot clear streaming write deadline")
+	}
 	maxEventBytes := int64(1 << 20)
 	if maxBytes < maxEventBytes {
 		maxEventBytes = maxBytes
