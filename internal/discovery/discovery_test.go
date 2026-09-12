@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/agentveil/agentveil/internal/domain"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,6 +12,7 @@ import (
 type fakeSystem struct {
 	version, config string
 	environment     map[string]string
+	files           map[string]string
 }
 
 type inventorySystem struct {
@@ -33,7 +35,11 @@ func (f inventorySystem) HomeDir() (string, error)        { return "/home/test",
 
 func (f fakeSystem) LookPath(name string) (string, error)            { return "/bin/" + name, nil }
 func (f fakeSystem) Version(context.Context, string) (string, error) { return f.version, nil }
-func (f fakeSystem) ReadFile(string) ([]byte, error) {
+
+func (f fakeSystem) ReadFile(path string) ([]byte, error) {
+	if content, ok := f.files[path]; ok {
+		return []byte(content), nil
+	}
 	if f.config == "" {
 		return nil, errors.New("missing")
 	}
@@ -124,7 +130,7 @@ func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
 }
 
 func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
-	for _, name := range []string{"cursor", "cline"} {
+	for _, name := range []string{"cursor"} {
 		d := Discoverer{System: fakeSystem{version: name + " 9.9.9"}, Verified: map[string]map[string]struct{}{}}
 		manifest, err := d.Inspect(context.Background(), name)
 		if err != nil {
@@ -133,6 +139,31 @@ func TestUnsupportedEditorsExposeExplicitUnknownSurface(t *testing.T) {
 		if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Type != domain.SurfaceUnknown || manifest.Agent.Metadata["compatibility"] != "unverified" {
 			t.Fatalf("%s manifest=%+v", name, manifest)
 		}
+	}
+}
+
+func TestClineDiscoveryCombinesProviderAndMCPStoresConservatively(t *testing.T) {
+	dataDir := "/home/test/.cline/data"
+	d := Discoverer{System: fakeSystem{version: "cline 3.0.21", files: map[string]string{
+		filepath.Join(dataDir, "settings", "providers.json"):          `{"version":1,"providers":{"corp":{"settings":{"provider":"openai","model":"main","baseUrl":"https://models.example/v1","apiKey":"secret-value"}}}}`,
+		filepath.Join(dataDir, "settings", "cline_mcp_settings.json"): `{"mcpServers":{"local":{"command":"server","env":{"TOKEN":"secret-value"}},"remote":{"type":"streamableHttp","url":"https://mcp.example/mcp","headers":{"Authorization":"secret-value"}}}}`,
+	}}, Verified: map[string]map[string]struct{}{"cline": {"3.0.21": {}}}}
+	manifest, err := d.Inspect(context.Background(), "cline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 4 {
+		t.Fatalf("surfaces=%+v", manifest.Surfaces)
+	}
+	counts := map[domain.SurfaceType]int{}
+	for _, surface := range manifest.Surfaces {
+		counts[surface.Type]++
+		if surface.Rewritable || strings.Contains(surface.Name, "secret-value") || strings.Contains(surface.ConfigSource, "secret-value") {
+			t.Fatalf("surface overstated or retained credentials: %+v", surface)
+		}
+	}
+	if counts[domain.SurfaceModelPrimary] != 1 || counts[domain.SurfaceMCPHTTP] != 1 || counts[domain.SurfaceMCPStdio] != 1 || counts[domain.SurfaceUnknown] != 1 {
+		t.Fatalf("surface counts=%+v", counts)
 	}
 }
 

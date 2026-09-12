@@ -182,7 +182,40 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		}
 		config.Observed = append(config.Observed, zedUnknownSlot("dynamic-model-selection", "keychain providers and runtime model selection are not statically resolved"))
 		config.Observed = append(config.Observed, zedUnknownSlot("workspace-config-overrides", "project .zed/settings.json configuration is not resolved"))
-	case "cursor", "cline":
+	case "cline":
+		dataDir := filepath.Join(home, ".cline", "data")
+		if value, ok := d.System.LookupEnv("CLINE_DATA_DIR"); ok && strings.TrimSpace(value) != "" {
+			dataDir = strings.TrimSpace(value)
+		}
+		providerPath := filepath.Join(dataDir, "settings", "providers.json")
+		if value, ok := d.System.LookupEnv("CLINE_PROVIDER_SETTINGS_PATH"); ok && strings.TrimSpace(value) != "" {
+			providerPath = strings.TrimSpace(value)
+		}
+		mcpPath := filepath.Join(dataDir, "settings", "cline_mcp_settings.json")
+		if value, ok := d.System.LookupEnv("CLINE_MCP_SETTINGS_PATH"); ok && strings.TrimSpace(value) != "" {
+			mcpPath = strings.TrimSpace(value)
+		}
+		config.ConfigSource = dataDir
+		if content, readErr := d.System.ReadFile(providerPath); readErr == nil {
+			config.Observed, err = integration.ParseClineProviders(content)
+			if err != nil {
+				return domain.AgentManifest{}, err
+			}
+		} else {
+			config.Observed = append(config.Observed, clineUnknownSlot("provider-configuration", "provider settings could not be inspected"))
+		}
+		if content, readErr := d.System.ReadFile(mcpPath); readErr == nil {
+			mcpSlots, localMCP, parseErr := integration.ParseClineMCP(content)
+			if parseErr != nil {
+				return domain.AgentManifest{}, parseErr
+			}
+			config.Observed = append(config.Observed, mcpSlots...)
+			config.LocalMCP = append(config.LocalMCP, localMCP...)
+		} else {
+			config.Observed = append(config.Observed, clineUnknownSlot("mcp-configuration", "MCP settings could not be inspected"))
+		}
+		config.Observed = append(config.Observed, clineUnknownSlot("host-and-workspace-overrides", "IDE host and project configuration are not resolved"))
+	case "cursor":
 		config.ConfigSource = "unsupported-versioned-config"
 		config.Slots = []integration.Slot{{ID: "unknown-egress", Name: "Unresolved agent egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}
 	default:
@@ -197,6 +230,10 @@ func openCodeUnknownSlot(id, reason string) integration.Slot {
 
 func zedUnknownSlot(id, reason string) integration.Slot {
 	return integration.Slot{ID: id, Name: "Unresolved Zed egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
+}
+
+func clineUnknownSlot(id, reason string) integration.Slot {
+	return integration.Slot{ID: id, Name: "Unresolved Cline egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": reason}}
 }
 
 func containsTOMLKey(content []byte, key string) bool {

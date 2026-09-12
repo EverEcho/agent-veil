@@ -47,6 +47,9 @@ conservatively than discovered traffic.
 - conservative Zed JSONC enumeration of explicit custom model endpoints, local
   and remote MCP servers, and ACP agent processes, while dynamic/keychain and
   project-level routes remain explicit unknown risks;
+- conservative Cline CLI enumeration across its provider and MCP stores,
+  including legacy SSE versus Streamable HTTP, while IDE-host and workspace
+  configuration remain explicit unknown risks;
 - scoped transparent-mode CA and process-egress assessment primitives. These are
   not yet a complete transparent interception product.
 
@@ -72,6 +75,7 @@ go run ./cmd/veil inspect hermes
 go run ./cmd/veil inspect openclaw
 go run ./cmd/veil inspect opencode
 go run ./cmd/veil inspect zed
+go run ./cmd/veil inspect cline
 go run ./cmd/veil run codex -- --help
 ```
 
