@@ -126,6 +126,7 @@ func NewHandlerWithScanner(sessions *session.Manager, routes []Route, client *ht
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	secureResponseHeaders(w.Header())
 	if !security.ValidLocalOrigin(r) {
 		fail(w, http.StatusForbidden, string(domain.ErrInvalidOrigin))
 		return
@@ -329,7 +330,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(responseBody) == 0 {
 		copyHeaders(w.Header(), response.Header)
 		w.Header().Del("Content-Length")
-		w.Header().Set("Cache-Control", "no-store")
+		secureResponseHeaders(w.Header())
 		w.WriteHeader(response.StatusCode)
 		return
 	}
@@ -342,7 +343,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
-	w.Header().Set("Cache-Control", "no-store")
+	secureResponseHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(restored)
 }
@@ -394,7 +395,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 		if !wroteHeader {
 			copyHeaders(w.Header(), response.Header)
 			w.Header().Del("Content-Length")
-			w.Header().Set("Cache-Control", "no-store")
+			secureResponseHeaders(w.Header())
 			w.WriteHeader(response.StatusCode)
 			wroteHeader = true
 		}
@@ -450,7 +451,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 	if !wroteHeader {
 		copyHeaders(w.Header(), response.Header)
 		w.Header().Del("Content-Length")
-		w.Header().Set("Cache-Control", "no-store")
+		secureResponseHeaders(w.Header())
 		w.WriteHeader(response.StatusCode)
 	}
 	return nil
@@ -543,10 +544,17 @@ func isHopHeader(key string) bool {
 	return false
 }
 func fail(w http.ResponseWriter, status int, code string) {
+	secureResponseHeaders(w.Header())
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = io.WriteString(w, `{"error":"`+code+`"}`)
+}
+
+func secureResponseHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Referrer-Policy", "no-referrer")
+	header.Set("Cross-Origin-Resource-Policy", "same-origin")
 }
 func errorCode(err error) string {
 	if veil, ok := err.(*domain.VeilError); ok {

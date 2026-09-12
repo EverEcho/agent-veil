@@ -129,9 +129,24 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "01234567890123456789012345678901") {
 		t.Fatal("dashboard leaked management data")
 	}
+	assertLocalSecurityHeaders(t, recorder.Header())
 	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(recorder.Body.String(), required) {
 			t.Fatalf("dashboard is missing %q", required)
+		}
+	}
+}
+
+func assertLocalSecurityHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	for name, expected := range map[string]string{
+		"Cache-Control":                "no-store",
+		"X-Content-Type-Options":       "nosniff",
+		"Referrer-Policy":              "no-referrer",
+		"Cross-Origin-Resource-Policy": "same-origin",
+	} {
+		if actual := header.Get(name); actual != expected {
+			t.Fatalf("%s=%q, want %q", name, actual, expected)
 		}
 	}
 }

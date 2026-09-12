@@ -234,6 +234,7 @@ func (s *Server) Start() error {
 	mux.Handle("GET /route/", s.proxyHandler())
 	mux.Handle("DELETE /route/", s.proxyHandler())
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secureCoreResponseHeaders(w.Header())
 		if !security.ValidLoopbackAuthority(r.Host) {
 			writeJSON(w, http.StatusMisdirectedRequest, map[string]string{"error": string(domain.ErrInvalidAuthority)})
 			return
@@ -320,6 +321,7 @@ func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="agentveil-diagnostics.json"`)
+	secureCoreResponseHeaders(w.Header())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(payload)
 }
@@ -634,8 +636,8 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	secureCoreResponseHeaders(w.Header())
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'")
-	w.Header().Set("Cache-Control", "no-store")
 	_, _ = io.WriteString(w, dashboardHTML)
 }
 
@@ -1002,10 +1004,17 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	secureCoreResponseHeaders(w.Header())
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func secureCoreResponseHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Referrer-Policy", "no-referrer")
+	header.Set("Cross-Origin-Resource-Policy", "same-origin")
 }
 
 func secureEqual(a, b string) bool {

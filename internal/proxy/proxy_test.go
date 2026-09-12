@@ -280,6 +280,11 @@ func TestExternalOriginIsRejectedBeforeForward(t *testing.T) {
 	if recorder.Code != http.StatusForbidden || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(domain.ErrInvalidOrigin)) {
 		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
 	}
+	for name, expected := range map[string]string{"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin"} {
+		if actual := recorder.Header().Get(name); actual != expected {
+			t.Fatalf("%s=%q, want %q", name, actual, expected)
+		}
+	}
 
 	request = httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
 	request.Host = "127.0.0.1:43123"
