@@ -12,3 +12,17 @@ func TestValidatedPIIAndSecrets(t *testing.T) {
 		t.Fatalf("validators accepted invalid values: %+v", got)
 	}
 }
+
+func TestCaptureGroupPreservesAssignmentContext(t *testing.T) {
+	matches := NewDefault().Scan("/x", "Authorization stays; API_KEY=Abcdef123456!xyz")
+	if len(matches) != 1 || matches[0].Value != "Abcdef123456!xyz" {
+		t.Fatalf("capture=%+v", matches)
+	}
+}
+
+func TestProviderSecretFamilies(t *testing.T) {
+	text := "AKIAABCDEFGHIJKLMNOP xoxb-1234567890-abcdefghijklmnop glpat-abcdefghijklmnopqrst sk_live_abcdefghijklmnopqrst eyJabcdef.abcdefgh.abcdefgh"
+	if matches := NewDefault().Scan("/x", text); len(matches) != 5 {
+		t.Fatalf("matches=%+v", matches)
+	}
+}

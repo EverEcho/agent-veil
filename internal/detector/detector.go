@@ -1,6 +1,8 @@
 package detector
 
 import (
+	"math"
+	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,26 +21,42 @@ type rule struct {
 	action       domain.Action
 	pattern      *regexp.Regexp
 	validate     func(string) bool
+	group        int
 }
 
 type Scanner struct{ rules []rule }
 
 func NewDefault() *Scanner {
 	return &Scanner{rules: []rule{
-		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`), nil},
-		{"secret.github_pat", "secret.github_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`), nil},
-		{"secret.openai_key", "secret.openai_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}\b`), nil},
-		{"pii.email", "pii.email", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`), nil},
-		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil},
-		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID},
-		{"pii.bank_card", "pii.bank_card", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{13,19}\b`), validLuhn},
+		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`), nil, 0},
+		{"secret.github_pat", "secret.github_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`), nil, 0},
+		{"secret.openai_key", "secret.openai_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b`), nil, 0},
+		{"secret.anthropic_key", "secret.anthropic_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`), nil, 0},
+		{"secret.google_key", "secret.google_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bAIza[A-Za-z0-9_-]{30,}\b`), nil, 0},
+		{"secret.aws_access_key", "secret.aws_access_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`), nil, 0},
+		{"secret.slack_token", "secret.slack_token", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{16,}\b`), nil, 0},
+		{"secret.gitlab_pat", "secret.gitlab_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,}\b`), nil, 0},
+		{"secret.stripe_key", "secret.stripe_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b`), nil, 0},
+		{"secret.jwt", "secret.jwt", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), nil, 0},
+		{"secret.database_url", "secret.database_url", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:@/]+:[^\s@/]+@[^\s]+`), nil, 0},
+		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)(?:password|api_key|token)\s*=\s*([^\s;]{8,})`), highEntropy, 1},
+		{"pii.email", "pii.email", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`), nil, 0},
+		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil, 0},
+		{"pii.cn.id_card", "pii.cn.id_card", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b[1-9][0-9]{5}(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]{3}[0-9Xx]\b`), validCNID, 0},
+		{"pii.bank_card", "pii.bank_card", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[0-9]{13,19}\b`), validLuhn, 0},
+		{"pii.ipv4", "pii.ipv4", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`), validIP, 0},
+		{"pii.mac", "pii.mac", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b`), nil, 0},
 	}}
 }
 
 func (s *Scanner) Scan(path, text string) []Match {
 	var matches []Match
 	for _, rule := range s.rules {
-		for _, index := range rule.pattern.FindAllStringIndex(text, -1) {
+		for _, indices := range rule.pattern.FindAllStringSubmatchIndex(text, -1) {
+			index := indices[:2]
+			if rule.group > 0 && rule.group*2+1 < len(indices) {
+				index = indices[rule.group*2 : rule.group*2+2]
+			}
 			value := text[index[0]:index[1]]
 			if rule.validate != nil && !rule.validate(value) {
 				continue
@@ -109,4 +127,23 @@ func validCNID(value string) bool {
 		sum += int(value[i]-'0') * weights[i]
 	}
 	return byte(unicode.ToUpper(rune(value[17]))) == checks[sum%11]
+}
+
+func validIP(value string) bool { return net.ParseIP(value) != nil }
+
+func highEntropy(value string) bool {
+	if len(value) < 12 {
+		return false
+	}
+	counts := map[rune]float64{}
+	runes := []rune(value)
+	for _, r := range runes {
+		counts[r]++
+	}
+	entropy, total := 0.0, float64(len(runes))
+	for _, count := range counts {
+		probability := count / total
+		entropy -= probability * math.Log2(probability)
+	}
+	return entropy >= 3.0
 }
