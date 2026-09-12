@@ -730,6 +730,9 @@ func TestProxyConcurrencyConfigurationRejectsInvalidOrLateChanges(t *testing.T) 
 	if err := s.WithProxyConcurrency(0); err == nil {
 		t.Fatal("zero concurrency limit accepted")
 	}
+	if err := s.WithProxyConcurrency(maxConcurrentProxyRequests + 1); err == nil {
+		t.Fatal("unbounded concurrency limit accepted")
+	}
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}

@@ -36,6 +36,7 @@ import (
 
 const maxManagementBody = 64 << 10
 const defaultMaxConcurrentProxyRequests = 64
+const maxConcurrentProxyRequests = 4096
 const maxIntegrationLeaseSeconds = 3600
 const defaultSessionCleanupInterval = 100 * time.Millisecond
 
@@ -100,8 +101,8 @@ func (s *Server) WithDiscoverer(value interface {
 }
 
 func (s *Server) WithProxyConcurrency(limit int) error {
-	if limit <= 0 {
-		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit must be positive")
+	if limit <= 0 || limit > maxConcurrentProxyRequests {
+		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit must be within its configured bounds")
 	}
 	if s.listener != nil {
 		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit cannot change after the server starts")
