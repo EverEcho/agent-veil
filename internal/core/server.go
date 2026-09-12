@@ -47,6 +47,7 @@ const minAdminTokenBytes = 32
 const maxAdminTokenBytes = 4096
 
 type Server struct {
+	lifecycleMu sync.Mutex
 	manager     *session.Manager
 	adminToken  string
 	listener    net.Listener
@@ -111,6 +112,8 @@ func (s *Server) WithProxyConcurrency(limit int) error {
 	if limit <= 0 || limit > maxConcurrentProxyRequests {
 		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit must be within its configured bounds")
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if s.listener != nil {
 		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit cannot change after the server starts")
 	}
@@ -153,6 +156,8 @@ func (s *Server) WithRuleStore(store *rulestore.Store) error {
 	if store == nil {
 		return domain.NewError(domain.ErrInvalidContract, "configure rules", "rule store is required")
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if s.listener != nil {
 		return domain.NewError(domain.ErrInvalidContract, "configure rules", "rule store cannot change after the server starts")
 	}
@@ -197,6 +202,11 @@ func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error })
 }
 
 func (s *Server) Start() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.listener != nil || s.httpServer != nil {
+		return domain.NewError(domain.ErrInvalidContract, "start Core", "server is already started")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -767,6 +777,8 @@ document.querySelector('#rule-packs').onclick=event=>{const activate=event.targe
 </script></body></html>`
 
 func (s *Server) Endpoint() string {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	if s.listener == nil {
 		return ""
 	}
@@ -774,15 +786,18 @@ func (s *Server) Endpoint() string {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	cleanupCancel, cleanupDone, httpServer := s.cleanupCancel, s.cleanupDone, s.httpServer
+	s.lifecycleMu.Unlock()
 	s.manager.Close()
-	if s.cleanupCancel != nil {
-		s.cleanupCancel()
-		<-s.cleanupDone
+	if cleanupCancel != nil {
+		cleanupCancel()
+		<-cleanupDone
 	}
-	if s.httpServer == nil {
+	if httpServer == nil {
 		return nil
 	}
-	return s.httpServer.Shutdown(ctx)
+	return httpServer.Shutdown(ctx)
 }
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {

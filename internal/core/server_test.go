@@ -190,6 +190,54 @@ func TestManagementAPIRequiresTokenAndUsesLoopback(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestCoreRejectsDuplicateStartWithoutLosingOriginalListener(t *testing.T) {
+	s, err := New(session.NewManager(), "01234567890123456789012345678901")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	endpoint := s.Endpoint()
+	if err := s.Start(); err == nil {
+		t.Fatal("duplicate Core start was accepted")
+	}
+	if s.Endpoint() != endpoint {
+		t.Fatalf("original endpoint changed: got=%q want=%q", s.Endpoint(), endpoint)
+	}
+	request, _ := http.NewRequest(http.MethodGet, endpoint+"/v1/health", nil)
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("original listener unavailable: response=%v error=%v", response, err)
+	}
+	response.Body.Close()
+
+	concurrent, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for index := 0; index < 2; index++ {
+		go func() {
+			<-start
+			results <- concurrent.Start()
+		}()
+	}
+	close(start)
+	succeeded := 0
+	for index := 0; index < 2; index++ {
+		if err := <-results; err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("successful concurrent starts=%d, want 1", succeeded)
+	}
+	if err := concurrent.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagementAuthenticationRejectsAmbiguousOrMalformedCredentials(t *testing.T) {
 	const token = "01234567890123456789012345678901"
 	for name, candidate := range map[string][]string{
