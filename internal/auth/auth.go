@@ -9,14 +9,18 @@ import (
 type Credentials interface {
 	Resolve(source string) (string, error)
 }
-type Applier struct{ Credentials Credentials }
+type Signer interface{ Apply(*http.Request) error }
+type Applier struct {
+	Credentials Credentials
+	Signers     map[domain.AuthType]Signer
+}
 
 // Apply must be invoked only after the final request body has been installed.
 func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) error {
 	switch strategy.Type {
 	case domain.AuthPassthrough:
 		return nil
-	case domain.AuthBearer, domain.AuthAnthropicKey, domain.AuthGoogleKey:
+	case domain.AuthBearer, domain.AuthAnthropicKey, domain.AuthGoogleKey, domain.AuthVertexOAuth:
 		if a.Credentials == nil {
 			return domain.NewError(domain.ErrInvalidContract, "apply auth", "credential resolver is unavailable")
 		}
@@ -25,7 +29,7 @@ func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) erro
 			return domain.NewError(domain.ErrInvalidContract, "apply auth", "credential resolution failed")
 		}
 		switch strategy.Type {
-		case domain.AuthBearer:
+		case domain.AuthBearer, domain.AuthVertexOAuth:
 			request.Header.Set("Authorization", "Bearer "+value)
 		case domain.AuthAnthropicKey:
 			request.Header.Set("X-Api-Key", value)
@@ -35,8 +39,12 @@ func (a Applier) Apply(request *http.Request, strategy domain.AuthStrategy) erro
 			request.URL.RawQuery = query.Encode()
 		}
 		return nil
-	case domain.AuthAWSSigV4, domain.AuthVertexOAuth, domain.AuthCustom:
-		return domain.NewError(domain.ErrInvalidContract, "apply auth", "signing strategy requires a registered provider-specific signer")
+	case domain.AuthAWSSigV4, domain.AuthCustom:
+		signer := a.Signers[strategy.Type]
+		if signer == nil {
+			return domain.NewError(domain.ErrInvalidContract, "apply auth", "signing strategy requires a registered provider-specific signer")
+		}
+		return signer.Apply(request)
 	default:
 		return domain.NewError(domain.ErrInvalidContract, "apply auth", "unknown authentication strategy")
 	}
