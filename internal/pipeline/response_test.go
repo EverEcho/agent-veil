@@ -35,3 +35,13 @@ func TestResponseBlocksNewSecret(t *testing.T) {
 		t.Fatal("new response secret was not blocked")
 	}
 }
+
+func TestResponseProtocolErrorsCannotEchoSensitiveContent(t *testing.T) {
+	for _, protocolType := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable} {
+		vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+		body := []byte(`{"error":{"message":"request contained dev@example.com"}}`)
+		if _, err := ProcessResponse(protocolType, "application/json", body, detector.NewDefault(), vault); err == nil {
+			t.Fatalf("protocol %s returned a sensitive error payload", protocolType)
+		}
+	}
+}

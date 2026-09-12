@@ -24,6 +24,7 @@ func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "body contains trailing data")
 	}
 	document := &Document{Protocol: protocol, root: root}
+	extractProtocolError(document, root)
 	switch protocol {
 	case domain.ProtocolOpenAIChat:
 		extractChatResponse(document)
@@ -62,6 +63,7 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "event data contains trailing JSON")
 	}
 	document := &Document{Protocol: protocol, root: root}
+	extractProtocolError(document, root)
 	switch protocol {
 	case domain.ProtocolOpenAIChat:
 		extractChatResponse(document)
@@ -91,6 +93,16 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+func extractProtocolError(document *Document, root any) {
+	object, ok := root.(map[string]any)
+	if !ok {
+		return
+	}
+	if value, exists := object["error"]; exists {
+		extractValue(document, value, []any{"error"}, 0)
+	}
 }
 
 func extractChatResponse(d *Document) {

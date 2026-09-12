@@ -89,6 +89,16 @@ func TestSSEProtocolMatrixBlocksNewCredentials(t *testing.T) {
 	}
 }
 
+func TestSSEProtocolErrorsCannotEchoSensitiveContent(t *testing.T) {
+	body := []byte("data: {\"error\":{\"message\":\"request contained dev@example.com\"}}\n\n")
+	for _, protocolType := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable} {
+		vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+		if _, err := ProcessSSE(protocolType, body, detector.NewDefault(), vault); err == nil {
+			t.Fatalf("protocol %s returned a sensitive stream error payload", protocolType)
+		}
+	}
+}
+
 func TestSSEPlaceholderCrossesEventsWithoutTouchingSignature(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	placeholder, _ := vault.Store("email", "dev@example.com")
