@@ -194,6 +194,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if _, ok := uniqueHeaderValue(r.Header, "Content-Type"); !ok {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+		return
+	}
+	if _, ok := uniqueHeaderValue(r.Header, "Content-Encoding"); !ok {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnsupportedEncoding
+		fail(w, http.StatusForbidden, string(domain.ErrUnsupportedEncoding))
+		return
+	}
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
@@ -286,13 +298,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
-	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
+	responseEncoding, uniqueEncoding := uniqueHeaderValue(response.Header, "Content-Encoding")
+	if !uniqueEncoding || strings.TrimSpace(responseEncoding) != "" && !strings.EqualFold(responseEncoding, "identity") {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedEncoding
 		fail(w, http.StatusBadGateway, string(domain.ErrUnsupportedEncoding))
 		return
 	}
-	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+	responseContentType, uniqueContentType := uniqueHeaderValue(response.Header, "Content-Type")
+	if !uniqueContentType {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(responseContentType), "text/event-stream") {
 		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
 			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = errorCodeValue(err)
@@ -313,7 +333,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(response.StatusCode)
 		return
 	}
-	restored, err := pipeline.ProcessResponse(processed.Protocol, response.Header.Get("Content-Type"), responseBody, h.scanner, vault)
+	restored, err := pipeline.ProcessResponse(processed.Protocol, responseContentType, responseBody, h.scanner, vault)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
@@ -503,6 +523,18 @@ func copyHeaders(destination, source http.Header) {
 		}
 	}
 }
+
+func uniqueHeaderValue(header http.Header, name string) (string, bool) {
+	values := header.Values(name)
+	if len(values) > 1 {
+		return "", false
+	}
+	if len(values) == 0 {
+		return "", true
+	}
+	return values[0], true
+}
+
 func isHopHeader(key string) bool {
 	switch http.CanonicalHeaderKey(key) {
 	case "Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade":

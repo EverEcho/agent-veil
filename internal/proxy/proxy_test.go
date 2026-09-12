@@ -332,6 +332,37 @@ func TestMalformedProtocolEnvelopeFailsBeforeUpstream(t *testing.T) {
 	}
 }
 
+func TestAmbiguousRequestRepresentationHeadersFailBeforeUpstream(t *testing.T) {
+	for _, test := range []struct {
+		name, header, first, second string
+		code                        domain.ErrorCode
+	}{
+		{name: "content type", header: "Content-Type", first: "application/json", second: "text/plain", code: domain.ErrUnknownProtocol},
+		{name: "content encoding", header: "Content-Encoding", first: "identity", second: "gzip", code: domain.ErrUnsupportedEncoding},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			providerCalls := 0
+			provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(test.header, test.first)
+			request.Header.Add(test.header, test.second)
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusForbidden || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(test.code)) {
+				t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestUnsupportedMethodFailsBeforeUpstream(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
@@ -747,6 +778,38 @@ func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testi
 			}
 			if len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedEncoding || auditor.events[0].Action != domain.ActionBlock {
 				t.Fatalf("audit=%+v", auditor.events)
+			}
+		})
+	}
+}
+
+func TestAmbiguousProviderRepresentationHeadersFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		name, header, first, second string
+		code                        domain.ErrorCode
+	}{
+		{name: "content type", header: "Content-Type", first: "application/json", second: "text/event-stream", code: domain.ErrUnknownProtocol},
+		{name: "content encoding", header: "Content-Encoding", first: "identity", second: "br", code: domain.ErrUnsupportedEncoding},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(test.header, test.first)
+				w.Header().Add(test.header, test.second)
+				_, _ = w.Write([]byte(`{"output_text":"provider-secret"}`))
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), string(test.code)) || strings.Contains(recorder.Body.String(), "provider-secret") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}
 		})
 	}
