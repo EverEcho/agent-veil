@@ -2,6 +2,7 @@ package stream
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -39,6 +40,9 @@ func (g *Guard) Push(text string) (string, error) {
 	}
 	if open := strings.LastIndex(g.pending[:cut], "[[VEIL_"); open >= 0 && !strings.Contains(g.pending[open:cut], "]]") {
 		cut = open
+	}
+	for cut > 0 && cut < len(g.pending) && !utf8.RuneStart(g.pending[cut]) {
+		cut--
 	}
 	output, err := g.vault.Restore(g.pending[:cut])
 	if err != nil {
