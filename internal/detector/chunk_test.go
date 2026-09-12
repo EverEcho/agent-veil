@@ -65,6 +65,26 @@ func TestChunkOverlapFindsBoundaryEntity(t *testing.T) {
 	}
 }
 
+func TestStableChunkEndPrefersNewlineThenWhitespace(t *testing.T) {
+	text := strings.Repeat("a", 210) + "\n" + strings.Repeat("b", 20) + " " + strings.Repeat("c", 100)
+	if end := stableChunkEnd(text, 0, 256, 64); end != 211 {
+		t.Fatalf("newline end=%d", end)
+	}
+
+	text = strings.Repeat("a", 220) + "\u3000" + strings.Repeat("b", 100)
+	want := 220 + len("\u3000")
+	if end := stableChunkEnd(text, 0, 256, 64); end != want {
+		t.Fatalf("unicode whitespace end=%d want=%d", end, want)
+	}
+}
+
+func TestStableChunkEndFallsBackToUTF8Boundary(t *testing.T) {
+	text := strings.Repeat("a", 255) + "界" + strings.Repeat("b", 100)
+	if end := stableChunkEnd(text, 0, 256, 64); end != 255 {
+		t.Fatalf("hard end split a UTF-8 rune: %d", end)
+	}
+}
+
 func TestChunkCacheEvictsOldestEntryAtLimit(t *testing.T) {
 	scanner, err := NewChunkedWithCacheLimit(NewDefault(), 256, 64, 2)
 	if err != nil {

@@ -3,6 +3,8 @@ package detector
 import (
 	"crypto/sha256"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
@@ -39,17 +41,7 @@ func NewChunkedWithCacheLimit(scanner *Scanner, chunkBytes, overlapBytes, maxCac
 func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
 	var all []Match
 	for start := 0; start < len(text); {
-		end := start + s.ChunkBytes
-		if end > len(text) {
-			end = len(text)
-		} else {
-			for end > start && end < len(text) && (text[end]&0xc0) == 0x80 {
-				end--
-			}
-			if end == start {
-				end = start + s.ChunkBytes
-			}
-		}
+		end := stableChunkEnd(text, start, s.ChunkBytes, s.OverlapBytes)
 		chunk := text[start:end]
 		hash := chunkCacheKey(path, chunk)
 		findings, ok := s.cached(hash)
@@ -81,6 +73,43 @@ func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
 		}
 	}
 	return Merge(all), nil
+}
+
+func stableChunkEnd(text string, start, chunkBytes, overlapBytes int) int {
+	hardEnd := start + chunkBytes
+	if hardEnd >= len(text) {
+		return len(text)
+	}
+	for hardEnd > start && !utf8.RuneStart(text[hardEnd]) {
+		hardEnd--
+	}
+	if hardEnd <= start+overlapBytes {
+		return hardEnd
+	}
+
+	searchStart := hardEnd - overlapBytes
+	for searchStart > start && !utf8.RuneStart(text[searchStart]) {
+		searchStart--
+	}
+	lastNewline, lastSpace := 0, 0
+	for offset, r := range text[searchStart:hardEnd] {
+		end := searchStart + offset + utf8.RuneLen(r)
+		if end <= start+overlapBytes {
+			continue
+		}
+		if r == '\n' || r == '\r' {
+			lastNewline = end
+		} else if unicode.IsSpace(r) {
+			lastSpace = end
+		}
+	}
+	if lastNewline != 0 {
+		return lastNewline
+	}
+	if lastSpace != 0 {
+		return lastSpace
+	}
+	return hardEnd
 }
 
 func (s *ChunkedScanner) ScanChecked(path, text string) ([]Match, error) {
