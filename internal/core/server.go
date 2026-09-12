@@ -27,6 +27,7 @@ import (
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/security"
 	"github.com/agentveil/agentveil/internal/session"
 )
@@ -46,6 +47,7 @@ type Server struct {
 	policy      policy.Engine
 	policyMu    sync.RWMutex
 	policyStore *policy.Store
+	ruleStore   *rulestore.Store
 	auditor     interface {
 		Append(domain.AuditEvent) error
 	}
@@ -134,6 +136,34 @@ func (s *Server) WithPolicyStore(store *policy.Store) error {
 	s.policyStore = store
 	s.policy = engine
 	s.policyMu.Unlock()
+	return nil
+}
+
+func (s *Server) WithRuleStore(store *rulestore.Store) error {
+	if store == nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure rules", "rule store is required")
+	}
+	if s.listener != nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure rules", "rule store cannot change after the server starts")
+	}
+	pack, _, err := store.OpenActive()
+	if errors.Is(err, os.ErrNotExist) {
+		s.ruleStore = store
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	base, err := detector.NewDefaultWithRulePack(pack)
+	if err != nil {
+		return err
+	}
+	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
+	if err != nil {
+		return err
+	}
+	s.ruleStore = store
+	s.scanner = scanner
 	return nil
 }
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
@@ -281,7 +311,7 @@ func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_DETECTION_TEST"})
 		return
 	}
-	matches, err := detector.NewDefault().ScanChecked("/test-input", request.Text)
+	matches, err := s.scanner.ScanChecked("/test-input", request.Text)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DETECTOR_FAILURE"})
 		return

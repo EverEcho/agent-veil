@@ -3,6 +3,11 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,11 +21,13 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/audit"
+	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
 )
 
@@ -432,6 +439,39 @@ func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
 	s.auth(s.testDetection)(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field status=%d", recorder.Code)
+	}
+}
+
+func TestRuleStoreActivePackConfiguresCoreDataPlane(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := rulestore.New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(detector.RulePack{SchemaVersion: "v1", Rules: []detector.RuleDefinition{{ID: "custom.ticket", Category: "internal.ticket", Severity: domain.SeverityHigh, SuggestedAction: domain.ActionRedact, Pattern: `TICKET-[0-9]{6}`}}})
+	sum := sha256.Sum256(payload)
+	manifest := rulestore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, rulestore.SigningPayload(manifest)))
+	if err := store.Install(manifest, bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithRuleStore(store); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"reference TICKET-123456"}`))
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.auth(s.testDetection)(recorder, request)
+	var findings []domain.Finding
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &findings) != nil || len(findings) != 1 || findings[0].Detector != "rule_pack" {
+		t.Fatalf("status=%d findings=%+v body=%s", recorder.Code, findings, recorder.Body.String())
 	}
 }
 
