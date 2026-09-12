@@ -126,6 +126,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/approvals", s.auth(s.listApprovals))
 	mux.HandleFunc("POST /v1/approvals/{id}", s.auth(s.resolveApproval))
 	mux.HandleFunc("GET /v1/audit", s.auth(s.listAudit))
+	mux.HandleFunc("GET /v1/call-tree", s.auth(s.getCallTree))
 	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
 	mux.HandleFunc("PUT /v1/policy", s.auth(s.updatePolicy))
 	mux.HandleFunc("GET /v1/compatibility", s.auth(s.getCompatibility))
@@ -163,6 +164,40 @@ func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request) {
 }
 func (s *Server) getCompatibility(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, compatibility.Current())
+}
+
+func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
+	if s.registry == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
+		return
+	}
+	owners := map[string]registry.CallSurface{}
+	for _, entry := range s.registry.List() {
+		if entry.State != registry.StateActive {
+			continue
+		}
+		for _, route := range entry.Plan.Routes {
+			owners[route.ID] = registry.CallSurface{RouteID: route.ID, AgentID: entry.Manifest.Agent.ID, SurfaceID: route.SurfaceID, Coverage: domain.CoverageProtected}
+		}
+	}
+	nodes := make([]registry.CallNode, 0)
+	for _, activeSession := range s.manager.List() {
+		node := registry.CallNode{SessionID: activeSession.ID, ParentSessionID: activeSession.ParentSessionID}
+		for _, routeID := range activeSession.RouteIDs {
+			owner, ok := owners[routeID]
+			if !ok {
+				owner = registry.CallSurface{RouteID: routeID, Coverage: domain.CoverageUnprotected}
+			}
+			node.Surfaces = append(node.Surfaces, owner)
+		}
+		nodes = append(nodes, node)
+	}
+	tree, err := registry.CallTree(nodes)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CALL_TREE_INVALID"})
+		return
+	}
+	writeJSON(w, http.StatusOK, tree)
 }
 func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request) {
 	var document policy.Document

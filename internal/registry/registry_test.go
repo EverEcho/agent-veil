@@ -27,14 +27,14 @@ func TestConfigChangeBlocksRequiredProtectionGap(t *testing.T) {
 }
 
 func TestNestedCallTree(t *testing.T) {
-	tree, err := CallTree([]CallNode{{SessionID: "parent", AgentID: "openclaw", SurfaceID: "acp"}, {SessionID: "child", ParentSessionID: "parent", AgentID: "codex", SurfaceID: "primary"}})
-	if err != nil || len(tree["parent"]) != 1 || tree["parent"][0].AgentID != "codex" {
+	tree, err := CallTree([]CallNode{{SessionID: "parent", Surfaces: []CallSurface{{RouteID: "route-acp", AgentID: "openclaw", SurfaceID: "acp", Coverage: domain.CoverageProtected}}}, {SessionID: "child", ParentSessionID: "parent", Surfaces: []CallSurface{{RouteID: "route-primary", AgentID: "codex", SurfaceID: "primary", Coverage: domain.CoverageProtected}}}})
+	if err != nil || len(tree["parent"]) != 1 || tree["parent"][0].Surfaces[0].AgentID != "codex" {
 		t.Fatalf("tree=%+v err=%v", tree, err)
 	}
 }
 
 func TestNestedCallTreeRejectsCycles(t *testing.T) {
-	_, err := CallTree([]CallNode{{SessionID: "a", ParentSessionID: "b", AgentID: "one"}, {SessionID: "b", ParentSessionID: "a", AgentID: "two"}})
+	_, err := CallTree([]CallNode{{SessionID: "a", ParentSessionID: "b", Surfaces: []CallSurface{{RouteID: "a", Coverage: domain.CoverageUnprotected}}}, {SessionID: "b", ParentSessionID: "a", Surfaces: []CallSurface{{RouteID: "b", Coverage: domain.CoverageUnprotected}}}})
 	if err == nil {
 		t.Fatal("cyclic session ancestry was accepted")
 	}

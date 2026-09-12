@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -92,15 +93,31 @@ func required(manifest domain.AgentManifest, id string) bool {
 	return false
 }
 
-type CallNode struct{ SessionID, ParentSessionID, AgentID, SurfaceID string }
+type CallSurface struct {
+	RouteID   string                `json:"route_id"`
+	AgentID   string                `json:"agent_id,omitempty"`
+	SurfaceID string                `json:"surface_id,omitempty"`
+	Coverage  domain.CoverageStatus `json:"coverage"`
+}
+
+type CallNode struct {
+	SessionID       string        `json:"session_id"`
+	ParentSessionID string        `json:"parent_session_id,omitempty"`
+	Surfaces        []CallSurface `json:"surfaces"`
+}
 
 func CallTree(nodes []CallNode) (map[string][]CallNode, error) {
 	known := map[string]struct{}{}
 	parents := map[string]string{}
 	result := map[string][]CallNode{}
 	for _, node := range nodes {
-		if node.SessionID == "" || node.AgentID == "" {
-			return nil, domain.NewError(domain.ErrInvalidContract, "build call tree", "session and agent ids are required")
+		if node.SessionID == "" || len(node.Surfaces) == 0 {
+			return nil, domain.NewError(domain.ErrInvalidContract, "build call tree", "session and surfaces are required")
+		}
+		for _, surface := range node.Surfaces {
+			if surface.RouteID == "" || !surface.Coverage.Valid() {
+				return nil, domain.NewError(domain.ErrInvalidContract, "build call tree", "call surface is invalid")
+			}
 		}
 		if _, ok := known[node.SessionID]; ok {
 			return nil, domain.NewError(domain.ErrInvalidContract, "build call tree", "duplicate session id")
@@ -138,6 +155,9 @@ func CallTree(nodes []CallNode) (map[string][]CallNode, error) {
 		if err := visit(id); err != nil {
 			return nil, err
 		}
+	}
+	for parentID := range result {
+		sort.Slice(result[parentID], func(i, j int) bool { return result[parentID][i].SessionID < result[parentID][j].SessionID })
 	}
 	return result, nil
 }

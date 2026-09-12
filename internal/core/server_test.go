@@ -102,6 +102,51 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	}
 }
 
+func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	_, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	parent, err := manager.Create("", "http://127.0.0.1:1", []string{"route-primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := manager.Create(parent.Session.ID, "http://127.0.0.1:1", []string{"route-primary"}, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(manager, "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	load := func() map[string][]registry.CallNode {
+		request := httptest.NewRequest(http.MethodGet, "/v1/call-tree", nil)
+		request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+		recorder := httptest.NewRecorder()
+		s.auth(s.getCallTree)(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var tree map[string][]registry.CallNode
+		if err := json.Unmarshal(recorder.Body.Bytes(), &tree); err != nil {
+			t.Fatal(err)
+		}
+		return tree
+	}
+	tree := load()
+	if len(tree[""]) != 1 || tree[""][0].SessionID != parent.Session.ID || len(tree[parent.Session.ID]) != 1 || tree[parent.Session.ID][0].SessionID != child.Session.ID {
+		t.Fatalf("tree=%+v", tree)
+	}
+	if got := tree[""][0].Surfaces[0]; got.AgentID != "native-agent" || got.SurfaceID != "primary" || got.Coverage != domain.CoverageProtected {
+		t.Fatalf("root surface=%+v", got)
+	}
+	reg.Remove("native-agent")
+	tree = load()
+	if got := tree[""][0].Surfaces[0]; got.AgentID != "" || got.SurfaceID != "" || got.Coverage != domain.CoverageUnprotected {
+		t.Fatalf("removed route retained protected claim: %+v", got)
+	}
+}
+
 func TestPolicyAPIAtomicallyUpdatesAndPersistsEngine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.json")
 	store, _ := policy.NewStore(path)
