@@ -157,6 +157,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = route.Auditor.Append(auditEvent)
 	}()
 	if !routeAllowsMethod(route.Protocol, r.Method) {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
 		w.Header().Set("Allow", allowedMethods(route.Protocol))
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
@@ -164,6 +165,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := readLimited(r.Body, route.MaxRequestBytes)
 	if err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = "REQUEST_TOO_LARGE"
 		fail(w, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE")
 		return
@@ -173,6 +175,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authorization.Secret[i] = 0
 	}
 	if err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = "VAULT_FAILURE"
 		fail(w, http.StatusInternalServerError, "VAULT_FAILURE")
 		return
@@ -185,6 +188,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	processed := pipeline.Result{Body: body, Protocol: route.Protocol, Vault: vault}
 	if r.Method != http.MethodPost {
 		if len(body) != 0 {
+			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = domain.ErrUnknownProtocol
 			fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
 			return
@@ -194,6 +198,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
@@ -224,6 +229,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		authStrategy.Type = domain.AuthPassthrough
 	}
 	if err := route.AuthApplier.Apply(upstreamRequest, authStrategy); err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return
@@ -241,18 +247,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedEncoding
 		fail(w, http.StatusBadGateway, string(domain.ErrUnsupportedEncoding))
 		return
 	}
 	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
+			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = errorCodeValue(err)
 		}
 		return
 	}
 	responseBody, err := readLimited(response.Body, route.MaxResponseBytes)
 	if err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = "RESPONSE_TOO_LARGE"
 		fail(w, http.StatusBadGateway, "RESPONSE_TOO_LARGE")
 		return
@@ -266,6 +275,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	restored, err := pipeline.ProcessResponse(processed.Protocol, response.Header.Get("Content-Type"), responseBody, h.scanner, vault)
 	if err != nil {
+		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
 		return

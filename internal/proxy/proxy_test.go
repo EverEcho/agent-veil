@@ -595,7 +595,7 @@ func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testi
 			if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), string(domain.ErrUnsupportedEncoding)) || strings.Contains(recorder.Body.String(), "compressed-secret-shaped-bytes") {
 				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}
-			if len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedEncoding {
+			if len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedEncoding || auditor.events[0].Action != domain.ActionBlock {
 				t.Fatalf("audit=%+v", auditor.events)
 			}
 		})
@@ -635,7 +635,8 @@ func TestUnknownProviderResponseEnvelopeFailsClosed(t *testing.T) {
 	upstream, _ := url.Parse(provider.URL)
 	manager := session.NewManager()
 	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
-	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(HeaderSession, created.Session.ID)
@@ -644,6 +645,31 @@ func TestUnknownProviderResponseEnvelopeFailsClosed(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || strings.Contains(recorder.Body.String(), "dev@example.com") {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrUnknownProtocol {
+		t.Fatalf("audit=%+v", auditor.events)
+	}
+}
+
+func TestCredentialShapedProviderResponseIsAuditedAsBlocked(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrPolicyBlocked || strings.Contains(recorder.Body.String(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		t.Fatalf("status=%d audit=%+v body=%s", recorder.Code, auditor.events, recorder.Body.String())
 	}
 }
 
