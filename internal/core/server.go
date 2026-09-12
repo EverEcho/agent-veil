@@ -54,6 +54,7 @@ type Server struct {
 	policyMu    sync.RWMutex
 	policyStore *policy.Store
 	ruleStore   *rulestore.Store
+	scannerMu   sync.RWMutex
 	auditor     interface {
 		Append(domain.AuditEvent) error
 	}
@@ -169,7 +170,9 @@ func (s *Server) WithRuleStore(store *rulestore.Store) error {
 		return err
 	}
 	s.ruleStore = store
+	s.scannerMu.Lock()
 	s.scanner = scanner
+	s.scannerMu.Unlock()
 	return nil
 }
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
@@ -219,6 +222,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/discovery", s.auth(s.getDiscovery))
 	mux.HandleFunc("GET /v1/discovery/{id}", s.auth(s.getInspection))
 	mux.HandleFunc("POST /v1/detect", s.auth(s.testDetection))
+	mux.HandleFunc("GET /v1/rules", s.auth(s.listRulePacks))
+	mux.HandleFunc("PUT /v1/rules/active", s.auth(s.activateRulePack))
+	mux.HandleFunc("DELETE /v1/rules/active", s.auth(s.deactivateRulePack))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -297,12 +303,13 @@ func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {
 			events = events[len(events)-500:]
 		}
 	}
-	report, err := diagnostic.Build(s.scanner, time.Now().UTC(), status, len(s.manager.List()), agents, events)
+	scanner := s.currentScanner()
+	report, err := diagnostic.Build(scanner, time.Now().UTC(), status, len(s.manager.List()), agents, events)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DIAGNOSTIC_SANITIZE_FAILED"})
 		return
 	}
-	payload, err := diagnostic.Marshal(s.scanner, report)
+	payload, err := diagnostic.Marshal(scanner, report)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DIAGNOSTIC_SECONDARY_SCAN_FAILED"})
 		return
@@ -413,7 +420,7 @@ func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_DETECTION_TEST"})
 		return
 	}
-	matches, err := s.scanner.ScanChecked("/test-input", request.Text)
+	matches, err := s.currentScanner().ScanChecked("/test-input", request.Text)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DETECTOR_FAILURE"})
 		return
@@ -423,6 +430,94 @@ func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
 		findings[index] = matches[index].Finding
 	}
 	writeJSON(w, http.StatusOK, findings)
+}
+
+type rulePackInventory struct {
+	Active   string               `json:"active,omitempty"`
+	Versions []rulestore.Manifest `json:"versions"`
+}
+
+func (s *Server) listRulePacks(w http.ResponseWriter, _ *http.Request) {
+	if s.ruleStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
+		return
+	}
+	s.scannerMu.RLock()
+	defer s.scannerMu.RUnlock()
+	versions, err := s.ruleStore.List()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "RULE_INVENTORY_FAILED"})
+		return
+	}
+	inventory := rulePackInventory{Versions: versions}
+	_, active, err := s.ruleStore.OpenActive()
+	if err == nil {
+		inventory.Active = active.Version
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ACTIVE_RULE_INVALID"})
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) activateRulePack(w http.ResponseWriter, r *http.Request) {
+	if s.ruleStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
+		return
+	}
+	var request struct {
+		Version string `json:"version"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.Version == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_RULE_VERSION"})
+		return
+	}
+	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	pack, _, err := s.ruleStore.Open(request.Version)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_ACTIVATION_FAILED"})
+		return
+	}
+	base, err := detector.NewDefaultWithRulePack(pack)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_ACTIVATION_FAILED"})
+		return
+	}
+	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
+	if err != nil || s.ruleStore.Activate(request.Version) != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_ACTIVATION_FAILED"})
+		return
+	}
+	s.scanner = scanner
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deactivateRulePack(w http.ResponseWriter, _ *http.Request) {
+	if s.ruleStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
+		return
+	}
+	base := detector.NewDefault()
+	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "RULE_DEACTIVATION_FAILED"})
+		return
+	}
+	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	if err := s.ruleStore.Deactivate(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "RULE_DEACTIVATION_FAILED"})
+		return
+	}
+	s.scanner = scanner
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) currentScanner() detector.ContentScanner {
+	s.scannerMu.RLock()
+	defer s.scannerMu.RUnlock()
+	return s.scanner
 }
 
 func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
@@ -805,7 +900,7 @@ func (s *Server) proxyHandler() http.Handler {
 		if selectedAgentKind == "claude" && selected.Auth.Type == domain.AuthAnthropicKey {
 			capabilityHeader = "X-Api-Key"
 		}
-		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.scanner)
+		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

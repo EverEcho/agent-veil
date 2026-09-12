@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -566,6 +567,60 @@ func TestRuleStoreActivePackConfiguresCoreDataPlane(t *testing.T) {
 	var findings []domain.Finding
 	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &findings) != nil || len(findings) != 1 || findings[0].Detector != "rule_pack" {
 		t.Fatalf("status=%d findings=%+v body=%s", recorder.Code, findings, recorder.Body.String())
+	}
+}
+
+func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := rulestore.New(filepath.Join(t.TempDir(), "rules"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(detector.RulePack{SchemaVersion: "v1", Rules: []detector.RuleDefinition{{ID: "custom.ticket", Category: "internal.ticket", Severity: domain.SeverityHigh, SuggestedAction: domain.ActionRedact, Pattern: `TICKET-[0-9]{6}`}}})
+	sum := sha256.Sum256(payload)
+	manifest := rulestore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, rulestore.SigningPayload(manifest)))
+	if err := store.Install(manifest, bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithRuleStore(store); err != nil {
+		t.Fatal(err)
+	}
+
+	inventoryRecorder := httptest.NewRecorder()
+	s.listRulePacks(inventoryRecorder, httptest.NewRequest(http.MethodGet, "/v1/rules", nil))
+	var inventory rulePackInventory
+	if inventoryRecorder.Code != http.StatusOK || json.Unmarshal(inventoryRecorder.Body.Bytes(), &inventory) != nil || inventory.Active != "" || len(inventory.Versions) != 1 {
+		t.Fatalf("inventory status=%d value=%+v body=%s", inventoryRecorder.Code, inventory, inventoryRecorder.Body.String())
+	}
+
+	activate := httptest.NewRequest(http.MethodPut, "/v1/rules/active", strings.NewReader(`{"version":"1.0.0"}`))
+	activate.Header.Set("Content-Type", "application/json")
+	activateRecorder := httptest.NewRecorder()
+	s.activateRulePack(activateRecorder, activate)
+	if activateRecorder.Code != http.StatusNoContent {
+		t.Fatalf("activation status=%d body=%s", activateRecorder.Code, activateRecorder.Body.String())
+	}
+	findings, err := s.currentScanner().ScanChecked("/input", "reference TICKET-123456")
+	if err != nil || len(findings) != 1 || findings[0].Finding.Detector != "rule_pack" {
+		t.Fatalf("active findings=%+v error=%v", findings, err)
+	}
+
+	deactivateRecorder := httptest.NewRecorder()
+	s.deactivateRulePack(deactivateRecorder, httptest.NewRequest(http.MethodDelete, "/v1/rules/active", nil))
+	if deactivateRecorder.Code != http.StatusNoContent {
+		t.Fatalf("deactivation status=%d body=%s", deactivateRecorder.Code, deactivateRecorder.Body.String())
+	}
+	findings, err = s.currentScanner().ScanChecked("/input", "reference TICKET-123456")
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("built-in findings=%+v error=%v", findings, err)
+	}
+	if _, _, err := store.OpenActive(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rule store remained active: %v", err)
 	}
 }
 

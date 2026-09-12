@@ -21,7 +21,9 @@ conservatively than discovered traffic.
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
 - persistent policy and privacy-safe audit stores with retention, plus signed,
-  versioned rule-pack and semantic-model artifact stores with rollback;
+  versioned rule-pack and semantic-model artifact stores with rollback; verified
+  rule packs can be listed, activated, and deactivated through the authenticated
+  management API without exposing a partially switched data plane;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
   coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
 - an authenticated, bounded diagnostics export that omits routes and paths,
