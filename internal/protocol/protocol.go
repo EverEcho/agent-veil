@@ -122,9 +122,39 @@ func validRequestEnvelope(protocolType domain.Protocol, root any) bool {
 		_, ok = object["contents"].([]any)
 		return ok
 	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
-		version, versionOK := object["jsonrpc"].(string)
-		method, methodOK := object["method"].(string)
-		return versionOK && version == "2.0" && methodOK && strings.TrimSpace(method) != ""
+		return validMCPRequestEnvelope(object)
+	default:
+		return false
+	}
+}
+
+func validMCPRequestEnvelope(object map[string]any) bool {
+	version, versionOK := object["jsonrpc"].(string)
+	method, methodOK := object["method"].(string)
+	if !versionOK || version != "2.0" || !methodOK || strings.TrimSpace(method) == "" {
+		return false
+	}
+	if _, hasResult := object["result"]; hasResult {
+		return false
+	}
+	if _, hasError := object["error"]; hasError {
+		return false
+	}
+	if params, exists := object["params"]; exists {
+		if _, ok := params.(map[string]any); !ok {
+			return false
+		}
+	}
+	if id, exists := object["id"]; exists && !validMCPID(id) {
+		return false
+	}
+	return true
+}
+
+func validMCPID(value any) bool {
+	switch value.(type) {
+	case string, json.Number:
+		return true
 	default:
 		return false
 	}

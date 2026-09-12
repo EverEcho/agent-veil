@@ -681,7 +681,7 @@ func TestCoreRoutesMCPStreamableLifecycleMethods(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"value\":\"safe\"}}\n\n"))
 	}))
 	defer provider.Close()
 	parsed, _ := url.Parse(provider.URL)

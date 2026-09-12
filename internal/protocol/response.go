@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
@@ -63,6 +64,9 @@ func validResponseEnvelope(protocolType domain.Protocol, root any) bool {
 	if !ok {
 		return false
 	}
+	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable {
+		return validMCPResponseEnvelope(object)
+	}
 	if _, hasError := object["error"]; hasError {
 		return true
 	}
@@ -80,11 +84,6 @@ func validResponseEnvelope(protocolType domain.Protocol, root any) bool {
 	case domain.ProtocolGemini:
 		_, ok = object["candidates"].([]any)
 		return ok
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
-		version, versionOK := object["jsonrpc"].(string)
-		_, hasResult := object["result"]
-		method, hasMethod := object["method"].(string)
-		return versionOK && version == "2.0" && (hasResult || hasMethod && strings.TrimSpace(method) != "")
 	default:
 		return false
 	}
@@ -145,6 +144,9 @@ func validStreamEnvelope(protocolType domain.Protocol, root any) bool {
 	if !ok {
 		return false
 	}
+	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable {
+		return validMCPResponseEnvelope(object) || validMCPRequestEnvelope(object)
+	}
 	if _, hasError := object["error"]; hasError {
 		return true
 	}
@@ -158,14 +160,37 @@ func validStreamEnvelope(protocolType domain.Protocol, root any) bool {
 	case domain.ProtocolGemini:
 		_, ok = object["candidates"].([]any)
 		return ok
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
-		version, versionOK := object["jsonrpc"].(string)
-		_, hasResult := object["result"]
-		method, hasMethod := object["method"].(string)
-		return versionOK && version == "2.0" && (hasResult || hasMethod && strings.TrimSpace(method) != "")
 	default:
 		return false
 	}
+}
+
+func validMCPResponseEnvelope(object map[string]any) bool {
+	version, versionOK := object["jsonrpc"].(string)
+	id, hasID := object["id"]
+	if !versionOK || version != "2.0" || !hasID || !validMCPID(id) {
+		return false
+	}
+	result, hasResult := object["result"]
+	errorValue, hasError := object["error"]
+	if hasResult == hasError {
+		return false
+	}
+	if hasResult {
+		_, ok := result.(map[string]any)
+		return ok
+	}
+	errorObject, ok := errorValue.(map[string]any)
+	if !ok {
+		return false
+	}
+	code, codeOK := errorObject["code"].(json.Number)
+	_, messageOK := errorObject["message"].(string)
+	if !codeOK || !messageOK {
+		return false
+	}
+	_, err := strconv.ParseInt(code.String(), 10, 64)
+	return err == nil
 }
 
 func extractProtocolError(document *Document, root any) {

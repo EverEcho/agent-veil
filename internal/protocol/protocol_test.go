@@ -77,10 +77,45 @@ func TestMalformedProtocolEnvelopesFailClosed(t *testing.T) {
 		{"/v1beta/models/gemini-2.5-pro:generateContent", `{"contents":"unknown"}`},
 		{"/mcp", `{"jsonrpc":"2.0","params":{}}`},
 		{"/mcp", `[{"jsonrpc":"2.0","method":"tools/list"}]`},
+		{"/mcp", `{"jsonrpc":"1.0","method":"tools/call","params":{}}`},
+		{"/mcp", `{"jsonrpc":"2.0","method":"tools/call","params":[],"id":1}`},
+		{"/mcp", `{"jsonrpc":"2.0","method":"tools/call","result":{},"id":1}`},
+		{"/mcp", `{"jsonrpc":"2.0","method":"tools/call","id":null}`},
 	} {
 		if _, err := Parse(test.endpoint, "application/json", "", []byte(test.body)); err == nil {
 			t.Fatalf("%s accepted malformed envelope %s", test.endpoint, test.body)
 		}
+	}
+}
+
+func TestMCPResponseAndStreamEnvelopesAreRoleSafe(t *testing.T) {
+	invalidResponses := []string{
+		`{"jsonrpc":"1.0","id":1,"result":{}}`,
+		`{"jsonrpc":"2.0","result":{}}`,
+		`{"jsonrpc":"2.0","id":1,"result":{},"error":{"code":-1,"message":"bad"}}`,
+		`{"jsonrpc":"2.0","id":1,"result":[]}`,
+		`{"jsonrpc":"2.0","id":1,"error":"bad"}`,
+		`{"jsonrpc":"2.0","id":1,"error":{"code":-1.5,"message":"bad"}}`,
+	}
+	for _, body := range invalidResponses {
+		if _, err := ParseResponse(domain.ProtocolMCPStreamable, "application/json", []byte(body)); err == nil {
+			t.Fatalf("invalid MCP response accepted: %s", body)
+		}
+		if _, err := ParseStreamEvent(domain.ProtocolMCPStreamable, []byte(body)); err == nil {
+			t.Fatalf("invalid MCP stream message accepted: %s", body)
+		}
+	}
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"safe"}]}}`,
+		`{"jsonrpc":"2.0","id":"request-1","error":{"code":-32602,"message":"bad input","data":{"detail":"safe"}}}`,
+	} {
+		if _, err := ParseResponse(domain.ProtocolMCPStreamable, "application/json", []byte(body)); err != nil {
+			t.Fatalf("valid MCP response rejected: %s: %v", body, err)
+		}
+	}
+	request := []byte(`{"jsonrpc":"2.0","method":"sampling/createMessage","params":{"messages":[]}}`)
+	if _, err := ParseStreamEvent(domain.ProtocolMCPStreamable, request); err != nil {
+		t.Fatalf("valid server request stream message rejected: %v", err)
 	}
 }
 

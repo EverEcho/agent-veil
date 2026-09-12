@@ -357,7 +357,7 @@ func TestMCPStreamableGETPassesThroughResponseDLP(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerMethod = r.Method
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"value\":\"safe\"}}\n\n"))
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -381,7 +381,7 @@ func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(30 * time.Millisecond)
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"result\":{\"value\":\"safe\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"value\":\"safe\"}}\n\n"))
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
