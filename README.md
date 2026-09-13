@@ -56,6 +56,10 @@ conservatively than discovered traffic.
   with hard deadlines for version commands and inherited output pipes, plus a
   fixed concurrency ceiling for deterministic discovery; temporary Hermes homes
   reject linked, writable, or identity-changing source directories;
+- pinned CI actions with race and static analysis, six-target Linux/macOS/Windows
+  cross-builds, byte-for-byte reproducible Linux release-build verification,
+  reachable-vulnerability and dependency review gates, and SPDX JSON SBOM
+  generation;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
@@ -159,4 +163,5 @@ go vet ./...
 
 The repository is still under active development. Native/managed integrations,
 complete desktop UX, production transparent MITM and OS enforcement, local
-semantic-model distribution, and release/supply-chain hardening remain open.
+semantic-model distribution, signed installers, release attestation, and the
+formal release process remain open.
