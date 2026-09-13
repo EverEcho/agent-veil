@@ -116,8 +116,9 @@ type RouteCredential struct {
 }
 
 type ChildSession struct {
-	Session ProtectionSession `json:"session"`
-	Routes  []RouteCredential `json:"routes"`
+	Session  ProtectionSession `json:"session"`
+	Routes   []RouteCredential `json:"routes"`
+	Protocol Protocol          `json:"protocol"`
 }
 
 type LeaseOptions struct {
@@ -237,7 +238,7 @@ func (c *RouteClient) CreateChild(ctx context.Context, ttl time.Duration) (Child
 	}
 	path := "/v1/sessions/" + url.PathEscape(c.sessionID) + "/routes/" + url.PathEscape(c.routeID) + "/children"
 	var result ChildSession
-	err := doJSONRequest(ctx, c.http, c.endpoint, http.MethodPost, path, map[string]any{"ttl_seconds": int64(ttl / time.Second)}, http.StatusCreated, &result, func(header http.Header) {
+	err := doJSONRequest(ctx, c.http, c.endpoint, http.MethodPost, path, map[string]any{"max_ttl_seconds": int64(ttl / time.Second)}, http.StatusCreated, &result, func(header http.Header) {
 		header.Set("X-Veil-Session", c.sessionID)
 		header.Set("X-Veil-Route-Token", c.token)
 	})

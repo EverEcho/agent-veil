@@ -1217,24 +1217,39 @@ func (s *Server) createChildSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, ok := s.manager.AuthorizeRoute(parentID, routeID, tokenValues[0])
-	if !ok || !s.routeExists(routeID) {
+	protectedRoute, routeActive := s.activeRoute(routeID)
+	if !ok || !routeActive {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
 		return
 	}
 	var request struct {
-		TTLSeconds int64 `json:"ttl_seconds"`
+		TTLSeconds    int64 `json:"ttl_seconds"`
+		MaxTTLSeconds int64 `json:"max_ttl_seconds"`
 	}
-	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds <= 0 || request.TTLSeconds > int64(session.DefaultMaxTTL/time.Second) {
+	if err := decodeManagement(r, &request); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_CHILD_SESSION"})
 		return
 	}
-	ttl := time.Duration(request.TTLSeconds) * time.Second
-	created, err := s.manager.CreateWithOptions(parentID, s.Endpoint(), []string{routeID}, ttl, session.CreateOptions{Interactive: false})
+	exactTTL, boundedTTL := request.TTLSeconds > 0, request.MaxTTLSeconds > 0
+	if exactTTL == boundedTTL || request.TTLSeconds < 0 || request.MaxTTLSeconds < 0 || request.TTLSeconds > int64(session.DefaultMaxTTL/time.Second) || request.MaxTTLSeconds > int64(session.DefaultMaxTTL/time.Second) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_CHILD_SESSION"})
+		return
+	}
+	var created session.Created
+	var err error
+	if boundedTTL {
+		created, err = s.manager.CreateChildWithin(parentID, s.Endpoint(), []string{routeID}, time.Duration(request.MaxTTLSeconds)*time.Second)
+	} else {
+		created, err = s.manager.CreateWithOptions(parentID, s.Endpoint(), []string{routeID}, time.Duration(request.TTLSeconds)*time.Second, session.CreateOptions{Interactive: false})
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_CHILD_SESSION"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, created)
+	writeJSON(w, http.StatusCreated, struct {
+		session.Created
+		Protocol domain.Protocol `json:"protocol"`
+	}{Created: created, Protocol: protectedRoute.Protocol})
 }
 
 func (s *Server) deleteChildSession(w http.ResponseWriter, r *http.Request) {
@@ -1251,8 +1266,13 @@ func (s *Server) deleteChildSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) routeExists(routeID string) bool {
+	_, ok := s.activeRoute(routeID)
+	return ok
+}
+
+func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, bool) {
 	if s.registry == nil {
-		return false
+		return domain.ProtectedRoute{}, false
 	}
 	for _, entry := range s.registry.List() {
 		if entry.State != registry.StateActive {
@@ -1260,11 +1280,11 @@ func (s *Server) routeExists(routeID string) bool {
 		}
 		for _, route := range entry.Plan.Routes {
 			if route.ID == routeID {
-				return true
+				return route, true
 			}
 		}
 	}
-	return false
+	return domain.ProtectedRoute{}, false
 }
 
 func (s *Server) proxyHandler() http.Handler {

@@ -259,6 +259,27 @@ func TestChildSessionRequiresLiveParentAndCannotOutliveIt(t *testing.T) {
 	}
 }
 
+func TestBoundedChildSessionAtomicallyInheritsParentExpiry(t *testing.T) {
+	m := NewManager()
+	now := time.Now()
+	m.now = func() time.Time { return now }
+	parent, err := m.Create("", "local", []string{"primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(20 * time.Second)
+	child, err := m.CreateChildWithin(parent.Session.ID, "local", []string{"primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !child.Session.ExpiresAt.Equal(parent.Session.ExpiresAt) || child.Session.Interactive {
+		t.Fatalf("bounded child did not inherit the parent expiry: parent=%v child=%+v", parent.Session.ExpiresAt, child.Session)
+	}
+	if _, err := m.CreateChildWithin("", "local", []string{"primary"}, time.Second); err == nil {
+		t.Fatal("bounded child creation accepted an empty parent")
+	}
+}
+
 func TestExpiredAuthorizationImmediatelyRemovesSession(t *testing.T) {
 	m := NewManager()
 	now := time.Now()

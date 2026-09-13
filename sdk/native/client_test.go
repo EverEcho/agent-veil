@@ -72,9 +72,12 @@ func TestRouteClientCreatesScopedChildSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := client.CreateChild(context.Background(), 30*time.Second)
-	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
-		t.Fatalf("child=%+v err=%v", child, err)
+	child, err := client.CreateChild(context.Background(), time.Hour)
+	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || child.Protocol != domain.ProtocolOpenAIChat || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
+		t.Fatalf("parent=%+v child=%+v err=%v", parent, child, err)
+	}
+	if !child.Session.ExpiresAt.Equal(parent.Session.ExpiresAt) {
+		t.Fatalf("bounded child expiry=%s parent expiry=%s delta=%s", child.Session.ExpiresAt, parent.Session.ExpiresAt, child.Session.ExpiresAt.Sub(parent.Session.ExpiresAt))
 	}
 	childClient, err := NewRouteClient(server.Endpoint(), child.Session.ID, child.Routes[0].RouteID, child.Routes[0].Token, nil)
 	if err != nil {

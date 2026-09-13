@@ -90,6 +90,19 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 }
 
 func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string, ttl time.Duration, options CreateOptions) (Created, error) {
+	return m.create(parentID, endpoint, routeIDs, ttl, options, false)
+}
+
+// CreateChildWithin creates a non-interactive child whose requested TTL is an
+// upper bound. The expiry is atomically clamped to its parent's expiry.
+func (m *Manager) CreateChildWithin(parentID, endpoint string, routeIDs []string, maxTTL time.Duration) (Created, error) {
+	if parentID == "" {
+		return Created{}, domain.NewError(domain.ErrInvalidContract, "create bounded child session", "parent session is required")
+	}
+	return m.create(parentID, endpoint, routeIDs, maxTTL, CreateOptions{}, true)
+}
+
+func (m *Manager) create(parentID, endpoint string, routeIDs []string, ttl time.Duration, options CreateOptions, clampToParent bool) (Created, error) {
 	if ttl <= 0 || ttl > m.limits.MaxTTL || len(routeIDs) == 0 || len(routeIDs) > m.limits.MaxRoutes {
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "ttl and route count must be within configured limits")
 	}
@@ -107,6 +120,7 @@ func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string
 		seen[routeID] = struct{}{}
 	}
 	now := m.now()
+	expiresAt := now.Add(ttl)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, entry := range m.sessions {
@@ -125,8 +139,11 @@ func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string
 			}
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "parent session is missing or expired")
 		}
-		if now.Add(ttl).After(parent.session.ExpiresAt) {
-			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
+		if expiresAt.After(parent.session.ExpiresAt) {
+			if !clampToParent {
+				return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
+			}
+			expiresAt = parent.session.ExpiresAt
 		}
 		if endpoint != parent.session.CoreEndpoint {
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session must use its parent's Core endpoint")
@@ -172,7 +189,7 @@ func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string
 	for index := range managedRoutes {
 		routes[index] = RouteCredential{RouteID: managedRoutes[index].routeID, Token: string(managedRoutes[index].token)}
 	}
-	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
+	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, expiresAt, routeIDs, secret)
 	s.Interactive = options.Interactive
 	wipeBytes(secret)
 	sessionContext, cancel := context.WithCancel(context.Background())

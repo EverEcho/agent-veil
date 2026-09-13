@@ -54,7 +54,9 @@ conservatively than discovered traffic.
   authenticated parent Route, cannot outlive its parent or enable interaction,
   shares the existing Core, is revoked by parent-session deletion, and can
   explicitly self-revoke on normal nested-process exit without gaining the
-  authority to delete a root or multi-Route Session;
+  authority to delete a root or multi-Route Session. Native callers receive the
+  authenticated Route protocol and may request a maximum TTL that Core
+  atomically narrows to the parent's remaining lifetime;
 - manager-level nested Session inheritance that prevents every child creation
   path, including the management API, from switching Core endpoints or adding
   Routes that its parent does not own;
