@@ -224,6 +224,8 @@ go run ./cmd/veil models install ./signed-model-manifest.json ./model.bin
 go run ./cmd/veil models activate 1.0.0
 go run ./cmd/veil models deactivate
 go run ./cmd/veil models remove 1.0.0
+go run ./cmd/veil policy get
+go run ./cmd/veil policy apply ./policy.json
 go run ./cmd/veil rules list
 go run ./cmd/veil rules install ./signed-manifest.json ./rules.json
 go run ./cmd/veil rules activate 1.0.0
@@ -253,6 +255,9 @@ JSON, and leaves signature verification and atomic activation to Core.
 Model commands use the same local management boundary. Model installation streams
 the bounded regular artifact from disk, checks its size against the strict signed
 manifest, and leaves signature and digest verification to Core.
+Policy commands retrieve or atomically apply the same document used by the
+Dashboard. Apply rejects symlinks, oversized or ambiguous JSON, unknown fields,
+invalid actions, malformed scopes, and duplicate scopes before contacting Core.
 
 `veil nested` is intended for a process already launched inside an AgentVeil
 Route context. It uses only the inherited `VEIL_CORE_ENDPOINT`,

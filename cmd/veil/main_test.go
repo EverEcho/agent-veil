@@ -22,6 +22,7 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/modelstore"
+	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
@@ -748,6 +749,66 @@ func TestModelsCommandRejectsUnsafeInputs(t *testing.T) {
 	}
 	if err := executeModelsCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", []string{"install", manifestPath, artifactPath}); err == nil || !strings.Contains(err.Error(), "size does not match") {
 		t.Fatalf("mismatched model size error=%v", err)
+	}
+}
+
+func TestPolicyCommandGetsAndAppliesValidatedDocuments(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	document := policy.Document{SchemaVersion: "v1", Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{FindingType: "secret.private_key"}, Action: domain.ActionBlock}}}
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		methods = append(methods, request.Method)
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		if request.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(document); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		var applied policy.Document
+		if request.Header.Get("Content-Type") != "application/json" || json.NewDecoder(request.Body).Decode(&applied) != nil || applied.SchemaVersion != "v1" || len(applied.Rules) != 1 {
+			t.Fatalf("applied policy=%+v", applied)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "policy.json")
+	payload, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := executePolicyCommand(context.Background(), &output, server.URL, token, []string{"get"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := executePolicyCommand(context.Background(), io.Discard, server.URL, token, []string{"apply", path}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"default": "redact"`) || !slices.Equal(methods, []string{http.MethodGet, http.MethodPut}) {
+		t.Fatalf("output=%s methods=%v", output.String(), methods)
+	}
+}
+
+func TestPolicyCommandRejectsInvalidDocumentsBeforeUpload(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "policy.json")
+	payload := []byte(`{"schema_version":"v1","default":"REDACT","rules":[{"scope":{"finding_type":"secret.private_key"},"action":"BLOCK"},{"scope":{"finding_type":"secret.private_key"},"action":"ALLOW"}]}`)
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := executePolicyCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", []string{"apply", path}); err == nil || !strings.Contains(err.Error(), "validate policy document") {
+		t.Fatalf("duplicate policy scopes error=%v", err)
+	}
+	if err := executePolicyCommand(context.Background(), io.Discard, "https://example.com", "token", []string{"get"}); err == nil {
+		t.Fatal("non-loopback policy endpoint was accepted")
 	}
 }
 

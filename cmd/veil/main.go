@@ -52,6 +52,7 @@ const maxHermesLaunchConfigBytes = 1 << 20
 const nestedSessionMaxTTL = 24 * time.Hour
 const maxModelManifestPayloadBytes = 6 << 10
 const modelManagementTimeout = 16 * time.Minute
+const maxPolicyDocumentBytes = 1 << 20
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -70,7 +71,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|models|nested|rules|run|serve|status>")
+		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
@@ -97,6 +98,8 @@ func run(args []string) error {
 		return rulesCommand(args[1:], os.Stdout)
 	case "models":
 		return modelsCommand(args[1:], os.Stdout)
+	case "policy":
+		return policyCommand(args[1:], os.Stdout)
 	case "discover":
 		if len(args) != 1 {
 			return errors.New("usage: veil discover")
@@ -1121,6 +1124,63 @@ func modelsCommand(args []string, writer io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), modelManagementTimeout)
 	defer cancel()
 	return executeModelsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func policyCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return executePolicyCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executePolicyCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "run policy command", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	usage := errors.New("usage: veil policy <get|apply FILE>")
+	if len(args) == 0 {
+		return usage
+	}
+	switch args[0] {
+	case "get":
+		if len(args) != 1 {
+			return usage
+		}
+		var document policy.Document
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/policy", token, nil, &document); err != nil {
+			return err
+		}
+		if _, err := document.Engine(); err != nil {
+			return errors.New("Core returned an invalid policy document")
+		}
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(document)
+	case "apply":
+		if len(args) != 2 {
+			return usage
+		}
+		payload, err := readCLIFile(args[1], maxPolicyDocumentBytes)
+		if err != nil {
+			return fmt.Errorf("read policy document: %w", err)
+		}
+		var document policy.Document
+		if err := decodeStrictJSON(payload, &document); err != nil {
+			return fmt.Errorf("decode policy document: %w", err)
+		}
+		if _, err := document.Engine(); err != nil {
+			return fmt.Errorf("validate policy document: %w", err)
+		}
+		return managementJSON(ctx, http.MethodPut, endpoint+"/v1/policy", token, document, nil)
+	default:
+		return usage
+	}
 }
 
 func executeModelsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
