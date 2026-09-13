@@ -1128,7 +1128,7 @@ func TestRouteCapabilityCreatesOnlySameRouteBoundedChildSession(t *testing.T) {
 	}
 	defer server.Close(context.Background())
 	primaryRoute, otherRoute := registered.Plan.Routes[0].ID, registered.Plan.Routes[1].ID
-	parent, err := manager.CreateWithOptions("", server.Endpoint(), []string{primaryRoute, otherRoute}, time.Minute, session.CreateOptions{Interactive: false})
+	parent, err := manager.CreateWithOptions("", server.Endpoint(), []string{primaryRoute}, time.Minute, session.CreateOptions{Interactive: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1162,6 +1162,14 @@ func TestRouteCapabilityCreatesOnlySameRouteBoundedChildSession(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("cross-route child status=%d", response.StatusCode)
+	}
+	adminPayload, _ := json.Marshal(createRequest{ParentSessionID: parent.Session.ID, RouteIDs: []string{otherRoute}, TTLSeconds: 30})
+	adminRequest := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(adminPayload))
+	adminRequest.Header.Set("Content-Type", "application/json")
+	adminRecorder := httptest.NewRecorder()
+	server.createSession(adminRecorder, adminRequest)
+	if adminRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("management child route escalation status=%d body=%s", adminRecorder.Code, adminRecorder.Body.String())
 	}
 	response = requestChild(primaryRoute, 90, nil)
 	response.Body.Close()

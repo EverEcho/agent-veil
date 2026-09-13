@@ -128,6 +128,18 @@ func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string
 		if now.Add(ttl).After(parent.session.ExpiresAt) {
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
 		}
+		if endpoint != parent.session.CoreEndpoint {
+			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session must use its parent's Core endpoint")
+		}
+		parentRoutes := make(map[string]struct{}, len(parent.session.RouteIDs))
+		for _, routeID := range parent.session.RouteIDs {
+			parentRoutes[routeID] = struct{}{}
+		}
+		for _, routeID := range routeIDs {
+			if _, ok := parentRoutes[routeID]; !ok {
+				return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot add routes outside its parent")
+			}
+		}
 		if options.Interactive && !parent.session.Interactive {
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot escalate interaction capability")
 		}

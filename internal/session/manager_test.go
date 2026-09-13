@@ -142,7 +142,7 @@ func TestInteractionCapabilityDefaultsOffAndCannotEscalateInChildren(t *testing.
 	if !ok || authorization.Interactive || nonInteractive.Session.Interactive {
 		t.Fatalf("non-interactive session gained interaction capability: session=%+v auth=%+v", nonInteractive.Session, authorization)
 	}
-	if _, err := m.CreateWithOptions(nonInteractive.Session.ID, "local", []string{"child"}, time.Second, CreateOptions{Interactive: true}); err == nil {
+	if _, err := m.CreateWithOptions(nonInteractive.Session.ID, "local", []string{"primary"}, time.Second, CreateOptions{Interactive: true}); err == nil {
 		t.Fatal("child escalated interaction capability")
 	}
 	interactive, err := m.CreateWithOptions("", "local", []string{"interactive"}, time.Minute, CreateOptions{Interactive: true})
@@ -227,25 +227,34 @@ func TestChildSessionRequiresLiveParentAndCannotOutliveIt(t *testing.T) {
 	if _, err := m.Create("missing", "local", []string{"child"}, time.Minute); err == nil {
 		t.Fatal("missing parent was accepted")
 	}
-	parent, err := m.Create("", "local", []string{"parent"}, time.Minute)
+	parent, err := m.Create("", "local", []string{"primary", "fallback"}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(parent.Session.SessionSecret()) != 0 {
 		t.Fatal("created session exposed its internal secret")
 	}
-	if _, err := m.Create(parent.Session.ID, "local", []string{"child"}, 2*time.Minute); err == nil {
+	if _, err := m.Create(parent.Session.ID, "local", []string{"primary"}, 2*time.Minute); err == nil {
 		t.Fatal("child was allowed to outlive parent")
 	}
-	child, err := m.Create(parent.Session.ID, "local", []string{"child"}, 30*time.Second)
+	if _, err := m.Create(parent.Session.ID, "other-core", []string{"primary"}, 30*time.Second); err == nil {
+		t.Fatal("child was allowed to switch Core endpoints")
+	}
+	if _, err := m.Create(parent.Session.ID, "local", []string{"primary", "unowned"}, 30*time.Second); err == nil {
+		t.Fatal("child was allowed to add a route outside its parent")
+	}
+	child, err := m.Create(parent.Session.ID, "local", []string{"fallback"}, 30*time.Second)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(child.Session.RouteIDs) != 1 || child.Session.RouteIDs[0] != "fallback" {
+		t.Fatalf("child did not retain the requested parent-route subset: %+v", child.Session.RouteIDs)
 	}
 	listed := m.List()
 	if len(listed) != 2 || len(listed[0].SessionSecret()) != 0 || len(listed[1].SessionSecret()) != 0 {
 		t.Fatalf("public session list exposed secrets: %+v", listed)
 	}
-	if !m.Delete(parent.Session.ID) || m.Authorize(child.Session.ID, "child", child.Routes[0].Token) || len(m.List()) != 0 {
+	if !m.Delete(parent.Session.ID) || m.Authorize(child.Session.ID, "fallback", child.Routes[0].Token) || len(m.List()) != 0 {
 		t.Fatal("deleting parent did not revoke descendants")
 	}
 }
@@ -272,8 +281,8 @@ func TestPruneExpiredRevokesIdleParentAndChildSessions(t *testing.T) {
 	now := time.Now()
 	m.now = func() time.Time { return now }
 	parent, _ := m.Create("", "local", []string{"parent"}, time.Minute)
-	child, _ := m.Create(parent.Session.ID, "local", []string{"child"}, 30*time.Second)
-	authorization, ok := m.AuthorizeRoute(child.Session.ID, "child", child.Routes[0].Token)
+	child, _ := m.Create(parent.Session.ID, "local", []string{"parent"}, 30*time.Second)
+	authorization, ok := m.AuthorizeRoute(child.Session.ID, "parent", child.Routes[0].Token)
 	if !ok {
 		t.Fatal("child authorization failed")
 	}

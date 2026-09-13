@@ -52,6 +52,9 @@ conservatively than discovered traffic.
 - route-capability-authenticated child Session creation that can only reuse the
   authenticated parent Route, cannot outlive its parent or enable interaction,
   shares the existing Core, and is revoked by parent-session deletion;
+- manager-level nested Session inheritance that prevents every child creation
+  path, including the management API, from switching Core endpoints or adding
+  Routes that its parent does not own;
 - a strict Go Native Integration SDK in `sdk/native` for trusted host
   controllers to report manifests, renew leases, and remove only their current
   generation, plus a route-capability-only client for creating scoped child
