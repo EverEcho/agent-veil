@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,11 @@ import (
 	"time"
 )
 
+var testInstanceID = base64.RawStdEncoding.EncodeToString(make([]byte, 32))
+
 func TestCoreStateRoundTripAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agentveil", "core.json")
-	want := State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:43123", ProcessID: 42, StartedAt: time.Now().UTC().Truncate(time.Second)}
+	want := State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:43123", InstanceID: testInstanceID, ProcessID: 42, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if err := WriteState(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -43,9 +46,10 @@ func TestCoreStateRejectsRemoteMalformedAndOversizedData(t *testing.T) {
 	}
 	path := filepath.Join(directory, "core.json")
 	for _, payload := range []string{
-		`{"schema_version":"v1","api_endpoint":"https://api.example:443","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
-		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","process_id":1,"started_at":"2026-01-01T00:00:00Z","token":"secret"}`,
-		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","api_endpoint":"http://127.0.0.1:2","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
+		`{"schema_version":"v1","api_endpoint":"https://api.example:443","instance_id":"` + testInstanceID + `","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
+		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","instance_id":"short","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
+		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","instance_id":"` + testInstanceID + `","process_id":1,"started_at":"2026-01-01T00:00:00Z","token":"secret"}`,
+		`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:1","api_endpoint":"http://127.0.0.1:2","instance_id":"` + testInstanceID + `","process_id":1,"started_at":"2026-01-01T00:00:00Z"}`,
 		strings.Repeat("x", maxStateBytes+1),
 	} {
 		if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
@@ -63,7 +67,7 @@ func TestCoreStateRejectsUnsafeFileTypesAndPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(directory, "core.json")
-	payload := []byte(`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:43123","process_id":42,"started_at":"2026-01-01T00:00:00Z"}`)
+	payload := []byte(`{"schema_version":"v1","api_endpoint":"http://127.0.0.1:43123","instance_id":"` + testInstanceID + `","process_id":42,"started_at":"2026-01-01T00:00:00Z"}`)
 	if err := os.WriteFile(path, payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +90,7 @@ func TestCoreStateRejectsUnsafeFileTypesAndPermissions(t *testing.T) {
 }
 
 func TestCoreStateRejectsUnsafeDirectories(t *testing.T) {
-	state := State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:43123", ProcessID: 42, StartedAt: time.Now().UTC()}
+	state := State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:43123", InstanceID: testInstanceID, ProcessID: 42, StartedAt: time.Now().UTC()}
 	wide := filepath.Join(t.TempDir(), "wide")
 	if err := os.Mkdir(wide, 0o755); err != nil {
 		t.Fatal(err)

@@ -99,6 +99,38 @@ func TestDecodeManagementRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+func TestCoreIdentityPreflightIsUnauthenticatedAndInstanceScoped(t *testing.T) {
+	first, err := New(session.NewManager(), "01234567890123456789012345678901")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(session.NewManager(), "abcdefghijklmnopqrstuvwxyzABCDEF")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.InstanceID() == "" || first.InstanceID() == second.InstanceID() {
+		t.Fatalf("Core instance identities are not unique: first=%q second=%q", first.InstanceID(), second.InstanceID())
+	}
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close(context.Background())
+	request, err := http.NewRequest(http.MethodGet, first.Endpoint()+"/v1/identity", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set(APIVersionHeader, APIVersion)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var identity map[string]string
+	if response.StatusCode != http.StatusOK || response.Header.Get(APIVersionHeader) != APIVersion || json.NewDecoder(response.Body).Decode(&identity) != nil || identity["api_version"] != APIVersion || identity["instance_id"] != first.InstanceID() {
+		t.Fatalf("identity status=%d headers=%v body=%v", response.StatusCode, response.Header, identity)
+	}
+}
+
 func TestDecodeManagementRequiresUnambiguousJSONRepresentation(t *testing.T) {
 	for _, test := range []struct {
 		name        string

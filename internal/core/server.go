@@ -69,6 +69,7 @@ type Server struct {
 	lifecycleMu      sync.Mutex
 	manager          *session.Manager
 	adminToken       string
+	instanceID       string
 	listener         net.Listener
 	httpServer       *http.Server
 	registry         *registry.Registry
@@ -123,7 +124,11 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{manager: manager, adminToken: adminToken, broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default(), scanner: scanner}, nil
+	instanceBytes := make([]byte, 32)
+	if _, err := rand.Read(instanceBytes); err != nil {
+		return nil, fmt.Errorf("generate Core instance identity: %w", err)
+	}
+	return &Server{manager: manager, adminToken: adminToken, instanceID: base64.RawStdEncoding.EncodeToString(instanceBytes), broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default(), scanner: scanner}, nil
 }
 
 func (s *Server) WithDiscoverer(value interface {
@@ -299,6 +304,7 @@ func (s *Server) Start() error {
 	}
 	s.listener = listener
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/identity", s.identity)
 	mux.HandleFunc("GET /v1/health", s.auth(s.health))
 	mux.HandleFunc("GET /v1/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v1/sessions", s.auth(s.createSession))
@@ -1283,6 +1289,8 @@ func (s *Server) Endpoint() string {
 	return "http://" + s.listener.Addr().String()
 }
 
+func (s *Server) InstanceID() string { return s.instanceID }
+
 func (s *Server) Close(ctx context.Context) error {
 	s.lifecycleMu.Lock()
 	cleanupCancel, cleanupDone, httpServer := s.cleanupCancel, s.cleanupDone, s.httpServer
@@ -1310,6 +1318,13 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
+	if !validVersionedLocalRequest(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"api_version": APIVersion, "instance_id": s.instanceID})
 }
 
 func validVersionedLocalRequest(w http.ResponseWriter, r *http.Request) bool {

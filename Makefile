@@ -16,9 +16,10 @@ acceptance-evidence:
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
 	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath)$$' -count=1
 	go test ./internal/registry -run '^(TestIntegrationLeaseExpiresAndRejectsStaleGeneration|TestRegistryQueuesRoutesForEveryActiveGenerationInvalidation|TestRegistryRevocationQueueFailsClosedWhenBoundExceeded)$$' -count=1
+	go test ./internal/instance -run '^(TestOperatingSystemReleasesCoreLockAfterCrash|TestCoreStateRoundTripAndPermissions)$$' -count=1
 	go test ./internal/discovery -run '^(TestUnverifiedProtectedAgentsReturnRiskOnlyManifests|TestAutomaticDiscoveryReportsUnknownVersionsWithoutClaimingCompatibility)$$' -count=1
 	go test ./internal/core -run '^TestInspectionPreviewReturnsManifestAndTruthfulCoverage$$' -count=1
-	go test ./cmd/veil -run '^TestInspectionIncludesManifestAndTruthfulPlan$$' -count=1
+	go test ./cmd/veil -run '^(TestInspectionIncludesManifestAndTruthfulPlan|TestResolveCoreEndpointRejectsStaleIdentityWithoutSendingAdminToken|TestServeClearsCrashedCoreStateBeforeLaterStartupFailure)$$' -count=1
 	go test ./internal/routing -run '^TestContentModifierAfterDLPIsBlocked$$' -count=1
 	go test ./internal/audit ./internal/diagnostic -count=1
 	go test ./internal/compatibility -run '^(TestMatrixIsExplicitAndPlatformScoped|TestValidationRejectsUnsupportedProtectedProtocol)$$' -count=1

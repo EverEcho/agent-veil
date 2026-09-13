@@ -293,11 +293,60 @@ func TestResolveCoreEndpointUsesExplicitValueOrSecureState(t *testing.T) {
 	configDirectory := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configDirectory)
 	path := filepath.Join(configDirectory, "agentveil", "core.json")
-	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:4321", ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
+	server, err := core.New(session.NewManager(), "01234567890123456789012345678901")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := resolveCoreEndpoint(""); err != nil || got != "http://127.0.0.1:4321" {
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: server.Endpoint(), InstanceID: server.InstanceID(), ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveCoreEndpoint(""); err != nil || got != server.Endpoint() {
 		t.Fatalf("discovered endpoint=%q err=%v", got, err)
+	}
+}
+
+func TestResolveCoreEndpointRejectsStaleIdentityWithoutSendingAdminToken(t *testing.T) {
+	requestAuthorization := "not-called"
+	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requestAuthorization = request.Header.Get("Authorization")
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"api_version":"v1","instance_id":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`)
+	}))
+	defer stale.Close()
+	configDirectory := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDirectory)
+	path := filepath.Join(configDirectory, "agentveil", "core.json")
+	instanceID := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: stale.URL, InstanceID: instanceID, ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveCoreEndpoint(""); err == nil {
+		t.Fatal("stale Core identity was trusted")
+	}
+	if requestAuthorization != "" {
+		t.Fatalf("identity preflight disclosed authorization %q", requestAuthorization)
+	}
+}
+
+func TestServeClearsCrashedCoreStateBeforeLaterStartupFailure(t *testing.T) {
+	configDirectory := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDirectory)
+	t.Setenv("VEIL_ADMIN_TOKEN", "invalid")
+	path := filepath.Join(configDirectory, "agentveil", "core.json")
+	instanceID := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
+	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:4321", InstanceID: instanceID, ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := serve(); err == nil {
+		t.Fatal("invalid startup configuration was accepted")
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("crashed Core state survived a new instance claim: %v", err)
 	}
 }
 

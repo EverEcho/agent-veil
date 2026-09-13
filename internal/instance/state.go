@@ -2,6 +2,7 @@ package instance
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,6 +22,7 @@ const maxStateBytes = 4096
 type State struct {
 	SchemaVersion string    `json:"schema_version"`
 	APIEndpoint   string    `json:"api_endpoint"`
+	InstanceID    string    `json:"instance_id"`
 	ProcessID     int       `json:"process_id"`
 	StartedAt     time.Time `json:"started_at"`
 }
@@ -166,7 +168,8 @@ func syncStateDirectory(path string) error {
 }
 
 func validateState(state State) error {
-	if state.SchemaVersion != "v1" || state.ProcessID <= 0 || state.StartedAt.IsZero() {
+	decodedInstanceID, instanceErr := base64.RawStdEncoding.Strict().DecodeString(state.InstanceID)
+	if state.SchemaVersion != "v1" || len(decodedInstanceID) != 32 || instanceErr != nil || base64.RawStdEncoding.EncodeToString(decodedInstanceID) != state.InstanceID || state.ProcessID <= 0 || state.StartedAt.IsZero() {
 		return domain.NewError(domain.ErrInvalidContract, "validate core state", "state identity is invalid")
 	}
 	parsed, err := url.Parse(state.APIEndpoint)

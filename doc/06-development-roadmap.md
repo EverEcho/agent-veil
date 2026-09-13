@@ -45,7 +45,7 @@
 ### 建设内容
 
 - 实现独立后台 Core、CLI 客户端和版本化本地管理 API；
-- 实现 Session Manager、随机端口、Session/Route Token、子进程管理与崩溃恢复；
+- 实现 Session Manager、随机端口、Session/Route Token、子进程管理与崩溃恢复；Core 状态绑定随机实例身份，CLI 在发送管理 Token 前执行无凭据身份握手，重启取得实例锁后先清除崩溃残留状态；
 - 实现只监听 loopback 的路由服务、请求大小限制、超时和并发控制；
 - 实现本地配置、策略存储、规则包存储和隐私安全审计；
 - 实现 Core 健康检查、单实例协调、升级兼容和安全停机；

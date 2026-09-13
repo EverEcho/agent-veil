@@ -848,6 +848,10 @@ func serve() (resultErr error) {
 			resultErr = errors.Join(resultErr, fmt.Errorf("release Core instance lock: %w", closeErr))
 		}
 	}()
+	statePath := filepath.Join(configDir, "core.json")
+	if err := instance.RemoveState(statePath); err != nil {
+		return fmt.Errorf("remove stale Core state: %w", err)
+	}
 	manager := session.NewManager()
 	server, err := core.New(manager, token)
 	if err != nil {
@@ -909,8 +913,7 @@ func serve() (resultErr error) {
 	if err := server.Start(); err != nil {
 		return err
 	}
-	statePath := filepath.Join(configDir, "core.json")
-	if err := instance.WriteState(statePath, instance.State{SchemaVersion: "v1", APIEndpoint: server.Endpoint(), ProcessID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
+	if err := instance.WriteState(statePath, instance.State{SchemaVersion: "v1", APIEndpoint: server.Endpoint(), InstanceID: server.InstanceID(), ProcessID: os.Getpid(), StartedAt: time.Now().UTC()}); err != nil {
 		_ = server.Close(context.Background())
 		return err
 	}
@@ -1723,5 +1726,41 @@ func resolveCoreEndpoint(explicit string) (string, error) {
 	if err != nil {
 		return "", errors.New("AgentVeil Core endpoint is unavailable; start 'veil serve' or set VEIL_CORE_ENDPOINT")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := verifyCoreIdentity(ctx, state.APIEndpoint, state.InstanceID); err != nil {
+		return "", errors.New("AgentVeil Core state is stale or unavailable; start 'veil serve' or set VEIL_CORE_ENDPOINT")
+	}
 	return state.APIEndpoint, nil
+}
+
+func verifyCoreIdentity(ctx context.Context, endpoint, expectedInstanceID string) error {
+	if ctx == nil || expectedInstanceID == "" {
+		return domain.NewError(domain.ErrInvalidContract, "verify Core identity", "context and instance identity are required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/identity", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept-Encoding", "identity")
+	request.Header.Set(core.APIVersionHeader, core.APIVersion)
+	response, err := managementHTTPClient(2 * time.Second).Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return errors.New("Core identity endpoint is unavailable")
+	}
+	var identity struct {
+		APIVersion string `json:"api_version"`
+		InstanceID string `json:"instance_id"`
+	}
+	if err := decodeManagementResponse(response, &identity); err != nil {
+		return err
+	}
+	if identity.APIVersion != core.APIVersion || identity.InstanceID != expectedInstanceID {
+		return errors.New("Core identity does not match persisted state")
+	}
+	return nil
 }
