@@ -37,8 +37,10 @@ conservatively than discovered traffic.
   through the authenticated management API without exposing a partially switched
   data plane;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
-  coverage plans, nested calls with Route/protocol/policy/lifecycle and retained
-  audit summaries, approvals, policy editing, rule tests, and audit, with
+  coverage plans, an escaped Routing Graph showing each Surface's protocol,
+  policy, fixed Upstream, authentication and network route, nested calls with
+  Route/protocol/policy/lifecycle and retained audit summaries, approvals,
+  policy editing, rule tests, and audit, with
   per-response nonce CSP and no inline event handlers;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans;
