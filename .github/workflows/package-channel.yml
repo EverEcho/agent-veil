@@ -1,0 +1,174 @@
+name: Package release channel
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel; run this workflow from the matching branch
+        required: true
+        type: choice
+        options: [dev, beta, main]
+        default: dev
+      version:
+        description: Package version without a leading v
+        required: true
+        type: string
+        default: 0.0.0-dev
+      quality_statement:
+        description: Confirm the quality level required by the selected channel
+        required: true
+        type: choice
+        options:
+          - dev-no-fatal
+          - beta-self-tested-no-known
+          - main-fully-verified-no-known
+        default: dev-no-fatal
+      publish_release:
+        description: Also create a GitHub Release (dev/beta are prereleases)
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
+      QUALITY_STATEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.quality_statement || 'dev-no-fatal' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Enforce branch and quality policy
+        shell: bash
+        run: |
+          expected_branch="$(jq -r --arg channel "${CHANNEL}" '.[$channel].branch // empty' .github/release-channels.json)"
+          expected_statement="$(jq -r --arg channel "${CHANNEL}" '.[$channel].quality_statement // empty' .github/release-channels.json)"
+          if [ -z "${expected_branch}" ] || [ -z "${expected_statement}" ]; then
+            echo "::error::Unknown release channel: ${CHANNEL}"
+            exit 1
+          fi
+          if [ "${GITHUB_REF}" != "refs/heads/${expected_branch}" ]; then
+            echo "::error::Channel ${CHANNEL} must be packaged from branch ${expected_branch}, not ${GITHUB_REF}."
+            exit 1
+          fi
+          if [ "${QUALITY_STATEMENT}" != "${expected_statement}" ]; then
+            echo "::error::Channel ${CHANNEL} requires quality statement ${expected_statement}."
+            exit 1
+          fi
+          if ! [[ "${VERSION}" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            echo "::error::Version contains unsupported characters."
+            exit 1
+          fi
+
+      - name: Fast development gate
+        if: env.CHANNEL == 'dev'
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./internal/core ./internal/proxy ./internal/session ./internal/desktopapp ./sdk/attach
+
+      - name: Beta gate
+        if: env.CHANNEL == 'beta'
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+          make acceptance-evidence
+
+      - name: Main gate
+        if: env.CHANNEL == 'main'
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race ./...
+          make acceptance-evidence
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgl1-mesa-dev xorg-dev libxkbcommon-dev
+
+      - name: Build Core and desktop packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/meta
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            suffix=""
+            if [ "${goos}" = windows ]; then suffix=".exe"; fi
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build \
+              -trimpath -buildvcs=false \
+              -ldflags="-s -w" \
+              -o "dist/bin/veil-${goos}-${goarch}${suffix}" ./cmd/veil
+          done
+          (
+            cd desktop
+            go build -trimpath -buildvcs=false -ldflags="-s -w" \
+              -o ../dist/bin/agentveil-desktop-linux-amd64 .
+          )
+          dist/bin/veil-linux-amd64 compatibility --offline > dist/meta/COMPATIBILITY.json
+          jq -n \
+            --arg channel "${CHANNEL}" \
+            --arg version "${VERSION}" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg statement "${QUALITY_STATEMENT}" \
+            --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{channel:$channel,version:$version,commit:$commit,quality_statement:$statement,built_at:$built_at}' \
+            > dist/meta/CHANNEL.json
+          cp LICENSE README.md dist/
+          (
+            cd dist
+            find bin meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+          archive="agentveil-${VERSION}-${CHANNEL}"
+          tar -C dist -czf "${archive}.tar.gz" .
+          (
+            cd dist
+            zip -q -r "../${archive}.zip" .
+          )
+          mkdir artifacts
+          mv "${archive}.tar.gz" "${archive}.zip" artifacts/
+
+      - name: Upload channel package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentveil-${{ env.VERSION }}-${{ env.CHANNEL }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="v${VERSION}"
+          prerelease=""
+          if [ "${CHANNEL}" != main ]; then
+            tag="v${VERSION}-${CHANNEL}"
+            prerelease="--prerelease"
+          fi
+          gh release create "${tag}" artifacts/* \
+            --target "${GITHUB_SHA}" \
+            --title "AgentVeil ${VERSION} (${CHANNEL})" \
+            --generate-notes \
+            ${prerelease}
