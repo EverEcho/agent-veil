@@ -74,11 +74,13 @@ func run(args []string) error {
 		return errors.New("usage: veil <agents|approvals|audit|calls|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|sessions|status>")
 	}
 	switch args[0] {
-	case "agents", "calls":
+	case "calls":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: veil %s", args[0])
 		}
 		return liveStateCommand(args[0], os.Stdout)
+	case "agents":
+		return agentsCommand(args[1:], os.Stdout)
 	case "sessions":
 		return sessionsCommand(args[1:], os.Stdout)
 	case "approvals":
@@ -1220,6 +1222,51 @@ func liveStateCommand(resource string, writer io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return writeLiveState(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), resource)
+}
+
+func agentsCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return executeAgentsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executeAgentsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	usage := errors.New("usage: veil agents <list|remove AGENT_ID --generation GENERATION>")
+	if len(args) == 0 || len(args) == 1 && args[0] == "list" {
+		return writeLiveState(ctx, writer, endpoint, token, "agents")
+	}
+	if len(args) != 4 || args[0] != "remove" || !validResourceID(args[1]) || args[2] != "--generation" {
+		return usage
+	}
+	generation, err := strconv.ParseUint(args[3], 10, 64)
+	if err != nil || generation == 0 || strconv.FormatUint(generation, 10) != args[3] {
+		return usage
+	}
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "remove agent registration", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	target := endpoint + "/v1/agents/" + url.PathEscape(args[1]) + "?generation=" + strconv.FormatUint(generation, 10)
+	return managementJSON(ctx, http.MethodDelete, target, token, nil, nil)
+}
+
+func validResourceID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || index > 0 && (character == '.' || character == '_' || character == '-') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func sessionsCommand(args []string, writer io.Writer) error {

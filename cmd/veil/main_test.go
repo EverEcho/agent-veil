@@ -1044,6 +1044,48 @@ func TestSessionsCommandRejectsUnsafeIdentifiersAndArguments(t *testing.T) {
 	}
 }
 
+func TestAgentsCommandListsAndRemovesAnExactGeneration(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		methods = append(methods, request.Method+" "+request.URL.RequestURI())
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		if request.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"manifest":{"agent":{"id":"codex-local"}},"state":"active","generation":7}]`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := executeAgentsCommand(context.Background(), &output, server.URL, token, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeAgentsCommand(context.Background(), io.Discard, server.URL, token, []string{"remove", "codex-local", "--generation", "7"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"generation": 7`) || !slices.Equal(methods, []string{"GET /v1/agents", "DELETE /v1/agents/codex-local?generation=7"}) {
+		t.Fatalf("methods=%v output=%s", methods, output.String())
+	}
+}
+
+func TestAgentsCommandRejectsBroadRemovalAndUnsafeTargets(t *testing.T) {
+	for _, args := range [][]string{{"remove", "codex-local"}, {"remove", "../sessions", "--generation", "7"}, {"remove", "-agent", "--generation", "7"}, {"remove", "agent", "--generation", "0"}, {"remove", "agent", "--generation", "01"}, {"delete", "agent", "--generation", "7"}} {
+		if err := executeAgentsCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", args); err == nil || !strings.Contains(err.Error(), "usage:") {
+			t.Fatalf("args=%v error=%v", args, err)
+		}
+	}
+	for _, id := range []string{"agent", "agent.one", "agent_two", "Agent-3"} {
+		if !validResourceID(id) {
+			t.Fatalf("valid resource ID rejected: %q", id)
+		}
+	}
+}
+
 func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(core.APIVersionHeader, core.APIVersion)

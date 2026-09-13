@@ -226,7 +226,8 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
 go run ./cmd/veil status
-go run ./cmd/veil agents
+go run ./cmd/veil agents list
+go run ./cmd/veil agents remove codex-local --generation 7
 go run ./cmd/veil sessions list
 go run ./cmd/veil sessions revoke session-0123456789abcdef0123456789abcdef
 go run ./cmd/veil calls
@@ -271,6 +272,8 @@ registration, Session, and nested call-tree facts used by the Dashboard without
 returning management or Route capabilities. Call-tree structure is revalidated
 before it is printed. `veil sessions revoke` explicitly tears down the selected
 root or child Session after validating its fixed capability-safe identifier.
+`veil agents remove` requires the displayed generation, so a stale controller
+cannot remove a newer registration with the same Agent ID.
 
 The offline compatibility form reads the same validated matrix compiled into
 the binary and needs neither a running Core nor a management token. Tagged CI
