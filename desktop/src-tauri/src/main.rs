@@ -5,7 +5,7 @@ use rand::RngCore;
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -98,6 +98,25 @@ fn load_or_create_token(dir: &Path) -> Result<String, String> {
     file.sync_all()
         .map_err(|e| format!("同步管理凭据失败: {e}"))?;
     Ok(token)
+}
+
+fn open_private_log(dir: &Path) -> Result<File, String> {
+    let path = dir.join("desktop-core.log");
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(file)
 }
 
 fn core_executable(app: &AppHandle) -> Result<PathBuf, String> {
@@ -238,11 +257,7 @@ fn start_core(app: AppHandle, runtime: SharedRuntime) {
                 if !executable.is_file() {
                     return Err(format!("未找到 Privacy Core：{}", executable.display()));
                 }
-                let log = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(dir.join("desktop-core.log"))
-                    .map_err(|e| e.to_string())?;
+                let log = open_private_log(&dir)?;
                 let stderr = log.try_clone().map_err(|e| e.to_string())?;
                 let child = core_command(&executable, &token)
                     .stdout(Stdio::from(log))

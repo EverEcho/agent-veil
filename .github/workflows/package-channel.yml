@@ -199,7 +199,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p desktop/src-tauri/resources artifacts
-          go build -trimpath -buildvcs=false -ldflags="-s -w" \
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
             -o "desktop/src-tauri/resources/${{ matrix.core }}" ./cmd/veil
       - name: Build Tauri desktop bundles
         working-directory: desktop
