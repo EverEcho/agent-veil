@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -210,6 +211,9 @@ func (m *Manager) List() []domain.ProtectionSession {
 		}
 		result = append(result, publicSession(entry.session))
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ID < result[j].ID
+	})
 	return result
 }
 

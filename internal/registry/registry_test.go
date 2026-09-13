@@ -116,6 +116,17 @@ func TestMalformedAnonymousManifestDoesNotPolluteRegistry(t *testing.T) {
 	}
 }
 
+func TestRegistryListIsStableByAgentID(t *testing.T) {
+	registry := New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}})
+	for _, id := range []string{"zeta", "alpha", "middle"} {
+		registry.entries[id] = Entry{Manifest: domain.AgentManifest{Agent: domain.AgentInstance{ID: id}}, State: StateBlocked}
+	}
+	listed := registry.List()
+	if len(listed) != 3 || listed[0].Manifest.Agent.ID != "alpha" || listed[1].Manifest.Agent.ID != "middle" || listed[2].Manifest.Agent.ID != "zeta" {
+		t.Fatalf("unstable registry order: %+v", listed)
+	}
+}
+
 func TestManagedMonitorBlocksGapsDeduplicatesAndRecovers(t *testing.T) {
 	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
 	registry := New(options)

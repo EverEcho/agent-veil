@@ -119,6 +119,9 @@ func (r *Registry) List() []Entry {
 	for _, entry := range r.entries {
 		values = append(values, cloneEntry(entry))
 	}
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].Manifest.Agent.ID < values[j].Manifest.Agent.ID
+	})
 	return values
 }
 

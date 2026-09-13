@@ -49,6 +49,21 @@ func TestRouteAuthorizationAndExpiry(t *testing.T) {
 	}
 }
 
+func TestSessionListIsStableBySessionID(t *testing.T) {
+	m := NewManager()
+	for range 4 {
+		if _, err := m.Create("", "local", []string{"primary"}, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed := m.List()
+	for index := 1; index < len(listed); index++ {
+		if listed[index-1].ID >= listed[index].ID {
+			t.Fatalf("unstable session order: %+v", listed)
+		}
+	}
+}
+
 func TestManagerEnforcesTTLRouteAndActiveSessionLimits(t *testing.T) {
 	m, err := NewManagerWithLimits(Limits{MaxSessions: 2, MaxRoutes: 2, MaxTTL: time.Minute})
 	if err != nil {
