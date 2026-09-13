@@ -132,6 +132,9 @@ jobs:
             go build -trimpath -buildvcs=false -ldflags="-s -w" \
               -o ../dist/bin/agentveil-desktop-linux-amd64 .
           )
+          mkdir -p dist/desktop/linux-amd64
+          cp dist/bin/agentveil-desktop-linux-amd64 dist/desktop/linux-amd64/agentveil-desktop
+          cp dist/bin/veil-linux-amd64 dist/desktop/linux-amd64/veil
           dist/bin/veil-linux-amd64 compatibility --offline > dist/meta/COMPATIBILITY.json
           jq -n \
             --arg channel "${CHANNEL}" \
@@ -145,7 +148,7 @@ jobs:
           if [ -f LICENSE ]; then cp LICENSE dist/; fi
           (
             cd dist
-            find bin meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            find bin desktop meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           )
           archive="agentveil-${VERSION}-${CHANNEL}"
           tar -C dist -czf "${archive}.tar.gz" .
@@ -220,9 +223,57 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
 
+  desktop-windows:
+    needs: package
+    runs-on: windows-2025
+    env:
+      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            zip
+      - name: Build self-contained Windows app
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          app="build/AgentVeil"
+          mkdir -p "${app}" artifacts
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
+            -o "${app}/veil.exe" ./cmd/veil
+          (
+            cd desktop
+            go mod tidy
+            CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags="-s -w -H=windowsgui" \
+              -o "../${app}/AgentVeil.exe" .
+          )
+          cp README.md .github/release-channels.json "${app}/"
+          archive="agentveil-desktop-${VERSION}-${CHANNEL}-windows-amd64"
+          tar -C build -czf "artifacts/${archive}.tar.gz" AgentVeil
+          (cd build && zip -q -r "../artifacts/${archive}.zip" AgentVeil)
+          sha256sum artifacts/* > "artifacts/${archive}.SHA256SUMS"
+      - name: Upload Windows desktop package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentveil-desktop-${{ env.VERSION }}-${{ env.CHANNEL }}-windows-amd64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
+
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release
-    needs: [package, desktop-macos]
+    needs: [package, desktop-macos, desktop-windows]
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel }}

@@ -31,3 +31,8 @@ The release-channel workflow builds self-contained `AgentVeil.app` bundles on
 native Intel and Apple Silicon runners. Each bundle includes the matching
 `veil` Core executable in `Contents/MacOS`. Development artifacts are ad-hoc
 signed; stable distribution requires Developer ID signing and notarization.
+
+The same workflow packages a Windows amd64 directory containing
+`AgentVeil.exe` and its adjacent `veil.exe`, and a Linux amd64 directory with
+the equivalent pair. The headless Core continues to be built separately for
+all six supported OS/architecture targets.

@@ -29,10 +29,12 @@ The workflow rejects branch/channel mismatches. Development runs use a short
 compile, vet, and critical-package test gate. Beta runs execute the full test
 suite and acceptance evidence. Main runs additionally use the race detector.
 All channels package six headless Core targets, a Linux amd64 desktop shell,
-and self-contained macOS desktop app bundles for Intel and Apple Silicon, plus
-compatibility metadata, channel metadata, and SHA-256 checksums. Each macOS app
-contains its matching Core executable beside the desktop executable.
+and self-contained desktop bundles for Linux amd64, Windows amd64, macOS Intel,
+and macOS Apple Silicon, plus compatibility metadata, channel metadata, and
+SHA-256 checksums. Each desktop bundle contains its matching Core executable
+beside the desktop executable.
 
 The development and beta macOS apps are ad-hoc signed. A main release still
 requires Apple Developer ID signing, notarization, and platform acceptance
-evidence. Native Windows desktop packaging also remains pending.
+evidence. Windows arm64 desktop packaging remains pending; the Windows arm64
+Core is included in the cross-platform Core bundle.
