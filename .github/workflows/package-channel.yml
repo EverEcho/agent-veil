@@ -273,6 +273,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          if [ "${MACOS_DISTRIBUTION_SIGNED:-false}" != true ]; then
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
           cargo_args=()
           profile_dir=release
           if [ "${CHANNEL}" = dev ]; then
