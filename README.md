@@ -44,7 +44,8 @@ conservatively than discovered traffic.
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
 - atomic Native/Managed registry reconciliation plus revision-aware monitoring
-  that blocks stale protection claims during invalid configuration gaps;
+  backed by bounded, permission-checked, ambiguity-rejecting manifest snapshots
+  that block stale protection claims during invalid configuration gaps;
 - generation-bound Native integration leases, route capabilities, and heartbeats
   that revoke stale active plans after plugin failure, reconfiguration, or
   disconnect;
