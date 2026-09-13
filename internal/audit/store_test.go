@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,24 @@ import (
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
+
+func TestEmptyStoreRecentEncodesAsJSONArray(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "private", "audit.jsonl"), time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Recent(time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "[]" {
+		t.Fatalf("empty audit JSON=%s, want []", payload)
+	}
+}
 
 func TestStoreUsesPrivatePermissionsRetentionAndLeakScan(t *testing.T) {
 	secret := "sk-this-is-a-forbidden-test-secret"

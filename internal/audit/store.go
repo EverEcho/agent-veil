@@ -115,7 +115,7 @@ func (s *Store) Prune(now time.Time) error {
 func (s *Store) readLocked() ([]domain.AuditEvent, error) {
 	file, err := openAuditRead(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return []domain.AuditEvent{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -128,7 +128,10 @@ func (s *Store) readLocked() ([]domain.AuditEvent, error) {
 	if info.Size() > s.maxBytes {
 		return nil, domain.NewError(domain.ErrInvalidContract, "read audit", "audit file is too large")
 	}
-	var events []domain.AuditEvent
+	// Keep the collection non-nil so JSON APIs consistently encode an empty
+	// audit log as [] instead of null. Dashboard consumers treat this endpoint
+	// as an array and must still be able to render discovery on first launch.
+	events := make([]domain.AuditEvent, 0)
 	decoder := json.NewDecoder(bufio.NewReader(io.LimitReader(file, s.maxBytes+1)))
 	for {
 		var raw json.RawMessage
