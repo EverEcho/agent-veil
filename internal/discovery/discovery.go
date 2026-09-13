@@ -110,17 +110,32 @@ func (w *boundedVersionOutput) Exceeded() bool {
 	return w.exceeded
 }
 func (OSSystem) ReadFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxAgentConfigBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read agent config", "configuration file type or size is unsafe")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Size() != info.Size() {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read agent config", "configuration file changed during validation")
+	}
 	content, err := io.ReadAll(io.LimitReader(file, maxAgentConfigBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(content) > maxAgentConfigBytes {
 		return nil, domain.NewError(domain.ErrInvalidContract, "read agent config", "configuration file is too large")
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(opened, after) || after.Size() != int64(len(content)) || !after.ModTime().Equal(opened.ModTime()) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read agent config", "configuration file changed while it was read")
 	}
 	return content, nil
 }

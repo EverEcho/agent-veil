@@ -345,7 +345,8 @@ func TestCodexAndClaudeDiscoveryFailClosedOnUnreadableConfiguration(t *testing.T
 }
 
 func TestOSSystemBoundsConfigurationReads(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "large.json")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "large.json")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -354,6 +355,22 @@ func TestOSSystemBoundsConfigurationReads(t *testing.T) {
 	}
 	if _, err := (OSSystem{}).ReadFile(path); err == nil {
 		t.Fatal("oversized agent configuration was accepted")
+	}
+	regular := filepath.Join(directory, "regular.json")
+	if err := os.WriteFile(regular, []byte(`{"safe":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := (OSSystem{}).ReadFile(regular); err != nil || string(content) != `{"safe":true}` {
+		t.Fatalf("regular config=%q error=%v", content, err)
+	}
+	if _, err := (OSSystem{}).ReadFile(directory); err == nil {
+		t.Fatal("configuration directory was accepted as a file")
+	}
+	link := filepath.Join(directory, "linked.json")
+	if err := os.Symlink(regular, link); err == nil {
+		if _, err := (OSSystem{}).ReadFile(link); err == nil {
+			t.Fatal("symlinked agent configuration was accepted")
+		}
 	}
 }
 
