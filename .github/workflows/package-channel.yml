@@ -305,6 +305,53 @@ jobs:
             xcrun stapler validate "${dmg_path}"
             spctl --assess --type execute --verbose=2 "${app_path}"
           fi
+      - name: Smoke-test bundled macOS Core
+        if: matrix.platform == 'macos'
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_dir=release
+          if [ "${CHANNEL}" = dev ]; then profile_dir=dev-package; fi
+          app_path="$(find "src-tauri/target/${profile_dir}/bundle/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          core_path="${app_path}/Contents/Resources/resources/veil"
+          test -x "${core_path}"
+
+          smoke_home="${RUNNER_TEMP}/agentveil-core-smoke-home"
+          state_path="${smoke_home}/Library/Application Support/agentveil/core.json"
+          log_path="${RUNNER_TEMP}/agentveil-core-smoke.log"
+          token="$(openssl rand -hex 32)"
+          mkdir -p "$(dirname "${state_path}")"
+          HOME="${smoke_home}" VEIL_ADMIN_TOKEN="${token}" \
+            "${core_path}" serve >"${log_path}" 2>&1 &
+          core_pid=$!
+          cleanup() {
+            kill "${core_pid}" 2>/dev/null || true
+            wait "${core_pid}" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for _ in {1..200}; do
+            if ! kill -0 "${core_pid}" 2>/dev/null; then
+              echo "::error::Bundled macOS Core exited during startup."
+              sed -n '1,160p' "${log_path}"
+              exit 1
+            fi
+            if [ -f "${state_path}" ]; then
+              endpoint="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["api_endpoint"])' "${state_path}")"
+              if curl --fail --silent --show-error \
+                -H 'X-AgentVeil-API-Version: v1' "${endpoint}/v1/identity" >/dev/null \
+                && curl --fail --silent --show-error \
+                -H 'X-AgentVeil-API-Version: v1' -H "Authorization: Bearer ${token}" \
+                "${endpoint}/v1/health" >/dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 0.1
+          done
+          echo "::error::Bundled macOS Core did not become healthy within 20 seconds."
+          sed -n '1,160p' "${log_path}"
+          exit 1
       - name: Remove temporary macOS signing keychain
         if: always() && matrix.platform == 'macos'
         shell: bash

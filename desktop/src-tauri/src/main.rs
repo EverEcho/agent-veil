@@ -22,6 +22,7 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use url::Url;
 
 const API_VERSION: &str = "v1";
+const CORE_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const RELEASE_CHANNEL: &str = match option_env!("AGENTVEIL_CHANNEL") {
     Some(value) => value,
     None => "dev",
@@ -259,18 +260,30 @@ fn start_core(app: AppHandle, runtime: SharedRuntime) {
                 }
                 let log = open_private_log(&dir)?;
                 let stderr = log.try_clone().map_err(|e| e.to_string())?;
-                let child = core_command(&executable, &token)
+                let mut child = core_command(&executable, &token)
                     .stdout(Stdio::from(log))
                     .stderr(Stdio::from(stderr))
                     .spawn()
                     .map_err(|e| e.to_string())?;
-                let deadline = Instant::now() + Duration::from_secs(10);
+                let deadline = Instant::now() + CORE_READY_TIMEOUT;
                 let (endpoint, sessions) = loop {
-                    if let Ok(status) = probe(&http, &dir, &token) {
-                        break status;
+                    let probe_error = match probe(&http, &dir, &token) {
+                        Ok(status) => break status,
+                        Err(error) => error,
+                    };
+                    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                        return Err(format!(
+                            "Privacy Core 启动后提前退出（{status}）。诊断日志：{}",
+                            dir.join("desktop-core.log").display()
+                        ));
                     }
                     if Instant::now() >= deadline {
-                        return Err("Privacy Core 未能在 10 秒内就绪".into());
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "Privacy Core 未能在 30 秒内就绪：{probe_error}。诊断日志：{}",
+                            dir.join("desktop-core.log").display()
+                        ));
                     }
                     thread::sleep(Duration::from_millis(80));
                 };
