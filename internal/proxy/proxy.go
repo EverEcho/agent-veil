@@ -115,6 +115,10 @@ func NewHandlerWithScanner(sessions *session.Manager, routes []Route, client *ht
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "duplicate route id")
 		}
 		routeClient := *client
+		// Provider cookies are an implicit cross-request credential channel. A
+		// caller-supplied Jar would persist response headers before DLP can inspect
+		// them and replay that state on later protected requests.
+		routeClient.Jar = nil
 		if route.Network.Type != "" {
 			transport, err := veilnetwork.NewTransport(route.Network)
 			if err != nil {
@@ -199,6 +203,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer vault.Destroy()
 	if requestsProtocolUpgrade(r.Header) {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+		return
+	}
+	if len(r.Header.Values("Cookie")) != 0 {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnknownProtocol
 		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
@@ -334,6 +344,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusSwitchingProtocols {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
+		return
+	}
+	if len(response.Header.Values("Set-Cookie")) != 0 {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnknownProtocol
 		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))

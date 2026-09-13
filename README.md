@@ -41,7 +41,8 @@ conservatively than discovered traffic.
   disconnect;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   method/path/query-preserving redirect revalidation, and preserved custom
-  Gateway base paths;
+  Gateway base paths; Provider routes reject unsupported Cookie/Set-Cookie
+  session state and neither persist nor replay caller CookieJar credentials;
 - version-gated Codex and Claude Code discovery/protected launch, plus
   discovery-only Hermes and Cursor compatibility records; protected children
   receive only fresh Session/parent/route capabilities and never inherit the

@@ -141,6 +141,17 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 	return f(request)
 }
 
+type recordingCookieJar struct {
+	setCalls int
+}
+
+func (*recordingCookieJar) Cookies(*url.URL) []*http.Cookie {
+	return []*http.Cookie{{Name: "implicit", Value: "credential"}}
+}
+func (j *recordingCookieJar) SetCookies(*url.URL, []*http.Cookie) {
+	j.setCalls++
+}
+
 func TestProxyRejectsUnboundedRoutesAndBodies(t *testing.T) {
 	manager := session.NewManager()
 	upstream, _ := url.Parse("https://api.example")
@@ -236,6 +247,80 @@ func TestProxyRejectsProviderProtocolUpgradesBeforeForwarding(t *testing.T) {
 	}
 	if len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrUnknownProtocol {
 		t.Fatalf("audit=%+v", auditor.events)
+	}
+}
+
+func TestProxyDoesNotPersistOrReplayCallerCookieJarState(t *testing.T) {
+	providerCookie := ""
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCookie = r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	jar := &recordingCookieJar{}
+	client := provider.Client()
+	client.Jar = jar
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerCookie != "" || jar.setCalls != 0 {
+		t.Fatalf("status=%d provider cookie=%q jar writes=%d body=%s", recorder.Code, providerCookie, jar.setCalls, recorder.Body.String())
+	}
+}
+
+func TestProxyRejectsImplicitCookieAuthenticationState(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		requestCookie  bool
+		responseCookie bool
+		wantStatus     int
+		wantCalls      int
+	}{
+		{name: "request cookie", requestCookie: true, wantStatus: http.StatusForbidden},
+		{name: "provider cookie", responseCookie: true, wantStatus: http.StatusBadGateway, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			providerCalls := 0
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				providerCalls++
+				if test.responseCookie {
+					w.Header().Set("Set-Cookie", "provider_state=safe; Secure; HttpOnly")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			if test.requestCookie {
+				request.Header.Set("Cookie", "provider_state=safe")
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus || providerCalls != test.wantCalls || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || recorder.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("status=%d provider calls=%d headers=%v body=%s", recorder.Code, providerCalls, recorder.Header(), recorder.Body.String())
+			}
+		})
 	}
 }
 
