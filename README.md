@@ -67,12 +67,14 @@ conservatively than discovered traffic.
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration and protected launch for primary, fallback,
-  auxiliary, delegation, and remote MCP surfaces without retaining credentials
-  in the manifest; every network Surface receives an independent Core route and
-  capability in an isolated temporary `HERMES_HOME`, including documented
+  auxiliary, delegation, and remote MCP Streamable HTTP surfaces without
+  retaining credentials in the manifest; every protected network Surface
+  receives an independent Core route and capability in an isolated temporary
+  `HERMES_HOME`, including documented
   OpenAI Chat, Responses, and Anthropic api-mode aliases. Runtime `main`, `auto`,
   and legacy custom fallback semantics are expanded before routes are pinned,
-  while unsupported specialized transports remain fail-closed;
+  while unsupported specialized transports and legacy MCP SSE remain
+  fail-closed and explicitly Unprotected;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;

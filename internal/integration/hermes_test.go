@@ -47,7 +47,7 @@ mcp_servers:
     command: npx
   research:
     url: https://mcp.example/rpc
-    transport: sse
+    transport: streamable_http
     headers:
       Authorization: Bearer must-never-enter-the-manifest
   disabled:
@@ -82,7 +82,7 @@ func TestHermesConfigEnumeratesEveryIndependentSurface(t *testing.T) {
 	if byID["fallback-1"].Protocol != domain.ProtocolAnthropic || byID["delegation"].Type != domain.SurfaceSubAgent {
 		t.Fatalf("fallback/delegation missing: fallback=%+v delegation=%+v", byID["fallback-1"], byID["delegation"])
 	}
-	if byID["mcp-research"].Protocol != domain.ProtocolMCPHTTP || byID["mcp-research"].Type != domain.SurfaceMCPHTTP {
+	if byID["mcp-research"].Protocol != domain.ProtocolMCPStreamable || byID["mcp-research"].Type != domain.SurfaceMCPHTTP {
 		t.Fatalf("remote MCP=%+v", byID["mcp-research"])
 	}
 	encoded, _ := json.Marshal(struct {
@@ -91,6 +91,16 @@ func TestHermesConfigEnumeratesEveryIndependentSurface(t *testing.T) {
 	}{slots, localMCP})
 	if strings.Contains(string(encoded), "must-never-enter") {
 		t.Fatalf("credential leaked from parsed config: %s", encoded)
+	}
+}
+
+func TestHermesLegacyMCPSSEIsVisibleButNotClaimedProtected(t *testing.T) {
+	slots, _, err := ParseHermesConfig([]byte("model:\n  provider: custom\n  model: x\n  base_url: https://api.example/v1\n  api_mode: chat_completions\nmcp_servers:\n  legacy:\n    url: https://mcp.example/sse\n    transport: sse\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 2 || slots[1].ID != "mcp-legacy" || slots[1].Protocol != domain.ProtocolUnknown || slots[1].BaseURL != "https://mcp.example/sse" || slots[1].Rewritable {
+		t.Fatalf("legacy SSE coverage was overstated or hidden: %+v", slots)
 	}
 }
 
