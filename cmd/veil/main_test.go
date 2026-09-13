@@ -616,6 +616,44 @@ func TestCoreStatusRejectsInvalidOrInconsistentHealth(t *testing.T) {
 	}
 }
 
+func TestAuditReportRevalidatesPrivacySafeMetadata(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	event := domain.AuditEvent{Timestamp: time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC), SessionID: "session-1", AgentID: "codex", SurfaceID: "primary", Protocol: domain.ProtocolOpenAIResponses, FindingTypes: []string{"pii.email"}, FindingCount: 1, Severity: domain.SeverityHigh, Action: domain.ActionRedact, LatencyMS: 4, WorkspaceRef: "sha256:0123456789abcdef0123456789abcdef"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode([]domain.AuditEvent{event}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := writeAuditReport(&output, server.URL, token); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"workspace_ref": "sha256:0123456789abcdef0123456789abcdef"`) || strings.Contains(output.String(), "/private/") {
+		t.Fatalf("audit output=%s", output.String())
+	}
+}
+
+func TestAuditReportRejectsUnsafeCoreEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"timestamp":"2026-01-02T03:04:05Z","finding_count":0,"action":"block","latency_ms":0,"workspace_ref":"/private/customer"}]`)
+	}))
+	defer server.Close()
+	if err := writeAuditReport(io.Discard, server.URL, "token"); err == nil || !strings.Contains(err.Error(), "invalid audit event") {
+		t.Fatalf("unsafe audit event error=%v", err)
+	}
+	if err := writeAuditReport(nil, "http://127.0.0.1:1", "token"); err == nil {
+		t.Fatal("nil audit writer was accepted")
+	}
+}
+
 func TestRulesCommandUsesAuthenticatedVersionedManagementAPI(t *testing.T) {
 	const token = "01234567890123456789012345678901"
 	type requestRecord struct{ method, path string }

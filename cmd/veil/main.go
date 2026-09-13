@@ -71,11 +71,16 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <approvals|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
+		return errors.New("usage: veil <approvals|audit|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
 	}
 	switch args[0] {
 	case "approvals":
 		return approvalsCommand(args[1:], os.Stdout)
+	case "audit":
+		if len(args) != 1 {
+			return errors.New("usage: veil audit")
+		}
+		return auditReport()
 	case "serve":
 		return serve()
 	case "status":
@@ -1062,6 +1067,37 @@ func compatibilityReport() error {
 		return err
 	}
 	return writeCompatibilityReport(os.Stdout, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"))
+}
+
+func auditReport() error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	return writeAuditReport(os.Stdout, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"))
+}
+
+func writeAuditReport(writer io.Writer, endpoint, token string) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "write audit report", "writer is required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var events []domain.AuditEvent
+	if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/audit", token, nil, &events); err != nil {
+		return err
+	}
+	for _, event := range events {
+		if _, err := audit.Marshal(event); err != nil {
+			return errors.New("Core returned an invalid audit event")
+		}
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(events)
 }
 
 func writeCompatibilityReport(writer io.Writer, endpoint, token string) error {
