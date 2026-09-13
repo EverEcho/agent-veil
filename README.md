@@ -41,7 +41,8 @@ conservatively than discovered traffic.
   policy, fixed Upstream, authentication and network route, nested calls with
   Route/protocol/policy/lifecycle and retained audit summaries, approvals,
   policy editing, local rule tests with per-Finding layered policy previews, and
-  audit. Protection risks expose their source
+  audit. `ASK` cards offer one-time allow/redact decisions, an original-free
+  redaction preview, and an explicit cancel-and-block action. Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
   metadata also drives local-day summaries and a seven-day risk trend, with
   per-response nonce CSP and no inline event handlers. The control surface has
