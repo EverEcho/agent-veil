@@ -15,9 +15,14 @@ conservatively than discovered traffic.
   bounded concurrency, failure-wiped capability generation, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
   Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
-- incremental SSE protection with cross-chunk secret detection and placeholder
-  restoration, plus bounded sensitive-data scanning of Provider response headers
-  and explicit rejection of request or Provider protocol upgrades;
+- bounded request-header and query DLP with policy-aware value redaction,
+  fail-closed sensitive key handling, and explicit Provider-auth exceptions;
+  incremental SSE protection with cross-chunk secret detection and placeholder
+  restoration; Provider response headers restore only request-local placeholders,
+  and blocked header, body, and stream findings contribute metadata-only audit
+  records;
+- explicit rejection of request or Provider protocol upgrades and implicit
+  Cookie/Set-Cookie authentication state;
 - deterministic and structured PII/secret detection, chunk caching, layered
   policies, session-stable placeholders, and request-scoped bounded Vaults;
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
@@ -41,8 +46,8 @@ conservatively than discovered traffic.
   disconnect;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   method/path/query-preserving redirect revalidation, and preserved custom
-  Gateway base paths; Provider routes reject unsupported Cookie/Set-Cookie
-  session state and neither persist nor replay caller CookieJar credentials;
+  Gateway base paths; Provider routes neither persist nor replay caller CookieJar
+  credentials;
 - version-gated Codex and Claude Code discovery/protected launch, plus
   discovery-only Hermes and Cursor compatibility records; protected children
   receive only fresh Session/parent/route capabilities and never inherit the
