@@ -40,7 +40,8 @@ conservatively than discovered traffic.
   coverage plans, an escaped Routing Graph showing each Surface's protocol,
   policy, fixed Upstream, authentication and network route, nested calls with
   Route/protocol/policy/lifecycle and retained audit summaries, approvals,
-  policy editing, local rule tests with per-Finding layered policy previews, and
+  policy editing, local rule tests with rule ID/detector/confidence explanations
+  and per-Finding layered policy previews, and
   audit. `ASK` cards offer one-time allow/redact decisions, an original-free
   redaction preview, and an explicit cancel-and-block action. Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
