@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -389,6 +390,35 @@ func TestOSSystemBoundsVersionCommandOutputAndRuntime(t *testing.T) {
 	}
 	if time.Since(started) > time.Second {
 		t.Fatalf("version process exceeded its caller deadline: elapsed=%v", time.Since(started))
+	}
+}
+
+func TestOSSystemBoundsVersionWaitForInheritedOutputPipes(t *testing.T) {
+	directory := t.TempDir()
+	pidPath := filepath.Join(directory, "child.pid")
+	script := filepath.Join(directory, "forking-agent")
+	content := []byte("#!/bin/sh\nsleep 30 &\necho $! > \"" + pidPath + "\"\n")
+	if err := os.WriteFile(script, content, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err := (OSSystem{}).Version(context.Background(), script)
+	if err == nil {
+		t.Fatal("version command with inherited open output pipe was accepted")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("version command waited for descendant output pipe: elapsed=%v", time.Since(started))
+	}
+	pidPayload, readErr := os.ReadFile(pidPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(pidPayload)))
+	if parseErr != nil {
+		t.Fatal(parseErr)
+	}
+	if process, findErr := os.FindProcess(pid); findErr == nil {
+		_ = process.Kill()
 	}
 }
 

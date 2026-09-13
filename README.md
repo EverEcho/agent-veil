@@ -45,7 +45,8 @@ conservatively than discovered traffic.
   discovery-only Hermes and Cursor compatibility records; protected children
   receive only fresh Session/parent/route capabilities and never inherit the
   Core management token;
-- bounded Agent configuration inspection restricted to stable regular files;
+- bounded Agent configuration inspection restricted to stable regular files,
+  with hard deadlines for version commands and inherited output pipes;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP

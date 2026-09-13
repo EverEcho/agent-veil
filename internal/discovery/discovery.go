@@ -26,6 +26,7 @@ var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 const maxAgentConfigBytes = 8 << 20
 const maxAgentVersionBytes = 64 << 10
 const agentVersionTimeout = 3 * time.Second
+const agentVersionWaitDelay = 250 * time.Millisecond
 
 var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
 
@@ -62,6 +63,7 @@ func (OSSystem) Version(ctx context.Context, executable string) (string, error) 
 	defer cancel()
 	output := &boundedVersionOutput{limit: maxAgentVersionBytes}
 	command := exec.CommandContext(bounded, executable, "--version")
+	command.WaitDelay = agentVersionWaitDelay
 	command.Stdout = output
 	command.Stderr = output
 	err := command.Run()
