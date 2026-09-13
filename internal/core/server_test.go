@@ -472,7 +472,7 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	if !strings.HasPrefix(routeID, "route-") || !strings.HasSuffix(routeID, "-g1") || len(routeID) != len("route-")+32+len("-g1") {
 		t.Fatalf("route was not generation bound: %q", routeID)
 	}
-	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second)})
+	payload, _ := json.Marshal(createRequest{RouteIDs: []string{routeID}, TTLSeconds: int64(time.Minute / time.Second), Interactive: true})
 	request, _ = http.NewRequest(http.MethodPost, s.Endpoint()+"/v1/sessions", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
@@ -484,7 +484,7 @@ func TestSessionLifecycleAPI(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
-	if len(created.Routes) != 1 || created.Routes[0].Token == "" {
+	if len(created.Routes) != 1 || created.Routes[0].Token == "" || !created.Session.Interactive {
 		t.Fatal("route capability missing")
 	}
 	request, _ = http.NewRequest(http.MethodDelete, s.Endpoint()+"/v1/sessions/"+created.Session.ID, nil)
@@ -1349,7 +1349,7 @@ func TestCoreASKCanResolveOnceWithoutExposingOriginal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(context.Background())
-	created, _ := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
+	created, _ := manager.CreateWithOptions("", s.Endpoint(), []string{routeID}, time.Minute, session.CreateOptions{Interactive: true})
 	result := make(chan *http.Response, 1)
 	go func() {
 		request, _ := http.NewRequest(http.MethodPost, s.Endpoint()+"/route/"+routeID+"/v1/responses", strings.NewReader(`{"input":"dev@example.com"}`))

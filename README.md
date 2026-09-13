@@ -11,6 +11,8 @@ conservatively than discovered traffic.
   findings, policies, networking and audit events;
 - a loopback-only Core with capability-authenticated routes, session-revocable
   request processing (including uploads and pending ASK decisions),
+  management-authorized per-Session interaction capabilities that default off
+  and cannot be escalated by child Sessions,
   version-negotiated management APIs, bounded and strict CLI response envelopes,
   bounded concurrency, failure-wiped capability generation, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
@@ -152,7 +154,9 @@ go run ./cmd/veil run codex -- --help
 ```
 
 Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
-Claude and Hermes protected launch remain unverified and fail closed.
+Claude and Hermes protected launch remain unverified and fail closed. CLI
+protected launches create non-interactive Sessions, so an `ASK` policy blocks
+instead of waiting indefinitely for a Dashboard decision.
 
 ## Verification
 

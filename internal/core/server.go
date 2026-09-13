@@ -1149,6 +1149,7 @@ type createRequest struct {
 	ParentSessionID string   `json:"parent_session_id"`
 	RouteIDs        []string `json:"route_ids"`
 	TTLSeconds      int64    `json:"ttl_seconds"`
+	Interactive     bool     `json:"interactive"`
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -1163,7 +1164,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	created, err := s.manager.Create(request.ParentSessionID, s.Endpoint(), request.RouteIDs, time.Duration(request.TTLSeconds)*time.Second)
+	created, err := s.manager.CreateWithOptions(request.ParentSessionID, s.Endpoint(), request.RouteIDs, time.Duration(request.TTLSeconds)*time.Second, session.CreateOptions{Interactive: request.Interactive})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_SESSION"})
 		return

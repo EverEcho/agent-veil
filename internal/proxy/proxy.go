@@ -178,6 +178,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
 		return
 	}
+	interactive := route.Interactive && authorization.Interactive
 	requestContext, cancel := context.WithDeadline(r.Context(), authorization.ExpiresAt)
 	stopRevocation := context.AfterFunc(authorization.Context, cancel)
 	defer func() {
@@ -298,7 +299,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
+		processed, err = pipeline.ProcessForProtocol(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}, route.Protocol, endpoint, r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, vault)
 		if err == nil && route.Protocol == domain.ProtocolMCPStreamable {
 			err = protocol.ValidateMCPStreamableBodyVersion(mcpVersion, processed.Body)
 			mcpVersionMismatch = err != nil
@@ -334,12 +335,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if authStrategy.Type == "" {
 		authStrategy.Type = domain.AuthPassthrough
 	}
-	headerResult, err := processRequestHeaders(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.Header, h.scanner, route.Policy, vault)
+	headerResult, err := processRequestHeaders(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.Header, h.scanner, route.Policy, vault)
 	processed.Findings = append(processed.Findings, headerResult.Findings...)
 	processed.Actions = append(processed.Actions, headerResult.Actions...)
 	if err == nil {
 		var queryResult pipeline.TextResult
-		queryResult, err = processRequestQuery(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.URL, h.scanner, route.Policy, vault)
+		queryResult, err = processRequestQuery(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.URL, h.scanner, route.Policy, vault)
 		processed.Findings = append(processed.Findings, queryResult.Findings...)
 		processed.Actions = append(processed.Actions, queryResult.Actions...)
 	}

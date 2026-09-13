@@ -1008,6 +1008,31 @@ func TestActiveProtectedRequestEndsWhenSessionIsDeleted(t *testing.T) {
 	}
 }
 
+func TestASKFailsClosedWithoutSessionInteractionCapability(t *testing.T) {
+	providerCalled := false
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		providerCalled = true
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	broker := policy.NewBroker()
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionAsk}, Interactive: true, Approver: broker, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"email dev@example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || providerCalled || len(broker.Pending()) != 0 {
+		t.Fatalf("status=%d provider-called=%t pending=%d body=%s", recorder.Code, providerCalled, len(broker.Pending()), recorder.Body.String())
+	}
+}
+
 func TestPendingASKEndsWhenSessionIsDeletedBeforeUpstream(t *testing.T) {
 	providerCalled := false
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1018,7 +1043,7 @@ func TestPendingASKEndsWhenSessionIsDeletedBeforeUpstream(t *testing.T) {
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
 	manager := session.NewManager()
-	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	created, _ := manager.CreateWithOptions("", "local", []string{"primary"}, time.Minute, session.CreateOptions{Interactive: true})
 	broker := policy.NewBroker()
 	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionAsk}, Interactive: true, Approver: broker, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 	if err != nil {

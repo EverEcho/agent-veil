@@ -132,6 +132,29 @@ func TestRouteAuthorizationReturnsSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestInteractionCapabilityDefaultsOffAndCannotEscalateInChildren(t *testing.T) {
+	m := NewManager()
+	nonInteractive, err := m.Create("", "local", []string{"primary"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, ok := m.AuthorizeRoute(nonInteractive.Session.ID, "primary", nonInteractive.Routes[0].Token)
+	if !ok || authorization.Interactive || nonInteractive.Session.Interactive {
+		t.Fatalf("non-interactive session gained interaction capability: session=%+v auth=%+v", nonInteractive.Session, authorization)
+	}
+	if _, err := m.CreateWithOptions(nonInteractive.Session.ID, "local", []string{"child"}, time.Second, CreateOptions{Interactive: true}); err == nil {
+		t.Fatal("child escalated interaction capability")
+	}
+	interactive, err := m.CreateWithOptions("", "local", []string{"interactive"}, time.Minute, CreateOptions{Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, ok = m.AuthorizeRoute(interactive.Session.ID, "interactive", interactive.Routes[0].Token)
+	if !ok || !authorization.Interactive || !interactive.Session.Interactive {
+		t.Fatalf("explicit interaction capability was lost: session=%+v auth=%+v", interactive.Session, authorization)
+	}
+}
+
 func TestDeletingSessionOverwritesInternalRouteCapabilities(t *testing.T) {
 	m := NewManager()
 	created, err := m.Create("", "local", []string{"primary"}, time.Minute)

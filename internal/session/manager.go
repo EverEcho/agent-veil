@@ -37,9 +37,14 @@ type managedRouteCredential struct {
 }
 
 type Authorization struct {
-	Secret    []byte
-	ExpiresAt time.Time
-	Context   context.Context
+	Secret      []byte
+	ExpiresAt   time.Time
+	Context     context.Context
+	Interactive bool
+}
+
+type CreateOptions struct {
+	Interactive bool
 }
 
 type Manager struct {
@@ -81,6 +86,10 @@ func NewManagerWithLimits(limits Limits) (*Manager, error) {
 }
 
 func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.Duration) (Created, error) {
+	return m.CreateWithOptions(parentID, endpoint, routeIDs, ttl, CreateOptions{})
+}
+
+func (m *Manager) CreateWithOptions(parentID, endpoint string, routeIDs []string, ttl time.Duration, options CreateOptions) (Created, error) {
 	if ttl <= 0 || ttl > m.limits.MaxTTL || len(routeIDs) == 0 || len(routeIDs) > m.limits.MaxRoutes {
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "ttl and route count must be within configured limits")
 	}
@@ -119,6 +128,9 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 		if now.Add(ttl).After(parent.session.ExpiresAt) {
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
 		}
+		if options.Interactive && !parent.session.Interactive {
+			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot escalate interaction capability")
+		}
 	}
 	id, err := m.randomHexString(16)
 	if err != nil {
@@ -149,6 +161,7 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 		routes[index] = RouteCredential{RouteID: managedRoutes[index].routeID, Token: string(managedRoutes[index].token)}
 	}
 	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
+	s.Interactive = options.Interactive
 	wipeBytes(secret)
 	sessionContext, cancel := context.WithCancel(context.Background())
 	entry := &managedSession{session: s, routes: managedRoutes, context: sessionContext, cancel: cancel}
@@ -194,7 +207,7 @@ func (m *Manager) AuthorizeRoute(sessionID, routeID, token string) (Authorizatio
 	}
 	for _, route := range entry.routes {
 		if route.routeID == routeID && constantTimeBytesStringEqual(route.token, token) {
-			return Authorization{Secret: entry.session.SessionSecret(), ExpiresAt: entry.session.ExpiresAt, Context: entry.context}, true
+			return Authorization{Secret: entry.session.SessionSecret(), ExpiresAt: entry.session.ExpiresAt, Context: entry.context, Interactive: entry.session.Interactive}, true
 		}
 	}
 	return Authorization{}, false
@@ -272,7 +285,9 @@ func (m *Manager) deleteCascadeLocked(rootID string) {
 }
 
 func publicSession(session domain.ProtectionSession) domain.ProtectionSession {
-	return domain.NewProtectionSession(session.ID, session.ParentSessionID, session.CoreEndpoint, session.StartedAt, session.ExpiresAt, session.RouteIDs, nil)
+	result := domain.NewProtectionSession(session.ID, session.ParentSessionID, session.CoreEndpoint, session.StartedAt, session.ExpiresAt, session.RouteIDs, nil)
+	result.Interactive = session.Interactive
+	return result
 }
 
 func (m *Manager) Close() {

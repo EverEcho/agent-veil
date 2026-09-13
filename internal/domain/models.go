@@ -110,6 +110,7 @@ type ProtectionSession struct {
 	ID              string    `json:"id"`
 	ParentSessionID string    `json:"parent_session_id,omitempty"`
 	CoreEndpoint    string    `json:"core_endpoint"`
+	Interactive     bool      `json:"interactive"`
 	StartedAt       time.Time `json:"started_at"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	RouteIDs        []string  `json:"route_ids"`
