@@ -185,10 +185,11 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 }
 
 type resolvedHermesRoute struct {
-	baseURL  string
-	protocol domain.Protocol
-	model    string
-	provider string
+	baseURL       string
+	protocol      domain.Protocol
+	model         string
+	provider      string
+	explicitRoute bool
 }
 
 func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, inherited *resolvedHermesRoute) resolvedHermesRoute {
@@ -198,6 +199,13 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 		model = strings.TrimSpace(route.Default)
 	}
 	if providerName == "main" && inherited != nil {
+		result := *inherited
+		if model != "" {
+			result.model = model
+		}
+		return result
+	}
+	if inherited != nil && inherited.explicitRoute && providerName != "" && providerName == inherited.provider && !hermesModelSpecificProvider(providerName) && strings.TrimSpace(route.BaseURL) == "" && strings.TrimSpace(route.APIMode) == "" {
 		result := *inherited
 		if model != "" {
 			result.model = model
@@ -224,7 +232,15 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 	if strings.Contains(baseURL, "${") {
 		return resolvedHermesRoute{}
 	}
-	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType, model: model, provider: providerName}
+	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType, model: model, provider: providerName, explicitRoute: strings.TrimSpace(route.BaseURL) != "" && strings.TrimSpace(route.APIMode) != ""}
+}
+
+func hermesModelSpecificProvider(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "nous" || normalized == "nous-portal" || normalized == "nousresearch" {
+		return true
+	}
+	return strings.HasPrefix(normalized, "opencode-zen") || strings.HasPrefix(normalized, "opencode-go") || strings.HasPrefix(normalized, "opencode-free")
 }
 
 func hermesProtocol(value string) domain.Protocol {

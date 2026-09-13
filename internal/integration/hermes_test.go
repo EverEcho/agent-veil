@@ -2,6 +2,7 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -171,6 +172,51 @@ func TestHermesProtocolMirrors0206ConfigAliases(t *testing.T) {
 	for _, unsupported := range []string{"gemini", "bedrock_converse", "codex_app_server", ""} {
 		if actual := hermesProtocol(unsupported); actual != domain.ProtocolUnknown {
 			t.Fatalf("unsupported Hermes transport %q mapped to %q", unsupported, actual)
+		}
+	}
+}
+
+func TestHermesAuxiliaryInheritsIdenticalPrimaryProviderRoute(t *testing.T) {
+	slots, _, err := ParseHermesConfig([]byte(`
+model:
+  provider: openai-codex
+  model: primary
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+auxiliary:
+  approval:
+    provider: openai-codex
+    model: reviewer
+  dynamic:
+    provider: auto
+    model: selected-at-runtime
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Slot{}
+	for _, slot := range slots {
+		byID[slot.ID] = slot
+	}
+	approval := byID["aux-approval"]
+	if approval.Protocol != domain.ProtocolOpenAIResponses || approval.BaseURL != "https://chatgpt.com/backend-api/codex" || approval.Metadata["model_ref"] != "reviewer" {
+		t.Fatalf("same-provider auxiliary did not inherit primary route: %+v", approval)
+	}
+	dynamic := byID["aux-dynamic"]
+	if dynamic.Protocol != domain.ProtocolUnknown || dynamic.BaseURL != "" {
+		t.Fatalf("dynamic provider inherited an unrelated route: %+v", dynamic)
+	}
+}
+
+func TestHermesModelSpecificProvidersDoNotInheritPrimaryProtocol(t *testing.T) {
+	for _, provider := range []string{"nous", "nous-portal", "nousresearch", "opencode-zen", "opencode-go-bridge", "opencode-free"} {
+		content := fmt.Sprintf("model:\n  provider: %s\n  model: primary\n  base_url: https://provider.example/v1\n  api_mode: chat_completions\nauxiliary:\n  review:\n    provider: %s\n    model: alternate\n", provider, provider)
+		slots, _, err := ParseHermesConfig([]byte(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(slots) != 2 || slots[1].Protocol != domain.ProtocolUnknown || slots[1].BaseURL != "" {
+			t.Fatalf("model-specific provider %q inherited an ambiguous route: %+v", provider, slots)
 		}
 	}
 }
