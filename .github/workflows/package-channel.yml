@@ -123,6 +123,7 @@ jobs:
           done
           (
             cd desktop
+            go mod tidy
             go build -trimpath -buildvcs=false -ldflags="-s -w" \
               -o ../dist/bin/agentveil-desktop-linux-amd64 .
           )

@@ -78,7 +78,9 @@ jobs:
           cache: false
       - name: Compile desktop shell with in-memory driver
         working-directory: desktop
-        run: go build -tags ci -trimpath -o agentveil-desktop .
+        run: |
+          go mod tidy
+          go build -tags ci -trimpath -o agentveil-desktop .
 
   reproducible-build:
     runs-on: ubuntu-latest
