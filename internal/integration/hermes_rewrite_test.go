@@ -48,6 +48,27 @@ func TestRewriteHermesConfigBindsEverySurfaceIndependently(t *testing.T) {
 	}
 }
 
+func TestRewriteHermesConfigExpandsAutoProviderBeforePinningRoute(t *testing.T) {
+	config := []byte("model:\n  provider: openai-codex\n  model: gpt-5\n  base_url: https://chatgpt.com/backend-api/codex\n  api_mode: codex_responses\nauxiliary:\n  monitor:\n    provider: auto\n")
+	tokenA := strings.Repeat("a", 64)
+	tokenB := strings.Repeat("b", 64)
+	rewritten, err := RewriteHermesConfig(config, "http://127.0.0.1:44123", "session-1234567890abcdef", map[string]HermesRouteBinding{
+		"primary":     {RouteID: "route-primary", Token: tokenA},
+		"aux-monitor": {RouteID: "route-monitor", Token: tokenB},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := yaml.Unmarshal(rewritten, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	monitor := decoded["auxiliary"].(map[string]any)["monitor"].(map[string]any)
+	if monitor["provider"] != "openai-codex" || monitor["base_url"] != "http://127.0.0.1:44123/route/route-monitor/v1" || monitor["api_mode"] != "codex_responses" {
+		t.Fatalf("auto provider was not pinned safely: %+v", monitor)
+	}
+}
+
 func TestRewriteHermesConfigFailsClosed(t *testing.T) {
 	valid := []byte("model:\n  provider: custom\n  model: x\n  base_url: https://api.example/v1\n  api_mode: chat_completions\n")
 	binding := map[string]HermesRouteBinding{"primary": {RouteID: "route-primary", Token: strings.Repeat("a", 64)}}

@@ -32,7 +32,10 @@ func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
 	if _, ok := verified["claude"]["2.1.220"]; !ok {
 		t.Fatal("version with a protected launch-smoke authentication path was omitted")
 	}
-	for _, discoveryOnly := range []string{"hermes", "cursor"} {
+	if _, ok := verified["hermes"]["0.20.6"]; !ok {
+		t.Fatal("Hermes protected launch-smoke version was omitted")
+	}
+	for _, discoveryOnly := range []string{"cursor"} {
 		if _, ok := verified[discoveryOnly]; ok {
 			t.Fatalf("discovery-only %s version was allowed to claim rewritable compatibility", discoveryOnly)
 		}

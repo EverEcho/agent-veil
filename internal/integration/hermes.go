@@ -96,7 +96,7 @@ type hermesConfig struct {
 
 // ParseHermesConfig enumerates every configured model and MCP route without
 // retaining credential values. Resolved routes using protocols supported by
-// the Hermes launch adapter are marked rewritable; Inspector suppresses that
+// the Hermes launch adapter are marked rewritable; Inspector rejects that
 // claim for versions outside the verified compatibility matrix.
 func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 	if len(content) == 0 || len(content) > maxHermesConfigBytes {
@@ -206,6 +206,13 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 		}
 		return result
 	}
+	if inherited != nil && (strings.EqualFold(providerName, "auto") || strings.EqualFold(providerName, "custom") && strings.TrimSpace(route.BaseURL) == "" && !hermesProviderConfigured(providers, providerName)) {
+		result := *inherited
+		if model != "" {
+			result.model = model
+		}
+		return result
+	}
 	_, userDefinedProvider := providers[providerName]
 	stableBuiltin := !userDefinedProvider && hermesStableBuiltinProvider(providerName)
 	if inherited != nil && (inherited.explicitRoute || stableBuiltin) && providerName != "" && providerName == inherited.provider && !hermesModelSpecificProvider(providerName) && strings.TrimSpace(route.BaseURL) == "" && strings.TrimSpace(route.APIMode) == "" {
@@ -241,6 +248,11 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 		return resolvedHermesRoute{}
 	}
 	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType, model: model, provider: providerName, explicitRoute: strings.TrimSpace(route.BaseURL) != "" && strings.TrimSpace(route.APIMode) != ""}
+}
+
+func hermesProviderConfigured(providers map[string]hermesProvider, name string) bool {
+	provider, ok := providers[name]
+	return ok && (strings.TrimSpace(provider.API) != "" || strings.TrimSpace(provider.BaseURL) != "")
 }
 
 func hermesStableBuiltinProvider(value string) bool {

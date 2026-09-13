@@ -123,12 +123,11 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 			setHermesScalar(headers, "X-Veil-Route-Token", binding.Token)
 			continue
 		}
-		if provider := hermesMappingValue(target.node, "provider"); provider != nil && strings.EqualFold(strings.TrimSpace(provider.Value), "main") {
-			primaryProvider := strings.TrimSpace(decoded.Model.Provider)
-			if primaryProvider == "" {
-				return nil, hermesRewriteError("a route inheriting the primary provider cannot be rewritten")
+		if provider := hermesMappingValue(target.node, "provider"); provider != nil {
+			resolvedProvider := strings.TrimSpace(byID[target.id].Metadata["provider"])
+			if resolvedProvider != "" && !strings.EqualFold(strings.TrimSpace(provider.Value), resolvedProvider) {
+				setHermesScalar(target.node, "provider", resolvedProvider)
 			}
-			setHermesScalar(target.node, "provider", primaryProvider)
 		}
 		setHermesScalar(target.node, "base_url", baseURL)
 		setHermesScalar(target.node, "api_mode", hermesTransport(target.protocol))

@@ -156,6 +156,34 @@ func TestHermesConfigAcceptsCurrentScalarPrimaryModel(t *testing.T) {
 	}
 }
 
+func TestHermesAuxiliaryAutoAndUnconfiguredCustomFallBackToMainRuntime(t *testing.T) {
+	content := []byte(`
+model:
+  provider: openai-codex
+  model: gpt-5
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+auxiliary:
+  automatic:
+    provider: auto
+  legacy_custom:
+    provider: custom
+    model: helper
+`)
+	slots, _, err := ParseHermesConfig(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 3 {
+		t.Fatalf("slots=%+v", slots)
+	}
+	for _, slot := range slots[1:] {
+		if slot.Protocol != domain.ProtocolOpenAIResponses || slot.BaseURL != "https://chatgpt.com/backend-api/codex" || slot.Metadata["provider"] != "openai-codex" || !slot.Rewritable {
+			t.Fatalf("runtime fallback was not mirrored: %+v", slot)
+		}
+	}
+}
+
 func TestHermesProtocolMirrors0206ConfigAliases(t *testing.T) {
 	tests := map[domain.Protocol][]string{
 		domain.ProtocolOpenAIChat:      {"chat_completions", "openai_chat", "openai", "openai-chat", "chat-completions", "chatcompletions"},
@@ -203,8 +231,8 @@ auxiliary:
 		t.Fatalf("same-provider auxiliary did not inherit primary route: %+v", approval)
 	}
 	dynamic := byID["aux-dynamic"]
-	if dynamic.Protocol != domain.ProtocolUnknown || dynamic.BaseURL != "" {
-		t.Fatalf("dynamic provider inherited an unrelated route: %+v", dynamic)
+	if dynamic.Protocol != domain.ProtocolOpenAIResponses || dynamic.BaseURL != "https://chatgpt.com/backend-api/codex" || dynamic.Metadata["model_ref"] != "selected-at-runtime" {
+		t.Fatalf("auto provider did not mirror the main runtime: %+v", dynamic)
 	}
 }
 
