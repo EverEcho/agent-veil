@@ -31,13 +31,11 @@
 ## 3. ADR 状态
 
 - 桌面技术栈、托盘/自启动/升级机制和 Core 安装生命周期：**待决策**；
-- Policy v1 JSON、Scope 优先级、显式 BLOCK 不降级与原子持久化：**实现已锁定，仍需迁移 ADR**；
-- HMAC-SHA256 Session 稳定占位符、截取长度、碰撞阻断和请求级 Vault：**实现已锁定，仍需 prompt cache 影响 ADR**；
-- `SHA-256(chunk)` 有界缓存只保存 Finding 相对位置、不保存原文，策略逐请求重算：**实现已锁定**；
-- Bedrock SigV4、Vertex OAuth 与 Custom Auth 的运行时凭据边界：**接口已锁定，新增 Provider 前需逐项安全 ADR**；
-- 透明 MITM CA 的生成、安装、轮换、吊销和卸载：**Linux 原语与回滚已实现，完整产品 ADR 和 macOS/Windows 方案未完成**；
-- 规则包与模型包使用独立 Ed25519 trust root、规范签名载荷、原子激活和回滚：**实现已锁定，分发与紧急更新流程未完成**；
-- 进程出口观察与阻断权限模型：**Linux 观察和启动进程组 fail-closed 已实现，跨平台与 pre-connect 阻断 ADR 未完成**。
+- Policy v1 JSON、Scope 优先级、显式 BLOCK 不降级与原子持久化：[ADR-0001](./adr/0001-policy-document-and-precedence.md) **已接受**；
+- HMAC-SHA256 Session 稳定占位符、请求级 Vault，以及 `SHA-256(path || NUL || chunk)` 有界 Finding 缓存：[ADR-0002](./adr/0002-placeholder-vault-and-detection-cache.md) **已接受**；
+- Bedrock SigV4、Vertex OAuth 与 Custom Auth 的运行时凭据边界：[ADR-0003](./adr/0003-runtime-credential-boundary.md) **已接受当前接口**，新增 Provider 前需逐项安全 ADR；
+- 规则包与模型包的独立 Ed25519 trust root、规范签名载荷、原子激活和回滚：[ADR-0004](./adr/0004-signed-rule-and-model-artifacts.md) **已接受**，分发与紧急更新流程未完成；
+- 透明 MITM CA 生命周期、进程作用域和观察/保护表述：[ADR-0005](./adr/0005-transparent-mode-boundary.md) **部分接受**，完整数据面、跨平台与 pre-connect 阻断未完成。
 
 ## 4. 产品表述边界
 

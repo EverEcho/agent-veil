@@ -15,6 +15,7 @@ AgentVeil 是一个本地优先的 AI Agent 数据安全控制层。它在模型
 | [05-detection-and-policy.md](./05-detection-and-policy.md) | 检测管线、占位符、Vault、策略模型 | 算法、研发、测试 |
 | [06-development-roadmap.md](./06-development-roadmap.md) | 分阶段路线图、里程碑、质量门禁 | 全体成员 |
 | [07-decisions-and-open-questions.md](./07-decisions-and-open-questions.md) | 已收敛决策、待验证事项和非目标 | 产品、架构 |
+| [adr/](./adr/README.md) | 已接受安全决策、后果、验证证据和开放边界 | 架构、安全、研发 |
 
 ## 一句话架构
 
