@@ -329,7 +329,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := *route.Upstream
-	target.Path = joinBasePath(route.Upstream.Path, endpoint)
+	target.Path = protectedTargetPath(route.Protocol, route.Upstream.Path, endpoint)
 	target.RawQuery = r.URL.RawQuery
 	upstreamRequest, err := http.NewRequestWithContext(requestContext, r.Method, target.String(), bytes.NewReader(processed.Body))
 	if err != nil {
@@ -492,6 +492,16 @@ func joinBasePath(basePath, endpoint string) string {
 	}
 	parts := append(append([]string(nil), base...), suffix[overlap:]...)
 	return "/" + strings.Join(parts, "/")
+}
+
+// MCP configuration URLs identify the complete transport endpoint rather than
+// an API base. The local canonical /mcp suffix exists only so Core can select
+// the strict adapter and must never be appended to the fixed upstream path.
+func protectedTargetPath(protocolType domain.Protocol, basePath, endpoint string) string {
+	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable {
+		return basePath
+	}
+	return joinBasePath(basePath, endpoint)
 }
 
 func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) (pipeline.TextResult, error) {

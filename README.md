@@ -16,7 +16,9 @@ conservatively than discovered traffic.
   version-negotiated management APIs, bounded and strict CLI response envelopes,
   bounded concurrency, failure-wiped capability generation, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
-  Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
+  Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP; remote MCP
+  forwarding preserves the exact configured transport endpoint instead of
+  appending the Core's local canonical `/mcp` adapter path;
 - bounded request-header and query DLP with policy-aware value redaction,
   fail-closed sensitive key handling, and explicit Provider-auth exceptions;
   incremental SSE protection with cross-chunk secret detection and placeholder

@@ -1034,6 +1034,40 @@ func TestMCPStreamableForwardsImplementedVersion(t *testing.T) {
 	}
 }
 
+func TestMCPRoutesUseExactConfiguredUpstreamPath(t *testing.T) {
+	for _, protocolType := range []domain.Protocol{domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable} {
+		t.Run(string(protocolType), func(t *testing.T) {
+			providerPath := ""
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				providerPath = r.URL.Path
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`))
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			upstream.Path = "/custom/rpc"
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"mcp"}, time.Minute)
+			handler, err := NewHandler(manager, []Route{{ID: "mcp", Protocol: protocolType, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/route/mcp/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			if protocolType == domain.ProtocolMCPStreamable {
+				setMCPAccept(request)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK || providerPath != "/custom/rpc" {
+				t.Fatalf("status=%d provider path=%q body=%s", recorder.Code, providerPath, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestMCPStreamableGETUsesConnectionLifetimeInsteadOfClientTimeout(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(30 * time.Millisecond)
