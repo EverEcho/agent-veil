@@ -146,3 +146,63 @@ jobs:
           format: spdx-json
           output-file: veil-linux-amd64.spdx.json
           upload-release-assets: false
+
+  release-evidence:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, cross-build, reproducible-build, vulnerability-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.23.x"
+          cache: true
+      - name: Build release subjects
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            suffix=""
+            if [ "${GOOS}" = windows ]; then suffix=".exe"; fi
+            GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath -buildvcs=false -o "dist/veil-${GOOS}-${GOARCH}${suffix}" ./cmd/veil
+          done
+          sha256sum dist/veil-* > dist/SHA256SUMS
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: dist/veil-linux-amd64
+          format: spdx-json
+          output-file: dist/veil-linux-amd64.spdx.json
+          upload-release-assets: false
+      - name: Attest release build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            dist/veil-linux-amd64
+            dist/veil-linux-arm64
+            dist/veil-darwin-amd64
+            dist/veil-darwin-arm64
+            dist/veil-windows-amd64.exe
+            dist/veil-windows-arm64.exe
+            dist/SHA256SUMS
+      - name: Attest Linux SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: dist/veil-linux-amd64
+          sbom-path: dist/veil-linux-amd64.spdx.json
+      - name: Upload attested release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentveil-${{ github.ref_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30

@@ -85,7 +85,10 @@ conservatively than discovered traffic.
   time-bounded protocol-body, endpoint-traversal, SSE, exact capability-tuple,
   and Upstream origin-confusion fuzzing, reachable-vulnerability and dependency
   review gates, sensitive-Canary test-log scanning that withholds leaking output,
-  and SPDX JSON SBOM generation;
+  and SPDX JSON SBOM generation. Version tags additionally produce six release
+  binaries plus checksums, bind them to GitHub/Sigstore build-provenance
+  attestations, bind the Linux binary to its SPDX SBOM, and retain the complete
+  evidence bundle as an immutable workflow artifact;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration and protected launch for same-runtime
@@ -228,5 +231,5 @@ go vet ./...
 
 The repository is still under active development. Native/managed integrations,
 complete desktop UX, production transparent MITM and OS enforcement, local
-semantic-model distribution, signed installers, release attestation, and the
+semantic-model distribution, signed installers, release publication, and the
 formal release process remain open.
