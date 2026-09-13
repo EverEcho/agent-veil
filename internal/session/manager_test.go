@@ -316,3 +316,31 @@ func TestContainsRouteValidatesLiveManagementOwnership(t *testing.T) {
 		t.Fatal("expired route ownership remained valid")
 	}
 }
+
+func TestOnlySingleRouteChildCanRevokeItself(t *testing.T) {
+	m := NewManager()
+	parent, err := m.Create("", "local", []string{"primary", "fallback"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := m.Create(parent.Session.ID, "local", []string{"primary"}, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandchild, err := m.Create(child.Session.ID, "local", []string{"primary"}, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.DeleteChildAuthorized(parent.Session.ID, "primary", parent.Routes[0].Token) {
+		t.Fatal("root session revoked itself through child authority")
+	}
+	if m.DeleteChildAuthorized(child.Session.ID, "primary", parent.Routes[0].Token) {
+		t.Fatal("parent route token revoked a child session")
+	}
+	if !m.DeleteChildAuthorized(child.Session.ID, "primary", child.Routes[0].Token) {
+		t.Fatal("single-route child could not revoke itself")
+	}
+	if !m.Authorize(parent.Session.ID, "primary", parent.Routes[0].Token) || m.Authorize(grandchild.Session.ID, "primary", grandchild.Routes[0].Token) {
+		t.Fatal("child self-revocation affected its parent or retained its descendant")
+	}
+}

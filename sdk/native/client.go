@@ -195,6 +195,19 @@ func (c *RouteClient) CreateChild(ctx context.Context, ttl time.Duration) (Child
 	return result, err
 }
 
+// Delete revokes this Session only when the capability belongs to a
+// single-route child Session. Root Session deletion remains management-only.
+func (c *RouteClient) Delete(ctx context.Context) error {
+	if c == nil || ctx == nil {
+		return domain.NewError(domain.ErrInvalidContract, "delete nested child session", "client and context are required")
+	}
+	path := "/v1/sessions/" + url.PathEscape(c.sessionID) + "/routes/" + url.PathEscape(c.routeID)
+	return doJSONRequest(ctx, c.http, c.endpoint, http.MethodDelete, path, nil, http.StatusNoContent, nil, func(header http.Header) {
+		header.Set("X-Veil-Session", c.sessionID)
+		header.Set("X-Veil-Route-Token", c.token)
+	})
+}
+
 func boundedHTTPClient(transport *http.Client) *http.Client {
 	client := http.DefaultClient
 	if transport != nil {

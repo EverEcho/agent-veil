@@ -76,8 +76,18 @@ func TestRouteClientCreatesScopedChildSession(t *testing.T) {
 	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
 		t.Fatalf("child=%+v err=%v", child, err)
 	}
-	if !manager.Delete(parent.Session.ID) || manager.Authorize(child.Session.ID, child.Routes[0].RouteID, child.Routes[0].Token) {
-		t.Fatal("parent revocation did not revoke SDK-created child")
+	childClient, err := NewRouteClient(server.Endpoint(), child.Session.ID, child.Routes[0].RouteID, child.Routes[0].Token, nil)
+	if err != nil {
+		t.Fatalf("child self-revocation failed: %v", err)
+	}
+	if err := childClient.Delete(context.Background()); err != nil {
+		t.Fatalf("child self-revocation failed: %v", err)
+	}
+	if manager.Authorize(child.Session.ID, child.Routes[0].RouteID, child.Routes[0].Token) || !manager.Authorize(parent.Session.ID, parent.Routes[0].RouteID, parent.Routes[0].Token) {
+		t.Fatal("child self-revocation retained the child or revoked its parent")
+	}
+	if err := client.Delete(context.Background()); err == nil {
+		t.Fatal("root session self-revocation was accepted")
 	}
 }
 

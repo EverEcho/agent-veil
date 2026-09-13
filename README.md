@@ -52,7 +52,9 @@ conservatively than discovered traffic.
   disconnect;
 - route-capability-authenticated child Session creation that can only reuse the
   authenticated parent Route, cannot outlive its parent or enable interaction,
-  shares the existing Core, and is revoked by parent-session deletion;
+  shares the existing Core, is revoked by parent-session deletion, and can
+  explicitly self-revoke on normal nested-process exit without gaining the
+  authority to delete a root or multi-Route Session;
 - manager-level nested Session inheritance that prevents every child creation
   path, including the management API, from switching Core endpoints or adding
   Routes that its parent does not own;

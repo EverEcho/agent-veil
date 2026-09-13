@@ -260,6 +260,29 @@ func (m *Manager) Delete(id string) bool {
 	return true
 }
 
+// DeleteChildAuthorized lets a single-route nested process revoke only its own
+// child Session. Root and multi-route Sessions remain management-plane only.
+func (m *Manager) DeleteChildAuthorized(sessionID, routeID, token string) bool {
+	if sessionID == "" || routeID == "" || token == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.sessions[sessionID]
+	if !ok {
+		return false
+	}
+	if !entry.session.ExpiresAt.After(m.now()) {
+		m.deleteCascadeLocked(sessionID)
+		return false
+	}
+	if entry.session.ParentSessionID == "" || len(entry.routes) != 1 || entry.routes[0].routeID != routeID || !constantTimeBytesStringEqual(entry.routes[0].token, token) {
+		return false
+	}
+	m.deleteCascadeLocked(sessionID)
+	return true
+}
+
 func (m *Manager) PruneExpired() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

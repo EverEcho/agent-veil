@@ -286,6 +286,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v1/sessions", s.auth(s.createSession))
 	mux.HandleFunc("POST /v1/sessions/{parent}/routes/{route}/children", s.createChildSession)
+	mux.HandleFunc("DELETE /v1/sessions/{session}/routes/{route}", s.deleteChildSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.auth(s.deleteSession))
 	mux.HandleFunc("GET /v1/agents", s.auth(s.listAgents))
 	mux.HandleFunc("GET /v1/agents/{id}", s.auth(s.getAgent))
@@ -1234,6 +1235,19 @@ func (s *Server) createChildSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) deleteChildSession(w http.ResponseWriter, r *http.Request) {
+	if !validVersionedLocalRequest(w, r) {
+		return
+	}
+	sessionID, routeID := r.PathValue("session"), r.PathValue("route")
+	sessionValues, tokenValues := r.Header.Values(veilproxy.HeaderSession), r.Header.Values(veilproxy.HeaderRouteToken)
+	if len(sessionValues) != 1 || len(tokenValues) != 1 || sessionValues[0] != sessionID || !s.manager.DeleteChildAuthorized(sessionID, routeID, tokenValues[0]) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) routeExists(routeID string) bool {
