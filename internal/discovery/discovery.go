@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -382,7 +383,43 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 	default:
 		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "agent has no integration")
 	}
+	if versions := d.Verified[name]; versions == nil {
+		downgradeUnverifiedConfig(&config)
+	} else if _, verified := versions[version]; !verified {
+		downgradeUnverifiedConfig(&config)
+	}
 	return (integration.Inspector{VerifiedVersions: d.Verified}).Inspect(config)
+}
+
+func downgradeUnverifiedConfig(config *integration.Config) {
+	if config == nil {
+		return
+	}
+	for index := range config.Slots {
+		config.Slots[index].Rewritable = false
+	}
+	for index := range config.Observed {
+		config.Observed[index].Rewritable = false
+	}
+	used := make(map[string]struct{}, len(config.Slots)+len(config.Observed))
+	hasRequiredUnknown := false
+	for _, slot := range append(append([]integration.Slot(nil), config.Slots...), config.Observed...) {
+		used[slot.ID] = struct{}{}
+		if (slot.Type == domain.SurfaceUnknown || slot.Protocol == domain.ProtocolUnknown) && slot.Required {
+			hasRequiredUnknown = true
+		}
+	}
+	if hasRequiredUnknown {
+		return
+	}
+	id := "version-compatibility"
+	for suffix := 2; ; suffix++ {
+		if _, exists := used[id]; !exists {
+			break
+		}
+		id = fmt.Sprintf("version-compatibility-%d", suffix)
+	}
+	config.Observed = append(config.Observed, integration.Slot{ID: id, Name: "Unverified version egress", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true, Metadata: map[string]string{"reason": "agent version has no verified complete Surface inventory"}})
 }
 
 func openCodeUnknownSlot(id, reason string) integration.Slot {

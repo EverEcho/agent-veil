@@ -232,8 +232,44 @@ func TestUnverifiedOpenClawStillReturnsRiskManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Agent.Metadata["compatibility"] != "unverified" || len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Rewritable {
+	if manifest.Agent.Metadata["compatibility"] != "unverified" || len(manifest.Surfaces) != 2 || manifest.Surfaces[0].Rewritable || manifest.Surfaces[1].Type != domain.SurfaceUnknown || !manifest.Surfaces[1].Required {
 		t.Fatalf("manifest=%+v", manifest)
+	}
+}
+
+func TestUnverifiedProtectedAgentsReturnRiskOnlyManifests(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		version     string
+		config      string
+		environment map[string]string
+	}{
+		{name: "codex", version: "codex-cli 99.0.0"},
+		{name: "claude", version: "claude 99.0.0", environment: map[string]string{"ANTHROPIC_API_KEY": "must-not-enter-manifest"}},
+		{name: "hermes", version: "Hermes Agent v99.0.0", config: hermesConfigFixtureForDiscovery},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			d := Discoverer{System: fakeSystem{version: test.version, config: test.config, environment: test.environment}, Verified: map[string]map[string]struct{}{}}
+			manifest, err := d.Inspect(context.Background(), test.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if manifest.Agent.Metadata["compatibility"] != "unverified" {
+				t.Fatalf("compatibility metadata=%+v", manifest.Agent.Metadata)
+			}
+			unknown := false
+			for _, surface := range manifest.Surfaces {
+				if surface.Rewritable {
+					t.Fatalf("unverified surface remained rewritable: %+v", surface)
+				}
+				if surface.Type == domain.SurfaceUnknown && surface.Required {
+					unknown = true
+				}
+			}
+			if !unknown {
+				t.Fatalf("unverified manifest omitted required compatibility gap: %+v", manifest.Surfaces)
+			}
+		})
 	}
 }
 

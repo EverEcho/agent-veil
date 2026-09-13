@@ -132,7 +132,8 @@ conservatively than discovered traffic.
   attestations, bind the Linux binary to its SPDX SBOM, and retain the complete
   evidence bundle as an immutable workflow artifact;
 - risk-only inspection for unverified Agent versions, which cannot publish a
-  rewritable surface or claim protected coverage; the compatibility inventory
+  rewritable surface or claim protected coverage and includes a required unknown
+  Surface whenever the parsed configuration otherwise looks complete; the compatibility inventory
   records verified mode, platform, Surface type, protocol, authentication, and
   coverage independently and rejects Protected records with unknown dimensions.
   Inspection also fails closed when the user configuration directory is
