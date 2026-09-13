@@ -49,6 +49,10 @@ conservatively than discovered traffic.
 - generation-bound Native integration leases, route capabilities, and heartbeats
   that revoke stale active plans after plugin failure, reconfiguration, or
   disconnect;
+- a strict Go Native Integration SDK in `sdk/native` for trusted host
+  controllers to report manifests, renew leases, and remove only their current
+  generation; it accepts numeric loopback Core endpoints only and contains no
+  DLP implementation;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
