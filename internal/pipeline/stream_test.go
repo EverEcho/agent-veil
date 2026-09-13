@@ -89,6 +89,19 @@ func TestSSEProtocolMatrixBlocksNewCredentials(t *testing.T) {
 	}
 }
 
+func TestSSEProcessorReportsBlockedFindingMetadata(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
+	processor, _ := NewSSEProcessor(domain.ProtocolOpenAIResponses, detector.NewDefault(), vault, 4096, 128)
+	payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": "ghp_abcdefghijklmnopqrstuvwxyz"})
+	if output, err := processor.Push([]byte("data: " + string(payload) + "\n\n")); err == nil || len(output) != 0 {
+		t.Fatalf("credential was not blocked: output=%q err=%v", output, err)
+	}
+	result := processor.Result()
+	if len(result.Findings) != 1 || result.Findings[0].Category != "secret.github_pat" || len(result.Actions) != 1 || result.Actions[0] != domain.ActionBlock {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func TestSSEProtocolErrorsCannotEchoSensitiveContent(t *testing.T) {
 	body := []byte("data: {\"error\":{\"message\":\"request contained dev@example.com\"}}\n\n")
 	for _, protocolType := range []domain.Protocol{domain.ProtocolOpenAIChat, domain.ProtocolOpenAIResponses, domain.ProtocolAnthropic, domain.ProtocolGemini, domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable} {

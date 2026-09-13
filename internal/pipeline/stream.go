@@ -25,7 +25,18 @@ type SSEProcessor struct {
 	decoder    *veilstream.Decoder
 	lookbehind int
 	pending    []streamDocument
+	findings   []domain.Finding
 	closed     bool
+}
+
+// Result returns detection metadata only; sensitive match values are never
+// retained by the streaming processor.
+func (p *SSEProcessor) Result() TextResult {
+	result := TextResult{Findings: append([]domain.Finding(nil), p.findings...)}
+	for range result.Findings {
+		result.Actions = append(result.Actions, domain.ActionBlock)
+	}
+	return result
 }
 
 func NewSSEProcessor(protocolType domain.Protocol, scanner detector.ContentScanner, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
@@ -90,6 +101,9 @@ func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 		return nil, err
 	}
 	if len(matches) > 0 {
+		for _, match := range matches {
+			p.findings = append(p.findings, match.Finding)
+		}
 		return nil, domain.NewError(domain.ErrPolicyBlocked, "process stream", "provider stream contains credential-shaped content")
 	}
 	emitCount := len(p.pending)

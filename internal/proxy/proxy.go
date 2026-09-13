@@ -413,7 +413,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if protocol.MediaTypeIs(responseContentType, "text/event-stream") {
-		if err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol); err != nil {
+		streamResult, err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol)
+		processed.Findings = append(processed.Findings, streamResult.Findings...)
+		processed.Actions = append(processed.Actions, streamResult.Actions...)
+		applyAuditResult(&auditEvent, processed)
+		if err != nil {
 			auditEvent.Action = domain.ActionBlock
 			auditEvent.ErrorCode = errorCodeValue(err)
 		}
@@ -477,10 +481,11 @@ func joinBasePath(basePath, endpoint string) string {
 	return "/" + strings.Join(parts, "/")
 }
 
-func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) error {
+func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) (pipeline.TextResult, error) {
+	var result pipeline.TextResult
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		fail(w, http.StatusInternalServerError, "STREAM_DEADLINE_FAILURE")
-		return domain.NewError(domain.ErrInvalidContract, "stream response", "cannot clear streaming write deadline")
+		return result, domain.NewError(domain.ErrInvalidContract, "stream response", "cannot clear streaming write deadline")
 	}
 	maxEventBytes := int64(1 << 20)
 	if maxBytes < maxEventBytes {
@@ -489,7 +494,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 	processor, err := pipeline.NewSSEProcessor(protocolType, h.scanner, vault, int(maxEventBytes), 512)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
-		return err
+		return result, err
 	}
 	wroteHeader := false
 	writeChunk := func(chunk []byte) error {
@@ -525,15 +530,15 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 			if total > maxBytes {
 				err := domain.NewError(domain.ErrInvalidContract, "read stream", "response body limit exceeded")
 				failBeforeWrite(http.StatusBadGateway, "RESPONSE_TOO_LARGE")
-				return err
+				return processor.Result(), err
 			}
 			processed, processErr := processor.Push(buffer[:read])
 			if processErr != nil {
 				failBeforeWrite(http.StatusForbidden, errorCode(processErr))
-				return processErr
+				return processor.Result(), processErr
 			}
 			if err := writeChunk(processed); err != nil {
-				return err
+				return processor.Result(), err
 			}
 		}
 		if readErr == io.EOF {
@@ -541,16 +546,16 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 		}
 		if readErr != nil {
 			failBeforeWrite(http.StatusBadGateway, "UPSTREAM_FAILURE")
-			return readErr
+			return processor.Result(), readErr
 		}
 	}
 	tail, err := processor.Close()
 	if err != nil {
 		failBeforeWrite(http.StatusForbidden, errorCode(err))
-		return err
+		return processor.Result(), err
 	}
 	if err := writeChunk(tail); err != nil {
-		return err
+		return processor.Result(), err
 	}
 	if !wroteHeader {
 		copyHeaders(w.Header(), response.Header)
@@ -558,7 +563,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 		secureResponseHeaders(w.Header())
 		w.WriteHeader(response.StatusCode)
 	}
-	return nil
+	return processor.Result(), nil
 }
 
 func splitRoutePath(path string) (string, string, bool) {
