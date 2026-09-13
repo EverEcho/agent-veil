@@ -52,7 +52,9 @@ conservatively than discovered traffic.
   Its live Core status distinguishes healthy/degraded API, audit failure counts,
   and required semantic availability. A browser-language-aware English/Simplified
   Chinese localization layer covers static controls and dynamically inserted
-  actions while persisting only the locale preference;
+  actions while persisting only the locale preference. A plain-language safety
+  guide explains every coverage class, request-scoped sensitive-data lifetime,
+  metadata-only retention, and the limits of detection and compliance claims;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans,
   available from both CLI and a user-triggered local Dashboard download;
