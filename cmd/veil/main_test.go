@@ -57,6 +57,17 @@ func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing
 	}
 }
 
+func TestProtectedChildEnvironmentNeverInheritsCoreAdminToken(t *testing.T) {
+	environment := protectedChildEnvironment(
+		[]string{"PATH=/bin", "VEIL_ADMIN_TOKEN=management-secret", "veil_admin_token=case-variant"},
+		map[string]string{"VEIL_SESSION_ID": "session", "VEIL_ADMIN_TOKEN": "override-secret"},
+	)
+	joined := strings.Join(environment, "\n")
+	if strings.Contains(strings.ToLower(joined), "veil_admin_token=") || !strings.Contains(joined, "VEIL_SESSION_ID=session") || !strings.Contains(joined, "PATH=/bin") {
+		t.Fatalf("protected child environment=%v", environment)
+	}
+}
+
 func TestLocalNoProxyPreservesExistingRulesAndAddsCoreAuthorities(t *testing.T) {
 	value := localNoProxy("corp.example, localhost", ".internal,127.0.0.1")
 	for _, required := range []string{"corp.example", ".internal", "127.0.0.1", "localhost", "::1"} {

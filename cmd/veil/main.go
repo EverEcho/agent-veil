@@ -179,7 +179,7 @@ func runProtected(ctx context.Context, name string, childArgs []string) (resultE
 	command := exec.CommandContext(childContext, launch.Executable, args...)
 	configureProtectedCommand(command)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	command.Env = overlayEnvironment(os.Environ(), launch.Environment)
+	command.Env = protectedChildEnvironment(os.Environ(), launch.Environment)
 	if err := command.Start(); err != nil {
 		cancelChild()
 		<-leaseResult
@@ -294,6 +294,25 @@ func overlayEnvironment(base []string, overrides map[string]string) []string {
 		result = append(result, key+"="+value)
 	}
 	return result
+}
+
+func protectedChildEnvironment(base []string, overrides map[string]string) []string {
+	filteredBase := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, found := strings.Cut(entry, "=")
+		if found && strings.EqualFold(key, "VEIL_ADMIN_TOKEN") {
+			continue
+		}
+		filteredBase = append(filteredBase, entry)
+	}
+	filteredOverrides := make(map[string]string, len(overrides))
+	for key, value := range overrides {
+		if strings.EqualFold(key, "VEIL_ADMIN_TOKEN") {
+			continue
+		}
+		filteredOverrides[key] = value
+	}
+	return overlayEnvironment(filteredBase, filteredOverrides)
 }
 
 func localNoProxy(values ...string) string {
