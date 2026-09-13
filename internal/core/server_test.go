@@ -27,6 +27,7 @@ import (
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/feedback"
 	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
@@ -168,7 +169,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
 		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
 	}
-	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ASK is shown as an interactive preview", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
+	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ASK is shown as an interactive preview", "input cleared", "/v1/feedback/false-positives", "reportFalsePositive", "Mark false positive", "metadata only", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
@@ -718,6 +719,67 @@ func TestDetectionTestAPIPreviewsMostSpecificPolicyWithoutEchoingInput(t *testin
 	s.auth(s.testDetection)(recorder, request)
 	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "INVALID_DETECTION_SCOPE") {
 		t.Fatalf("invalid scope status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestFalsePositiveFeedbackPersistsOnlyDetectionMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "feedback.json")
+	store, err := feedback.NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithFeedbackStore(store); err != nil {
+		t.Fatal(err)
+	}
+	finding := domain.Finding{RuleID: "pii.email", Category: "pii.email", Detector: "regex", Severity: domain.SeverityHigh, Confidence: 1, SuggestedAction: domain.ActionRedact, Location: domain.ContentLocation{Path: "/test-input", Start: 8, End: 27}}
+	payload, _ := json.Marshal(map[string]any{
+		"finding":        finding,
+		"policy_action":  domain.ActionAsk,
+		"policy_context": policy.Scope{AgentID: "agent-a", FindingType: "pii.email"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/feedback/false-positives", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.reportFalsePositive(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	entries, err := store.Recent()
+	if err != nil || len(entries) != 1 || entries[0].RuleID != "pii.email" || entries[0].PolicyAction != domain.ActionAsk || entries[0].Scope.AgentID != "agent-a" {
+		t.Fatalf("entries=%+v err=%v", entries, err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "private@example.com") {
+		t.Fatal("feedback store retained sensitive input")
+	}
+}
+
+func TestFalsePositiveFeedbackRejectsUntrustedOrUnavailableReports(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.reportFalsePositive(recorder, httptest.NewRequest(http.MethodPost, "/v1/feedback/false-positives", strings.NewReader(`{}`)))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable store status=%d", recorder.Code)
+	}
+	store, err := feedback.NewStore(filepath.Join(t.TempDir(), "private", "feedback.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WithFeedbackStore(store); err != nil {
+		t.Fatal(err)
+	}
+	invalid := `{"finding":{"rule_id":"pii.email","category":"pii.email","severity":"high","location":{"path":"/test-input","start":0,"end":1},"confidence":1,"detector":"regex","suggested_action":"redact"},"policy_action":"redact","policy_context":{"finding_type":"pii.email"},"text":"private@example.com"}`
+	recorder = httptest.NewRecorder()
+	s.reportFalsePositive(recorder, httptest.NewRequest(http.MethodPost, "/v1/feedback/false-positives", strings.NewReader(invalid)))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("untrusted report status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if entries, err := store.Recent(); err != nil || len(entries) != 0 {
+		t.Fatalf("rejected feedback was retained: entries=%+v err=%v", entries, err)
 	}
 }
 

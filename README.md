@@ -188,6 +188,11 @@ without loading the full model into JavaScript memory. Core health reports
 `required_unavailable` and a degraded status whenever mandatory semantic
 inference cannot run.
 
+Rule-test false-positive feedback is retained locally as bounded, validated
+metadata in the private AgentVeil configuration directory. It never stores the
+test value, match replacement, free-form text, or credentials. Set
+`VEIL_FEEDBACK_PATH` to an absolute path to override `feedback.json`.
+
 Other commands discover the active random loopback endpoint from a 0600 local
 state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 

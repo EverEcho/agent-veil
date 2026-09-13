@@ -26,6 +26,7 @@ import (
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/feedback"
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
@@ -846,6 +847,17 @@ func serve() error {
 		return err
 	}
 	server.WithAuditor(auditStore)
+	feedbackPath := os.Getenv("VEIL_FEEDBACK_PATH")
+	if feedbackPath == "" {
+		feedbackPath = filepath.Join(configDir, "feedback.json")
+	}
+	feedbackStore, err := feedback.NewStore(feedbackPath)
+	if err != nil {
+		return err
+	}
+	if err := server.WithFeedbackStore(feedbackStore); err != nil {
+		return err
+	}
 	if err := server.Start(); err != nil {
 		return err
 	}
