@@ -61,12 +61,13 @@ func TestPrepareHermesLaunchOwnsTemporaryHomeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent := domain.AgentInstance{Kind: "hermes", Mode: domain.ModeLaunch, Executable: "/usr/bin/hermes"}
-	plan, err := PrepareHermesLaunch(agent, []string{"chat"}, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), sourceHome, []byte("model: protected\n"), map[string]string{"HERMES_CODEX_BASE_URL": "http://127.0.0.1:9191/route/primary/v1"})
+	launchRoot := filepath.Join(t.TempDir(), "launches")
+	plan, err := PrepareHermesLaunch(agent, []string{"chat"}, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), sourceHome, launchRoot, []byte("model: protected\n"), map[string]string{"HERMES_CODEX_BASE_URL": "http://127.0.0.1:9191/route/primary/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	home := plan.Environment["HERMES_HOME"]
-	if home == "" || home == sourceHome {
+	if home == "" || home == sourceHome || filepath.Dir(home) != launchRoot {
 		t.Fatalf("unsafe HERMES_HOME override %q", home)
 	}
 	if plan.Environment["HERMES_CODEX_BASE_URL"] != "http://127.0.0.1:9191/route/primary/v1" {
@@ -88,7 +89,7 @@ func TestPrepareHermesLaunchOwnsTemporaryHomeLifecycle(t *testing.T) {
 
 func TestPrepareHermesLaunchRejectsOtherAgentKinds(t *testing.T) {
 	agent := domain.AgentInstance{Kind: "codex", Mode: domain.ModeLaunch, Executable: "/usr/bin/codex"}
-	if _, err := PrepareHermesLaunch(agent, nil, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), t.TempDir(), []byte("model: protected\n"), nil); err == nil {
+	if _, err := PrepareHermesLaunch(agent, nil, "http://127.0.0.1:9191", "0123456789abcdef", "", strings.Repeat("t", 32), t.TempDir(), filepath.Join(t.TempDir(), "launches"), []byte("model: protected\n"), nil); err == nil {
 		t.Fatal("non-Hermes agent received a Hermes launch plan")
 	}
 }

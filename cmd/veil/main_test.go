@@ -21,6 +21,7 @@ import (
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
+	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
@@ -338,6 +339,17 @@ func TestServeClearsCrashedCoreStateBeforeLaterStartupFailure(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configDirectory)
 	t.Setenv("VEIL_ADMIN_TOKEN", "invalid")
 	path := filepath.Join(configDirectory, "agentveil", "core.json")
+	launchRoot := filepath.Join(configDirectory, "agentveil", "launches")
+	if err := integration.ResetHermesLaunchRoot(launchRoot); err != nil {
+		t.Fatal(err)
+	}
+	staleLaunch := filepath.Join(launchRoot, "agentveil-hermes-crashed")
+	if err := os.Mkdir(staleLaunch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleLaunch, "config.yaml"), []byte("credential: stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	instanceID := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32))
 	if err := instance.WriteState(path, instance.State{SchemaVersion: "v1", APIEndpoint: "http://127.0.0.1:4321", InstanceID: instanceID, ProcessID: 7, StartedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
@@ -347,6 +359,9 @@ func TestServeClearsCrashedCoreStateBeforeLaterStartupFailure(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("crashed Core state survived a new instance claim: %v", err)
+	}
+	if _, err := os.Lstat(staleLaunch); !os.IsNotExist(err) {
+		t.Fatalf("crashed Hermes launch resources survived a new instance claim: %v", err)
 	}
 }
 

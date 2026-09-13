@@ -16,15 +16,17 @@ import (
 )
 
 const maxHermesHomeEntries = 4096
+const hermesLaunchRootMarker = ".agentveil-owned-launch-root"
+const hermesLaunchRootMarkerContent = "agentveil-hermes-launches-v1\n"
 
 // PrepareHermesHome creates a private, temporary HERMES_HOME containing the
 // rewritten configuration. Existing Hermes state remains available through
 // symlinks, while the user's config.yaml is never modified.
 func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, error) {
-	return prepareHermesHome(sourceHome, config, nil)
+	return prepareHermesHome(sourceHome, "", config, nil)
 }
 
-func prepareHermesHome(sourceHome string, config []byte, protectedEnvironment map[string]string) (string, func() error, error) {
+func prepareHermesHome(sourceHome, temporaryRoot string, config []byte, protectedEnvironment map[string]string) (string, func() error, error) {
 	if !filepath.IsAbs(sourceHome) || strings.ContainsRune(sourceHome, 0) {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home must be an absolute safe path")
 	}
@@ -43,7 +45,12 @@ func prepareHermesHome(sourceHome string, config []byte, protectedEnvironment ma
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home contains too many entries")
 	}
 
-	temporaryHome, err := os.MkdirTemp("", "agentveil-hermes-")
+	if temporaryRoot != "" {
+		if err := ensureHermesLaunchRoot(temporaryRoot); err != nil {
+			return "", nil, err
+		}
+	}
+	temporaryHome, err := os.MkdirTemp(temporaryRoot, "agentveil-hermes-")
 	if err != nil {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "temporary home could not be created")
 	}
@@ -118,6 +125,83 @@ func prepareHermesHome(sourceHome string, config []byte, protectedEnvironment ma
 		return cleanupErr
 	}
 	return temporaryHome, cleanup, nil
+}
+
+// ResetHermesLaunchRoot removes only AgentVeil-owned launch directories after
+// a new Core has claimed the exclusive instance lock. The ownership marker
+// prevents an accidentally configured path from becoming a deletion target.
+func ResetHermesLaunchRoot(root string) error {
+	if err := ensureHermesLaunchRoot(root); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) > maxHermesHomeEntries+1 {
+		return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "launch root could not be enumerated within its bound")
+	}
+	for _, entry := range entries {
+		if entry.Name() == hermesLaunchRootMarker {
+			continue
+		}
+		if !strings.HasPrefix(entry.Name(), "agentveil-hermes-") {
+			return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "launch root contains an unknown entry")
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "stale launch directory could not be removed")
+		}
+	}
+	if err := syncHermesDirectory(root); err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "launch root cleanup could not be persisted")
+	}
+	return nil
+}
+
+func ensureHermesLaunchRoot(root string) error {
+	if root == "" || !filepath.IsAbs(root) || strings.ContainsRune(root, 0) {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "launch root must be an absolute safe path")
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "launch root is unavailable")
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "launch root permissions or type are unsafe")
+	}
+	marker := filepath.Join(root, hermesLaunchRootMarker)
+	markerInfo, err := os.Lstat(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		entries, readErr := os.ReadDir(root)
+		if readErr != nil || len(entries) != 0 {
+			return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "unmarked launch root is not empty")
+		}
+		file, createErr := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if createErr != nil {
+			return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "ownership marker could not be created")
+		}
+		_, writeErr := file.WriteString(hermesLaunchRootMarkerContent)
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if writeErr != nil || syncErr != nil || closeErr != nil || syncHermesDirectory(root) != nil {
+			return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "ownership marker could not be persisted")
+		}
+		markerInfo, err = os.Lstat(marker)
+	}
+	if err != nil || !markerInfo.Mode().IsRegular() || markerInfo.Mode().Perm()&0o077 != 0 || markerInfo.Size() != int64(len(hermesLaunchRootMarkerContent)) {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "ownership marker is unsafe")
+	}
+	content, readErr := os.ReadFile(marker)
+	if readErr != nil || string(content) != hermesLaunchRootMarkerContent {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Hermes launch root", "ownership marker is invalid")
+	}
+	return nil
+}
+
+func syncHermesDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func readHermesEnvironment(path string) ([]byte, error) {

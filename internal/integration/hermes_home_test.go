@@ -145,7 +145,7 @@ func TestProtectedHermesHomeCopiesCredentialsAndPinsRuntimeEnvironment(t *testin
 		"HERMES_IGNORE_USER_CONFIG": "0",
 		"HERMES_INFERENCE_PROVIDER": "",
 	}
-	protected, cleanup, err := prepareHermesHome(home, []byte("model: protected\n"), overrides)
+	protected, cleanup, err := prepareHermesHome(home, "", []byte("model: protected\n"), overrides)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +184,49 @@ func TestProtectedHermesHomeCopiesCredentialsAndPinsRuntimeEnvironment(t *testin
 	sourceAuth, err := os.ReadFile(filepath.Join(home, "auth.json"))
 	if err != nil || string(sourceAuth) != string(authOriginal) {
 		t.Fatal("source Codex authentication state changed")
+	}
+}
+
+func TestResetHermesLaunchRootRemovesBoundedOwnedResidue(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "launches")
+	if err := ensureHermesLaunchRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(root, "agentveil-hermes-stale")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "config.yaml"), []byte("credential: stale\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetHermesLaunchRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale protected launch survived recovery: %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(root, hermesLaunchRootMarker)); err != nil || string(content) != hermesLaunchRootMarkerContent {
+		t.Fatalf("ownership marker=%q err=%v", content, err)
+	}
+}
+
+func TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "launches")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unknown := filepath.Join(root, "agentveil-hermes-user-data")
+	if err := os.WriteFile(unknown, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetHermesLaunchRoot(root); err == nil {
+		t.Fatal("unmarked non-empty directory was claimed as a cleanup root")
+	}
+	if content, err := os.ReadFile(unknown); err != nil || string(content) != "keep" {
+		t.Fatalf("unknown data changed: %q error=%v", content, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, hermesLaunchRootMarker)); !os.IsNotExist(err) {
+		t.Fatalf("unsafe root was branded as AgentVeil-owned: %v", err)
 	}
 }
 

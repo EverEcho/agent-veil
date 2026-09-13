@@ -126,7 +126,7 @@
 
 - 自动发现 Codex、Claude Code、Hermes、OpenClaw、OpenCode、Cursor、Zed、Cline；
 - 读取并解释模型、Provider、Base URL、Fallback、代理和认证类型；
-- 为 CLI Agent 实现 Protected Launch 和临时配置注入；
+- 为 CLI Agent 实现 Protected Launch 和临时配置注入；Hermes 隔离配置位于 AgentVeil 私有所有权根，并由取得实例锁的新 Core 在崩溃后有界清理；
 - 为支持动态配置的 Agent 实现 Attach、撤销接管和重连；
 - Codex 同时处理 API Key 与 ChatGPT/Codex 登录链路；
 - Claude Code 正确保存 Anthropic Upstream 与网络代理顺序；

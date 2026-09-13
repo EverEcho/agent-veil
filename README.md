@@ -144,7 +144,9 @@ conservatively than discovered traffic.
 - crash-safe Core discovery that atomically persists a random per-process
   identity, removes stale state immediately after claiming the OS instance lock,
   and verifies the unauthenticated identity endpoint before any CLI management
-  request can send the administrator token;
+  request can send the administrator token; Hermes Protected Launch resources
+  live under a marked private AgentVeil root and residue from the previous Core
+  instance is removed only after the new process owns that lock;
 - Hermes 0.20.6 enumeration and protected launch for same-runtime
   `openai-codex` primary, fallback, auxiliary, delegation, and remote MCP
   Streamable HTTP surfaces without

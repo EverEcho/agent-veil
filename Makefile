@@ -12,6 +12,7 @@ verify:
 # in for real-application or target-platform validation.
 acceptance-evidence:
 	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSECannotBorrowImplementedMCPAdapters|TestContentProtectedProtocolsExcludeUnimplementedTransports)$$' -count=1
+	go test ./internal/integration -run '^(TestResetHermesLaunchRootRemovesBoundedOwnedResidue|TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData)$$' -count=1
 	go test ./internal/planner -run '^TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability$$' -count=1
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
 	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath)$$' -count=1

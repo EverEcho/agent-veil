@@ -282,7 +282,12 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 			"HERMES_INFERENCE_PROVIDER": "",
 			"HERMES_TUI_PROVIDER":       "",
 		}
-		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), rewritten, runtimeEnvironment)
+		userConfigDir, configErr := os.UserConfigDir()
+		if configErr != nil {
+			return configErr
+		}
+		launchRoot := filepath.Join(userConfigDir, "agentveil", "launches")
+		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), launchRoot, rewritten, runtimeEnvironment)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}
@@ -851,6 +856,9 @@ func serve() (resultErr error) {
 	statePath := filepath.Join(configDir, "core.json")
 	if err := instance.RemoveState(statePath); err != nil {
 		return fmt.Errorf("remove stale Core state: %w", err)
+	}
+	if err := integration.ResetHermesLaunchRoot(filepath.Join(configDir, "launches")); err != nil {
+		return fmt.Errorf("recover stale Hermes launch resources: %w", err)
 	}
 	manager := session.NewManager()
 	server, err := core.New(manager, token)
