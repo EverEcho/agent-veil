@@ -44,6 +44,22 @@ type fixedInspectableDiscoverer struct {
 	manifest domain.AgentManifest
 }
 
+type semanticLoaderFunc func(*os.File, modelstore.Manifest) (detector.Semantic, error)
+
+func (f semanticLoaderFunc) Load(file *os.File, manifest modelstore.Manifest) (detector.Semantic, error) {
+	return f(file, manifest)
+}
+
+type literalSemantic string
+
+func (value literalSemantic) Detect(path, text string) ([]domain.Finding, error) {
+	start := strings.Index(text, string(value))
+	if start < 0 {
+		return nil, nil
+	}
+	return []domain.Finding{{RuleID: "semantic.name", Category: "pii.name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: path, Start: start, End: start + len(value)}, Confidence: 0.9, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
+}
+
 type failingAuditor struct{}
 
 func (failingAuditor) Append(domain.AuditEvent) error { return errors.New("disk unavailable") }
@@ -702,6 +718,8 @@ func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.semantic = literalSemantic("Alice")
+	s.semanticRequired = true
 	if err := s.WithRuleStore(store); err != nil {
 		t.Fatal(err)
 	}
@@ -724,6 +742,10 @@ func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
 	if err != nil || len(findings) != 1 || findings[0].Finding.Detector != "rule_pack" {
 		t.Fatalf("active findings=%+v error=%v", findings, err)
 	}
+	semanticFindings, err := s.currentScanner().ScanChecked("/input", "Alice")
+	if err != nil || len(semanticFindings) != 1 || semanticFindings[0].Finding.Detector != "semantic" {
+		t.Fatalf("rule activation lost semantic detector: findings=%+v error=%v", semanticFindings, err)
+	}
 
 	deactivateRecorder := httptest.NewRecorder()
 	s.deactivateRulePack(deactivateRecorder, httptest.NewRequest(http.MethodDelete, "/v1/rules/active", nil))
@@ -733,6 +755,10 @@ func TestRulePackManagementHotSwapsAndDeactivatesScanner(t *testing.T) {
 	findings, err = s.currentScanner().ScanChecked("/input", "reference TICKET-123456")
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("built-in findings=%+v error=%v", findings, err)
+	}
+	semanticFindings, err = s.currentScanner().ScanChecked("/input", "Alice")
+	if err != nil || len(semanticFindings) != 1 || semanticFindings[0].Finding.Detector != "semantic" {
+		t.Fatalf("rule deactivation lost semantic detector: findings=%+v error=%v", semanticFindings, err)
 	}
 	if _, _, err := store.OpenActive(); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rule store remained active: %v", err)
@@ -932,6 +958,89 @@ func TestModelUploadRequiresCanonicalBoundedRepresentation(t *testing.T) {
 				t.Fatal("unsafe model upload representation was accepted")
 			}
 		})
+	}
+}
+
+func TestSemanticRuntimeLoadsActiveModelAndPreservesScannerOnFailedSwitch(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := modelstore.New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.0.0", "2.0.0"} {
+		payload := []byte("onnx-" + version)
+		sum := sha256.Sum256(payload)
+		manifest := modelstore.Manifest{SchemaVersion: "v1", Version: version, Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+		manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, modelstore.SigningPayload(manifest)))
+		if err := store.Install(manifest, bytes.NewReader(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Activate("1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	loader := semanticLoaderFunc(func(file *os.File, manifest modelstore.Manifest) (detector.Semantic, error) {
+		payload, err := io.ReadAll(file)
+		if err != nil || string(payload) != "onnx-"+manifest.Version {
+			return nil, errors.New("invalid model artifact")
+		}
+		if manifest.Version == "2.0.0" {
+			return nil, errors.New("runtime rejected model")
+		}
+		return literalSemantic("Alice"), nil
+	})
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithModelStore(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WithSemanticRuntime(loader, true); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := s.currentScanner().ScanChecked("/input", "hello Alice")
+	if err != nil || len(matches) != 1 || matches[0].Finding.Detector != "semantic" {
+		t.Fatalf("active semantic matches=%+v error=%v", matches, err)
+	}
+	inventoryRecorder := httptest.NewRecorder()
+	s.listModels(inventoryRecorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	var inventory modelInventory
+	if inventoryRecorder.Code != http.StatusOK || json.Unmarshal(inventoryRecorder.Body.Bytes(), &inventory) != nil || !inventory.Runtime.Connected || !inventory.Runtime.Required || !inventory.Runtime.Active {
+		t.Fatalf("inventory status=%d value=%+v body=%s", inventoryRecorder.Code, inventory, inventoryRecorder.Body.String())
+	}
+
+	activate := httptest.NewRequest(http.MethodPut, "/v1/models/active", strings.NewReader(`{"version":"2.0.0"}`))
+	activate.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.activateModel(recorder, activate)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("failed switch status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	file, active, err := store.OpenActive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if active.Version != "1.0.0" {
+		t.Fatalf("failed switch changed active model to %q", active.Version)
+	}
+	matches, err = s.currentScanner().ScanChecked("/input", "hello Alice")
+	if err != nil || len(matches) != 1 || matches[0].Finding.Detector != "semantic" {
+		t.Fatalf("failed switch replaced scanner: matches=%+v error=%v", matches, err)
+	}
+}
+
+func TestRequiredSemanticRuntimeFailsClosedWithoutActiveModel(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	loader := semanticLoaderFunc(func(*os.File, modelstore.Manifest) (detector.Semantic, error) {
+		return literalSemantic("Alice"), nil
+	})
+	if err := s.WithSemanticRuntime(loader, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.currentScanner().ScanChecked("/input", "ordinary text"); err == nil {
+		t.Fatal("required semantic runtime silently allowed content without an active model")
 	}
 }
 

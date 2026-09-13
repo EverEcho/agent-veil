@@ -53,21 +53,29 @@ const maxAdminTokenBytes = 4096
 const APIVersion = "v1"
 const APIVersionHeader = "X-AgentVeil-API-Version"
 
+type SemanticRuntimeLoader interface {
+	Load(*os.File, modelstore.Manifest) (detector.Semantic, error)
+}
+
 type Server struct {
-	lifecycleMu sync.Mutex
-	manager     *session.Manager
-	adminToken  string
-	listener    net.Listener
-	httpServer  *http.Server
-	registry    *registry.Registry
-	broker      *policy.Broker
-	policy      policy.Engine
-	policyMu    sync.RWMutex
-	policyStore *policy.Store
-	ruleStore   *rulestore.Store
-	modelStore  *modelstore.Store
-	scannerMu   sync.RWMutex
-	auditor     interface {
+	lifecycleMu      sync.Mutex
+	manager          *session.Manager
+	adminToken       string
+	listener         net.Listener
+	httpServer       *http.Server
+	registry         *registry.Registry
+	broker           *policy.Broker
+	policy           policy.Engine
+	policyMu         sync.RWMutex
+	policyStore      *policy.Store
+	ruleStore        *rulestore.Store
+	modelStore       *modelstore.Store
+	scannerMu        sync.RWMutex
+	semanticLoader   SemanticRuntimeLoader
+	semantic         detector.Semantic
+	semanticRequired bool
+	semanticVersion  string
+	auditor          interface {
 		Append(domain.AuditEvent) error
 	}
 	auditMonitor *monitoredAuditor
@@ -169,26 +177,16 @@ func (s *Server) WithRuleStore(store *rulestore.Store) error {
 	if s.listener != nil {
 		return domain.NewError(domain.ErrInvalidContract, "configure rules", "rule store cannot change after the server starts")
 	}
-	pack, _, err := store.OpenActive()
-	if errors.Is(err, os.ErrNotExist) {
-		s.ruleStore = store
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	base, err := detector.NewDefaultWithRulePack(pack)
-	if err != nil {
-		return err
-	}
-	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
-	if err != nil {
-		return err
-	}
-	s.ruleStore = store
 	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	previous := s.ruleStore
+	s.ruleStore = store
+	scanner, err := s.buildScannerLocked(s.semantic, s.semanticRequired)
+	if err != nil {
+		s.ruleStore = previous
+		return err
+	}
 	s.scanner = scanner
-	s.scannerMu.Unlock()
 	return nil
 }
 func (s *Server) WithModelStore(store *modelstore.Store) error {
@@ -208,6 +206,50 @@ func (s *Server) WithModelStore(store *modelstore.Store) error {
 		return err
 	}
 	s.modelStore = store
+	return nil
+}
+
+func (s *Server) WithSemanticRuntime(loader SemanticRuntimeLoader, required bool) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.listener != nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure semantic runtime", "semantic runtime cannot change after the server starts")
+	}
+	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	var semantic detector.Semantic
+	version := ""
+	if s.modelStore != nil {
+		file, manifest, err := s.modelStore.OpenActive()
+		if err == nil {
+			if loader == nil {
+				if err = file.Close(); err != nil {
+					return err
+				}
+			} else {
+				semantic, err = loader.Load(file, manifest)
+				closeErr := file.Close()
+				if err == nil {
+					err = closeErr
+				}
+				if err != nil || semantic == nil {
+					return domain.NewError(domain.ErrDetectorFailure, "configure semantic runtime", "active semantic model could not be loaded")
+				}
+				version = manifest.Version
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	scanner, err := s.buildScannerLocked(semantic, required)
+	if err != nil {
+		return err
+	}
+	s.semanticLoader = loader
+	s.semantic = semantic
+	s.semanticRequired = required
+	s.semanticVersion = version
+	s.scanner = scanner
 	return nil
 }
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
@@ -560,6 +602,7 @@ func (s *Server) activateRulePack(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_ACTIVATION_FAILED"})
 		return
 	}
+	base.WithSemantic(s.semantic, s.semanticRequired)
 	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
 	if err != nil || s.ruleStore.Activate(request.Version) != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_ACTIVATION_FAILED"})
@@ -574,7 +617,7 @@ func (s *Server) deactivateRulePack(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "RULE_STORE_UNAVAILABLE"})
 		return
 	}
-	base := detector.NewDefault()
+	base := detector.NewDefault().WithSemantic(s.semantic, s.semanticRequired)
 	scanner, err := detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "RULE_DEACTIVATION_FAILED"})
@@ -609,6 +652,11 @@ const ModelManifestHeader = "X-AgentVeil-Model-Manifest"
 type modelInventory struct {
 	Active   string                `json:"active,omitempty"`
 	Versions []modelstore.Manifest `json:"versions"`
+	Runtime  struct {
+		Connected bool `json:"connected"`
+		Required  bool `json:"required"`
+		Active    bool `json:"active"`
+	} `json:"runtime"`
 }
 
 func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
@@ -616,6 +664,8 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
 		return
 	}
+	s.scannerMu.RLock()
+	defer s.scannerMu.RUnlock()
 	versions, err := s.modelStore.List()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MODEL_INVENTORY_FAILED"})
@@ -633,6 +683,9 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ACTIVE_MODEL_INVALID"})
 		return
 	}
+	inventory.Runtime.Connected = s.semanticLoader != nil
+	inventory.Runtime.Required = s.semanticRequired
+	inventory.Runtime.Active = inventory.Active != "" && inventory.Active == s.semanticVersion && s.semantic != nil
 	writeJSON(w, http.StatusOK, inventory)
 }
 
@@ -669,10 +722,36 @@ func (s *Server) activateModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MODEL_VERSION"})
 		return
 	}
-	if err := s.modelStore.Activate(request.Version); err != nil {
+	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	var semantic detector.Semantic
+	if s.semanticLoader != nil {
+		file, manifest, err := s.modelStore.Open(request.Version)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_ACTIVATION_FAILED"})
+			return
+		}
+		semantic, err = s.semanticLoader.Load(file, manifest)
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil || semantic == nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_ACTIVATION_FAILED"})
+			return
+		}
+	}
+	scanner, err := s.buildScannerLocked(semantic, s.semanticRequired)
+	if err != nil || s.modelStore.Activate(request.Version) != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_ACTIVATION_FAILED"})
 		return
 	}
+	s.semantic = semantic
+	s.semanticVersion = ""
+	if semantic != nil {
+		s.semanticVersion = request.Version
+	}
+	s.scanner = scanner
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -681,10 +760,16 @@ func (s *Server) deactivateModel(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
 		return
 	}
-	if err := s.modelStore.Deactivate(); err != nil {
+	s.scannerMu.Lock()
+	defer s.scannerMu.Unlock()
+	scanner, err := s.buildScannerLocked(nil, s.semanticRequired)
+	if err != nil || s.modelStore.Deactivate() != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MODEL_DEACTIVATION_FAILED"})
 		return
 	}
+	s.semantic = nil
+	s.semanticVersion = ""
+	s.scanner = scanner
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -704,6 +789,23 @@ func (s *Server) currentScanner() detector.ContentScanner {
 	s.scannerMu.RLock()
 	defer s.scannerMu.RUnlock()
 	return s.scanner
+}
+
+func (s *Server) buildScannerLocked(semantic detector.Semantic, semanticRequired bool) (*detector.ChunkedScanner, error) {
+	base := detector.NewDefault()
+	if s.ruleStore != nil {
+		pack, _, err := s.ruleStore.OpenActive()
+		if err == nil {
+			base, err = detector.NewDefaultWithRulePack(pack)
+			if err != nil {
+				return nil, err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	base.WithSemantic(semantic, semanticRequired)
+	return detector.NewChunked(base, detector.DefaultChunkBytes, detector.DefaultOverlapBytes)
 }
 
 func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
@@ -920,7 +1022,7 @@ async function deactivateRulePack(){const response=await fetch('/v1/rules/active
 async function removeRulePack(version){if(!window.confirm('Remove inactive rule pack '+version+'?'))return;const response=await fetch('/v1/rules/'+encodeURIComponent(version),{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('removal failed');await loadRulePacks()}
 function encodeBase64(bytes){let binary='';for(let offset=0;offset<bytes.length;offset+=32768)binary+=String.fromCharCode(...bytes.subarray(offset,offset+32768));return btoa(binary)}
 async function installRulePack(){const result=document.querySelector('#rule-install-result'),manifestInput=document.querySelector('#rule-manifest'),fileInput=document.querySelector('#rule-artifact');try{const file=fileInput.files[0];if(!file||file.size<1||file.size>1048576)throw Error('invalid artifact size');const manifest=JSON.parse(manifestInput.value),artifact_base64=encodeBase64(new Uint8Array(await file.arrayBuffer())),response=await fetch('/v1/rules',{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({manifest,artifact_base64})});fileInput.value='';if(!response.ok)throw Error('installation failed');manifestInput.value='';result.className='active';result.textContent='Signed rule pack installed but not activated';await loadRulePacks()}catch(err){fileInput.value='';result.className='error';result.textContent='Installation rejected; verify manifest, signature, and file size'}}
-async function loadModels(){const output=document.querySelector('#models'),response=await fetch('/v1/models',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed semantic-model storage is not configured.</p>';return}if(!response.ok)throw Error('model inventory unavailable');const inventory=await response.json(),active=inventory.active||'';output.innerHTML='<section class="card"><p><span class="status '+(active?'active':'observed')+'">'+(active?'selected '+e(active):'no model selected')+'</span></p><p class="muted">A selected artifact is verified storage state; semantic inference remains unavailable until the local runtime is connected.</p><div class="controls"><button id="deactivate-model" '+(active?'':'disabled')+'>Deactivate model</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status active">selected</span>':'<button class="activate-model" data-version="'+e(version.version)+'">Select</button> <button class="remove-model" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
+async function loadModels(){const output=document.querySelector('#models'),response=await fetch('/v1/models',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed semantic-model storage is not configured.</p>';return}if(!response.ok)throw Error('model inventory unavailable');const inventory=await response.json(),active=inventory.active||'',runtime=inventory.runtime||{},runtimeText=runtime.active?'Semantic inference is active for the selected model':runtime.connected?(runtime.required?'Semantic inference is required; requests fail closed until a compatible model is active':'Local semantic runtime connected; no model is active'):'A selected artifact is verified storage state; semantic inference remains unavailable until the local runtime is connected';output.innerHTML='<section class="card"><p><span class="status '+(runtime.active?'active':active?'partial':'observed')+'">'+(active?'selected '+e(active):'no model selected')+'</span></p><p class="muted">'+e(runtimeText)+'</p><div class="controls"><button id="deactivate-model" '+(active?'':'disabled')+'>Deactivate model</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status '+(runtime.active?'active':'partial')+'">selected</span>':'<button class="activate-model" data-version="'+e(version.version)+'">Select</button> <button class="remove-model" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
 async function activateModel(version){const response=await fetch('/v1/models/active',{method:'PUT',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({version})});if(!response.ok)throw Error('model selection failed');await loadModels()}
 async function deactivateModel(){const response=await fetch('/v1/models/active',{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('model deactivation failed');await loadModels()}
 async function removeModel(version){if(!window.confirm('Remove inactive semantic model '+version+'?'))return;const response=await fetch('/v1/models/'+encodeURIComponent(version),{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('model removal failed');await loadModels()}
