@@ -62,7 +62,10 @@ conservatively than discovered traffic.
   controllers to report manifests, renew leases, and remove only their current
   generation, plus a route-capability-only client for creating scoped child
   Sessions without a management token; both accept numeric loopback Core
-  endpoints only and contain no DLP implementation;
+  endpoints only and contain no DLP implementation. Its bounded lease keeper
+  performs health heartbeats, reports every renewed expiry, removes its exact
+  generation on shutdown, and fails closed instead of fighting a superseding
+  controller through unsafe automatic re-registration;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar

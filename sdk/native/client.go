@@ -28,6 +28,8 @@ const (
 	apiVersionHeader = "X-AgentVeil-API-Version"
 	maxResponseBytes = 2 << 20
 	maxLeaseTTL      = time.Hour
+	minHeartbeat     = 100 * time.Millisecond
+	leaseCleanupTTL  = 2 * time.Second
 	minTokenBytes    = 32
 	maxTokenBytes    = 512
 )
@@ -118,6 +120,11 @@ type ChildSession struct {
 	Routes  []RouteCredential `json:"routes"`
 }
 
+type LeaseOptions struct {
+	TTL               time.Duration
+	HeartbeatInterval time.Duration
+}
+
 // RouteClient uses one short-lived parent route capability. It can create only
 // a non-interactive child Session for that exact route and has no registration
 // or management-plane authority.
@@ -174,6 +181,48 @@ func (c *Client) Remove(ctx context.Context, agentID string, generation uint64) 
 		return domain.NewError(domain.ErrInvalidContract, "remove native integration", "client, identity, and generation are required")
 	}
 	return c.doJSON(ctx, http.MethodDelete, "/v1/agents/"+url.PathEscape(agentID)+"?generation="+strconv.FormatUint(generation, 10), nil, http.StatusNoContent, nil)
+}
+
+// MaintainLease registers a Native/Managed manifest, renews its generation,
+// and removes that exact generation when the context ends. Any heartbeat or
+// update failure stops the loop; callers can then fail closed without an SDK
+// client racing another controller by silently re-registering.
+func (c *Client) MaintainLease(ctx context.Context, manifest AgentManifest, options LeaseOptions, onUpdate func(Registration) error) error {
+	if c == nil || ctx == nil || onUpdate == nil || options.TTL < time.Second || options.TTL > maxLeaseTTL || options.TTL%time.Second != 0 || options.HeartbeatInterval < minHeartbeat || options.HeartbeatInterval >= options.TTL {
+		return domain.NewError(domain.ErrInvalidContract, "maintain native integration lease", "client, context, callback, and bounded lease timing are required")
+	}
+	current, err := c.Register(ctx, manifest, options.TTL)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), leaseCleanupTTL)
+		defer cancel()
+		_ = c.Remove(cleanupContext, manifest.Agent.ID, current.Generation)
+	}()
+	if err := onUpdate(current); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(options.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			renewed, err := c.Heartbeat(ctx, manifest.Agent.ID, current.Generation, options.TTL)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("maintain native integration lease: %w", err)
+			}
+			current = renewed
+			if err := onUpdate(current); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, input any, expectedStatus int, output any) error {

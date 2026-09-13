@@ -91,6 +91,70 @@ func TestRouteClientCreatesScopedChildSession(t *testing.T) {
 	}
 }
 
+func TestMaintainLeaseRenewsCleansUpAndDoesNotFightNewGeneration(t *testing.T) {
+	integrationRegistry := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	server, _ := core.New(session.NewManager(), testManagementToken)
+	server.WithRegistry(integrationRegistry)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	client, _ := NewClient(server.Endpoint(), testManagementToken, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	updates := make(chan Registration, 8)
+	result := make(chan error, 1)
+	manifest := nativeManifest()
+	go func() {
+		result <- client.MaintainLease(ctx, manifest, LeaseOptions{TTL: 2 * time.Second, HeartbeatInterval: 100 * time.Millisecond}, func(registration Registration) error {
+			updates <- registration
+			return nil
+		})
+	}()
+	initial := <-updates
+	renewed := <-updates
+	if initial.Generation != 1 || renewed.Generation != initial.Generation || !renewed.ExpiresAt.After(initial.ExpiresAt) {
+		t.Fatalf("initial=%+v renewed=%+v", initial, renewed)
+	}
+	replacement, err := integrationRegistry.ReconcileLeased(manifest, time.Minute)
+	if err != nil || replacement.Generation != initial.Generation+1 {
+		t.Fatalf("replacement=%+v err=%v", replacement, err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("superseded lease did not fail closed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded lease keeper did not stop")
+	}
+	cancel()
+	retained, ok := integrationRegistry.Get(manifest.Agent.ID)
+	if !ok || retained.Generation != replacement.Generation {
+		t.Fatalf("lease cleanup removed a replacement generation: %+v ok=%v", retained, ok)
+	}
+
+	ctx, cancel = context.WithCancel(context.Background())
+	result = make(chan error, 1)
+	ready := make(chan struct{}, 1)
+	go func() {
+		result <- client.MaintainLease(ctx, manifest, LeaseOptions{TTL: 2 * time.Second, HeartbeatInterval: 100 * time.Millisecond}, func(Registration) error {
+			select {
+			case ready <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+	}()
+	<-ready
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := integrationRegistry.Get(manifest.Agent.ID); ok {
+		t.Fatal("canceled lease keeper retained its generation")
+	}
+}
+
 func TestNativeClientRejectsUnsafeAuthorityTokenAndMode(t *testing.T) {
 	for _, endpoint := range []string{"https://127.0.0.1:1234", "http://localhost:1234", "http://192.0.2.1:1234", "http://127.0.0.1:1234/path", "http://user@127.0.0.1:1234"} {
 		if _, err := NewClient(endpoint, testManagementToken, nil); err == nil {
@@ -106,6 +170,9 @@ func TestNativeClientRejectsUnsafeAuthorityTokenAndMode(t *testing.T) {
 	client, err := NewClient("http://127.0.0.1:1234", testManagementToken, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := client.MaintainLease(context.Background(), nativeManifest(), LeaseOptions{TTL: time.Second, HeartbeatInterval: time.Second}, func(Registration) error { return nil }); err == nil {
+		t.Fatal("unsafe lease timing was accepted")
 	}
 	manifest := nativeManifest()
 	manifest.Agent.Mode = domain.ModeLaunch
