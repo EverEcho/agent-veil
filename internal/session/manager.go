@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*managedSession
 	now      func() time.Time
+	random   io.Reader
 	limits   Limits
 }
 
@@ -75,7 +77,7 @@ func NewManagerWithLimits(limits Limits) (*Manager, error) {
 	if limits.MaxSessions < 1 || limits.MaxSessions > MaximumSessions || limits.MaxRoutes < 1 || limits.MaxRoutes > MaximumRoutes || limits.MaxTTL <= 0 || limits.MaxTTL > MaximumTTL {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create session manager", "session, route, and TTL limits must be within configured bounds")
 	}
-	return &Manager{sessions: make(map[string]*managedSession), now: time.Now, limits: limits}, nil
+	return &Manager{sessions: make(map[string]*managedSession), now: time.Now, random: rand.Reader, limits: limits}, nil
 }
 
 func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.Duration) (Created, error) {
@@ -118,7 +120,7 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 			return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "child session cannot outlive its parent")
 		}
 	}
-	id, err := randomHex(16)
+	id, err := m.randomHexString(16)
 	if err != nil {
 		return Created{}, err
 	}
@@ -126,28 +128,28 @@ func (m *Manager) Create(parentID, endpoint string, routeIDs []string, ttl time.
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "session capability collision")
 	}
 	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+	if _, err := io.ReadFull(m.random, secret); err != nil {
+		wipeBytes(secret)
 		return Created{}, domain.NewError(domain.ErrInvalidContract, "create session", "secure randomness is unavailable")
 	}
-	routes := make([]RouteCredential, 0, len(routeIDs))
 	managedRoutes := make([]managedRouteCredential, 0, len(routeIDs))
 	for _, routeID := range routeIDs {
-		token, err := randomHex(32)
+		token, err := m.randomHexBytes(32)
 		if err != nil {
-			for i := range secret {
-				secret[i] = 0
-			}
+			wipeBytes(secret)
 			for i := range managedRoutes {
-				for index := range managedRoutes[i].token {
-					managedRoutes[i].token[index] = 0
-				}
+				wipeBytes(managedRoutes[i].token)
 			}
 			return Created{}, err
 		}
-		routes = append(routes, RouteCredential{RouteID: routeID, Token: token})
-		managedRoutes = append(managedRoutes, managedRouteCredential{routeID: routeID, token: []byte(token)})
+		managedRoutes = append(managedRoutes, managedRouteCredential{routeID: routeID, token: token})
+	}
+	routes := make([]RouteCredential, len(managedRoutes))
+	for index := range managedRoutes {
+		routes[index] = RouteCredential{RouteID: managedRoutes[index].routeID, Token: string(managedRoutes[index].token)}
 	}
 	s := domain.NewProtectionSession("session-"+id, parentID, endpoint, now, now.Add(ttl), routeIDs, secret)
+	wipeBytes(secret)
 	sessionContext, cancel := context.WithCancel(context.Background())
 	entry := &managedSession{session: s, routes: managedRoutes, context: sessionContext, cancel: cancel}
 	m.sessions[s.ID] = entry
@@ -283,17 +285,24 @@ func (m *Manager) Close() {
 	}
 }
 
-func randomHex(bytes int) (string, error) {
-	value := make([]byte, bytes)
-	defer func() {
-		for index := range value {
-			value[index] = 0
-		}
-	}()
-	if _, err := rand.Read(value); err != nil {
-		return "", domain.NewError(domain.ErrInvalidContract, "generate capability", "secure randomness is unavailable")
+func (m *Manager) randomHexString(bytes int) (string, error) {
+	value, err := m.randomHexBytes(bytes)
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(value), nil
+	defer wipeBytes(value)
+	return string(value), nil
+}
+
+func (m *Manager) randomHexBytes(bytes int) ([]byte, error) {
+	raw := make([]byte, bytes)
+	defer wipeBytes(raw)
+	if _, err := io.ReadFull(m.random, raw); err != nil {
+		return nil, domain.NewError(domain.ErrInvalidContract, "generate capability", "secure randomness is unavailable")
+	}
+	encoded := make([]byte, hex.EncodedLen(len(raw)))
+	hex.Encode(encoded, raw)
+	return encoded, nil
 }
 
 func constantTimeBytesStringEqual(a []byte, b string) bool {
@@ -310,9 +319,13 @@ func constantTimeBytesStringEqual(a []byte, b string) bool {
 func wipe(entry *managedSession) {
 	entry.session.DestroySecret()
 	for i := range entry.routes {
-		for index := range entry.routes[i].token {
-			entry.routes[i].token[index] = 0
-		}
+		wipeBytes(entry.routes[i].token)
 		entry.routes[i].token = nil
+	}
+}
+
+func wipeBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
 	}
 }

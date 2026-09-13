@@ -1,10 +1,30 @@
 package session
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 )
+
+type recordingFailReader struct {
+	calls  int
+	failAt int
+	seen   [][]byte
+}
+
+func (r *recordingFailReader) Read(buffer []byte) (int, error) {
+	r.calls++
+	for index := range buffer {
+		buffer[index] = byte(r.calls)
+	}
+	r.seen = append(r.seen, buffer)
+	if r.calls == r.failAt {
+		return len(buffer) / 2, errors.New("random source failed")
+	}
+	return len(buffer), nil
+}
 
 func TestRouteAuthorizationAndExpiry(t *testing.T) {
 	m := NewManager()
@@ -133,6 +153,49 @@ func TestDeletingSessionOverwritesInternalRouteCapabilities(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionCreationWipesPartialCapabilitiesAfterRandomFailure(t *testing.T) {
+	for _, failAt := range []int{2, 4} {
+		t.Run(string(rune('0'+failAt)), func(t *testing.T) {
+			m := NewManager()
+			reader := &recordingFailReader{failAt: failAt}
+			m.random = reader
+			_, err := m.Create("", "local", []string{"primary", "fallback"}, time.Minute)
+			if err == nil || !strings.Contains(err.Error(), "secure randomness is unavailable") {
+				t.Fatalf("random failure result=%v", err)
+			}
+			if len(m.sessions) != 0 {
+				t.Fatal("failed session was retained")
+			}
+			for call, buffer := range reader.seen {
+				for _, value := range buffer {
+					if value != 0 {
+						t.Fatalf("random buffer from call %d survived failure", call+1)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSessionCreationWipesTemporaryRandomBuffersAfterSuccess(t *testing.T) {
+	m := NewManager()
+	reader := &recordingFailReader{}
+	m.random = reader
+	created, err := m.Create("", "local", []string{"primary", "fallback"}, time.Minute)
+	if err != nil || !m.Authorize(created.Session.ID, "primary", created.Routes[0].Token) {
+		t.Fatalf("created=%+v error=%v", created, err)
+	}
+	for call, buffer := range reader.seen {
+		for _, value := range buffer {
+			if value != 0 {
+				t.Fatalf("temporary random buffer from call %d survived successful creation", call+1)
+			}
+		}
+	}
+}
+
+var _ io.Reader = (*recordingFailReader)(nil)
 
 func TestChildSessionRequiresLiveParentAndCannotOutliveIt(t *testing.T) {
 	m := NewManager()

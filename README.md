@@ -12,7 +12,7 @@ conservatively than discovered traffic.
 - a loopback-only Core with capability-authenticated routes, session-revocable
   request processing (including uploads and pending ASK decisions),
   version-negotiated management APIs, bounded and strict CLI response envelopes,
-  bounded concurrency, and safe shutdown;
+  bounded concurrency, failure-wiped capability generation, and safe shutdown;
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
   Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
 - incremental SSE protection with cross-chunk secret detection and placeholder
