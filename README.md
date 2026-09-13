@@ -219,6 +219,11 @@ go run ./cmd/veil status
 go run ./cmd/veil compatibility
 go run ./cmd/veil compatibility --offline
 go run ./cmd/veil diagnostics
+go run ./cmd/veil rules list
+go run ./cmd/veil rules install ./signed-manifest.json ./rules.json
+go run ./cmd/veil rules activate 1.0.0
+go run ./cmd/veil rules deactivate
+go run ./cmd/veil rules remove 1.0.0
 go run ./cmd/veil discover
 go run ./cmd/veil inspect codex
 go run ./cmd/veil inspect claude
@@ -237,6 +242,9 @@ go run ./cmd/veil nested codex -- exec "review delegated work"
 The offline compatibility form reads the same validated matrix compiled into
 the binary and needs neither a running Core nor a management token. Tagged CI
 builds include that exact `COMPATIBILITY.json` in checksums and provenance.
+Rule commands use the authenticated, versioned loopback management API. Install
+accepts only bounded regular files, rejects symlinks and ambiguous manifest
+JSON, and leaves signature verification and atomic activation to Core.
 
 `veil nested` is intended for a process already launched inside an AgentVeil
 Route context. It uses only the inherited `VEIL_CORE_ENDPOINT`,

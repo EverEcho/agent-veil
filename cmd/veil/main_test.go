@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/registry"
+	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
 	nativesdk "github.com/agentveil/agentveil/sdk/native"
 )
@@ -564,6 +566,86 @@ func TestOfflineCompatibilityReportUsesTheValidatedBuildMatrix(t *testing.T) {
 	}
 	if err := writeOfflineCompatibilityReport(nil); err == nil {
 		t.Fatal("nil offline compatibility writer was accepted")
+	}
+}
+
+func TestRulesCommandUsesAuthenticatedVersionedManagementAPI(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	type requestRecord struct{ method, path string }
+	var requests []requestRecord
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		requests = append(requests, requestRecord{request.Method, request.URL.EscapedPath()})
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		if request.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"active":"1.0.0","versions":[{"schema_version":"v1","version":"1.0.0","size":2,"sha256":"00","signature":"AA=="}]}`)
+			return
+		}
+		if request.Method == http.MethodPost {
+			var input struct {
+				Manifest       rulestore.Manifest `json:"manifest"`
+				ArtifactBase64 string             `json:"artifact_base64"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil || input.Manifest.Version != "2.0.0" || input.ArtifactBase64 != base64.StdEncoding.EncodeToString([]byte("{}")) {
+				t.Fatalf("install input=%+v err=%v", input, err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "manifest.json")
+	artifactPath := filepath.Join(directory, "rules.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"schema_version":"v1","version":"2.0.0","size":2,"sha256":"00","signature":"AA=="}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	for _, args := range [][]string{{"list"}, {"install", manifestPath, artifactPath}, {"activate", "2.0.0"}, {"deactivate"}, {"remove", "2.0.0"}} {
+		if err := executeRulesCommand(context.Background(), &output, server.URL, token, args); err != nil {
+			t.Fatalf("args=%v err=%v", args, err)
+		}
+	}
+	if !strings.Contains(output.String(), `"active": "1.0.0"`) {
+		t.Fatalf("list output=%s", output.String())
+	}
+	want := []requestRecord{{http.MethodGet, "/v1/rules"}, {http.MethodPost, "/v1/rules"}, {http.MethodPut, "/v1/rules/active"}, {http.MethodDelete, "/v1/rules/active"}, {http.MethodDelete, "/v1/rules/2.0.0"}}
+	if !slices.Equal(requests, want) {
+		t.Fatalf("requests=%+v want=%+v", requests, want)
+	}
+}
+
+func TestRulesCommandRejectsUnsafeFilesAndArguments(t *testing.T) {
+	if err := executeRulesCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", []string{"future"}); err == nil {
+		t.Fatal("unknown rule command was accepted")
+	}
+	if err := executeRulesCommand(context.Background(), io.Discard, "https://example.com", "token", []string{"list"}); err == nil {
+		t.Fatal("non-loopback rule management endpoint was accepted")
+	}
+	if err := executeRulesCommand(nil, io.Discard, "http://127.0.0.1:1", "token", []string{"list"}); err == nil {
+		t.Fatal("nil context was accepted")
+	}
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target.json")
+	link := filepath.Join(directory, "link.json")
+	if err := os.WriteFile(target, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err == nil {
+		if _, err := readCLIFile(link, 1024); err == nil {
+			t.Fatal("symlinked CLI file was accepted")
+		}
+	}
+	var manifest rulestore.Manifest
+	if err := decodeStrictJSON([]byte(`{"schema_version":"v1","version":"one","version":"two"}`), &manifest); err == nil {
+		t.Fatal("ambiguous manifest JSON was accepted")
 	}
 }
 

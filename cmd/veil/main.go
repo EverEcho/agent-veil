@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -66,7 +67,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|nested|run|serve|status>")
+		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|nested|rules|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
@@ -89,6 +90,8 @@ func run(args []string) error {
 			return errors.New("usage: veil diagnostics")
 		}
 		return diagnostics()
+	case "rules":
+		return rulesCommand(args[1:], os.Stdout)
 	case "discover":
 		if len(args) != 1 {
 			return errors.New("usage: veil discover")
@@ -1079,6 +1082,131 @@ func diagnostics() error {
 	}
 	_, err = os.Stdout.Write(payload)
 	return err
+}
+
+func rulesCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return executeRulesCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executeRulesCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "run rules command", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	usage := errors.New("usage: veil rules <list|install MANIFEST ARTIFACT|activate VERSION|deactivate|remove VERSION>")
+	if len(args) == 0 {
+		return usage
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return usage
+		}
+		var inventory struct {
+			Active   string               `json:"active,omitempty"`
+			Versions []rulestore.Manifest `json:"versions"`
+		}
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/rules", token, nil, &inventory); err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(inventory)
+	case "install":
+		if len(args) != 3 {
+			return usage
+		}
+		manifestPayload, err := readCLIFile(args[1], 16<<10)
+		if err != nil {
+			return fmt.Errorf("read rule manifest: %w", err)
+		}
+		var manifest rulestore.Manifest
+		if err := decodeStrictJSON(manifestPayload, &manifest); err != nil {
+			return fmt.Errorf("decode rule manifest: %w", err)
+		}
+		artifact, err := readCLIFile(args[2], rulestore.MaxArtifactBytes)
+		if err != nil {
+			return fmt.Errorf("read rule artifact: %w", err)
+		}
+		if manifest.Size != int64(len(artifact)) {
+			return errors.New("rule artifact size does not match its signed manifest")
+		}
+		request := struct {
+			Manifest       rulestore.Manifest `json:"manifest"`
+			ArtifactBase64 string             `json:"artifact_base64"`
+		}{Manifest: manifest, ArtifactBase64: base64.StdEncoding.EncodeToString(artifact)}
+		return managementJSON(ctx, http.MethodPost, endpoint+"/v1/rules", token, request, nil)
+	case "activate":
+		if len(args) != 2 {
+			return usage
+		}
+		return managementJSON(ctx, http.MethodPut, endpoint+"/v1/rules/active", token, map[string]string{"version": args[1]}, nil)
+	case "deactivate":
+		if len(args) != 1 {
+			return usage
+		}
+		return managementJSON(ctx, http.MethodDelete, endpoint+"/v1/rules/active", token, nil, nil)
+	case "remove":
+		if len(args) != 2 {
+			return usage
+		}
+		return managementJSON(ctx, http.MethodDelete, endpoint+"/v1/rules/"+url.PathEscape(args[1]), token, nil, nil)
+	default:
+		return usage
+	}
+}
+
+func readCLIFile(path string, maximum int64) ([]byte, error) {
+	if path == "" || maximum <= 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "path and size limit are required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maximum {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file type or size is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file changed during validation")
+	}
+	payload, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || len(payload) == 0 || int64(len(payload)) > maximum {
+		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file is empty or oversized")
+	}
+	return payload, nil
+}
+
+func decodeStrictJSON(payload []byte, output any) error {
+	if output == nil || jsonsafe.Validate(payload) != nil {
+		return domain.NewError(domain.ErrInvalidContract, "decode CLI JSON", "JSON is invalid or ambiguous")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(output); err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "decode CLI JSON", "JSON does not match its schema")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return domain.NewError(domain.ErrInvalidContract, "decode CLI JSON", "JSON contains trailing data")
+	}
+	return nil
 }
 
 func resolveCoreEndpoint(explicit string) (string, error) {
