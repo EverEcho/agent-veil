@@ -33,9 +33,8 @@ build:
 desktop-test:
 	go test ./internal/desktopapp
 
-# Uses Fyne's in-memory driver so CI can compile the shell without a display.
 desktop-build-ci:
-	cd desktop && go build -tags ci -trimpath -o agentveil-desktop .
+	cargo check --locked --manifest-path desktop/src-tauri/Cargo.toml
 
 # Local, fast development package. CI produces the complete multi-platform bundle.
 package-dev:
@@ -44,4 +43,5 @@ package-dev:
 	go test ./internal/core ./internal/proxy ./internal/session ./internal/desktopapp ./sdk/attach
 	mkdir -p dist/dev
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o dist/dev/veil ./cmd/veil
-	cd desktop && go build -trimpath -buildvcs=false -o ../dist/dev/agentveil-desktop .
+	cargo build --release --locked --manifest-path desktop/src-tauri/Cargo.toml
+	cp desktop/src-tauri/target/release/agentveil-desktop dist/dev/agentveil-desktop

@@ -31,8 +31,8 @@ suite and acceptance evidence. Main runs additionally use the race detector.
 All channels package six headless Core targets, a Linux amd64 desktop shell,
 and self-contained desktop bundles for Linux amd64, Windows amd64, macOS Intel,
 and macOS Apple Silicon, plus compatibility metadata, channel metadata, and
-SHA-256 checksums. Each desktop bundle contains its matching Core executable
-beside the desktop executable.
+SHA-256 checksums. Each Tauri desktop bundle contains its matching Core
+executable as a private application resource.
 
 The development and beta macOS apps are ad-hoc signed. A main release still
 requires Apple Developer ID signing, notarization, and platform acceptance

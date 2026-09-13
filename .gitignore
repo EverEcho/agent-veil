@@ -3,5 +3,9 @@ coverage.out
 *.test
 *.prof
 desktop/agentveil-desktop
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/resources/veil
+desktop/src-tauri/resources/veil.exe
 /dist/
 .DS_Store

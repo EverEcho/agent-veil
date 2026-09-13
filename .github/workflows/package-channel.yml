@@ -101,17 +101,7 @@ jobs:
           go test -race ./...
           make acceptance-evidence
 
-      - name: Install Linux desktop build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            libgl1-mesa-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            wayland-protocols \
-            xorg-dev
-
-      - name: Build Core and desktop packages
+      - name: Build Core packages
         shell: bash
         run: |
           set -euo pipefail
@@ -126,15 +116,6 @@ jobs:
               -ldflags="-s -w" \
               -o "dist/bin/veil-${goos}-${goarch}${suffix}" ./cmd/veil
           done
-          (
-            cd desktop
-            go mod tidy
-            go build -trimpath -buildvcs=false -ldflags="-s -w" \
-              -o ../dist/bin/agentveil-desktop-linux-amd64 .
-          )
-          mkdir -p dist/desktop/linux-amd64
-          cp dist/bin/agentveil-desktop-linux-amd64 dist/desktop/linux-amd64/agentveil-desktop
-          cp dist/bin/veil-linux-amd64 dist/desktop/linux-amd64/veil
           dist/bin/veil-linux-amd64 compatibility --offline > dist/meta/COMPATIBILITY.json
           jq -n \
             --arg channel "${CHANNEL}" \
@@ -148,7 +129,7 @@ jobs:
           if [ -f LICENSE ]; then cp LICENSE dist/; fi
           (
             cd dist
-            find bin desktop meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            find bin meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           )
           archive="agentveil-${VERSION}-${CHANNEL}"
           tar -C dist -czf "${archive}.tar.gz" .
@@ -167,16 +148,32 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
 
-  desktop-macos:
+  desktop:
     needs: package
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
+          - runner: ubuntu-24.04
+            platform: linux
             arch: amd64
+            core: veil
+            bundles: deb,appimage
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+            core: veil
+            bundles: app,dmg
+          - runner: macos-15-intel
+            platform: macos
+            arch: amd64
+            core: veil
+            bundles: app,dmg
+          - runner: windows-2025
+            platform: windows
+            arch: amd64
+            core: veil.exe
+            bundles: nsis,msi
     runs-on: ${{ matrix.runner }}
     env:
       CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
@@ -189,92 +186,44 @@ jobs:
         with:
           go-version: "1.23.x"
           cache: false
-      - name: Build self-contained macOS app
+      - name: Install Linux Tauri dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install pinned Tauri CLI
+        shell: bash
+        run: cargo install tauri-cli --version 2.11.4 --locked
+      - name: Build matching Core
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(go env GOARCH)" != "${{ matrix.arch }}" ]; then
-            echo "::error::Runner architecture does not match requested package architecture."
-            exit 1
-          fi
-          app="build/AgentVeil.app"
-          mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources" artifacts
+          mkdir -p desktop/src-tauri/resources artifacts
           go build -trimpath -buildvcs=false -ldflags="-s -w" \
-            -o "${app}/Contents/MacOS/veil" ./cmd/veil
-          (
-            cd desktop
-            go mod tidy
-            go build -trimpath -buildvcs=false -ldflags="-s -w" \
-              -o "../${app}/Contents/MacOS/AgentVeil" .
-          )
-          cp desktop/macos/Info.plist "${app}/Contents/Info.plist"
-          cp README.md .github/release-channels.json "${app}/Contents/Resources/"
-          chmod 755 "${app}/Contents/MacOS/AgentVeil" "${app}/Contents/MacOS/veil"
-          codesign --force --deep --sign - "${app}"
-          archive="agentveil-desktop-${VERSION}-${CHANNEL}-macos-${{ matrix.arch }}"
-          tar -C build -czf "artifacts/${archive}.tar.gz" AgentVeil.app
-          ditto -c -k --sequesterRsrc --keepParent "${app}" "artifacts/${archive}.zip"
-          shasum -a 256 artifacts/* > "artifacts/${archive}.SHA256SUMS"
-      - name: Upload macOS desktop package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: agentveil-desktop-${{ env.VERSION }}-${{ env.CHANNEL }}-macos-${{ matrix.arch }}
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
-
-  desktop-windows:
-    needs: package
-    runs-on: windows-2025
-    env:
-      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
-      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version: "1.23.x"
-          cache: false
-      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
-        with:
-          msystem: UCRT64
-          path-type: inherit
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            zip
-      - name: Build self-contained Windows app
-        shell: msys2 {0}
+            -o "desktop/src-tauri/resources/${{ matrix.core }}" ./cmd/veil
+      - name: Build Tauri desktop bundles
+        working-directory: desktop
+        shell: bash
         run: |
           set -euo pipefail
-          app="build/AgentVeil"
-          mkdir -p "${app}" artifacts
-          CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
-            -o "${app}/veil.exe" ./cmd/veil
-          (
-            cd desktop
-            go mod tidy
-            CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags="-s -w -H=windowsgui" \
-              -o "../${app}/AgentVeil.exe" .
-          )
-          cp README.md .github/release-channels.json "${app}/"
-          archive="agentveil-desktop-${VERSION}-${CHANNEL}-windows-amd64"
-          tar -C build -czf "artifacts/${archive}.tar.gz" AgentVeil
-          (cd build && zip -q -r "../artifacts/${archive}.zip" AgentVeil)
-          sha256sum artifacts/* > "artifacts/${archive}.SHA256SUMS"
-      - name: Upload Windows desktop package
+          cargo tauri icon src-tauri/icons/icon.png
+          AGENTVEIL_CHANNEL="${CHANNEL}" cargo tauri build --bundles "${{ matrix.bundles }}" --config "{\"version\":\"${VERSION}\"}"
+          find src-tauri/target/release/bundle -maxdepth 4 -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} ../artifacts/ \;
+          cd ../artifacts
+          for file in *; do mv "${file}" "agentveil-${VERSION}-${CHANNEL}-${{ matrix.platform }}-${{ matrix.arch }}-${file}"; done
+          checksum="agentveil-${VERSION}-${CHANNEL}-${{ matrix.platform }}-${{ matrix.arch }}.SHA256SUMS"
+          if command -v sha256sum >/dev/null; then sha256sum * > "${checksum}"; else shasum -a 256 * > "${checksum}"; fi
+      - name: Upload desktop package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: agentveil-desktop-${{ env.VERSION }}-${{ env.CHANNEL }}-windows-amd64
+          name: agentveil-desktop-${{ env.VERSION }}-${{ env.CHANNEL }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: artifacts/
           if-no-files-found: error
           retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
 
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release
-    needs: [package, desktop-macos, desktop-windows]
+    needs: [package, desktop]
     runs-on: ubuntu-latest
     env:
       CHANNEL: ${{ inputs.channel }}
@@ -292,8 +241,8 @@ jobs:
           tag="v${VERSION}"
           prerelease=""
           if [ "${CHANNEL}" != main ]; then
-            tag="v${VERSION}-${CHANNEL}"
             prerelease="--prerelease"
+            if [[ "${VERSION}" != *-"${CHANNEL}"* ]]; then tag="v${VERSION}-${CHANNEL}"; fi
           fi
           gh release create "${tag}" release-artifacts/* \
             --repo "${GITHUB_REPOSITORY}" \

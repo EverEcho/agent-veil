@@ -29,7 +29,7 @@
 | MCP | HTTP、Streamable HTTP、legacy SSE 双端点保护、stdio Local 建模 | 请求/响应/流、能力绑定、Vault、撤销和 Provider 边界 | stdio 子进程跨平台连接前阻断 | 真实远程 MCP、重连和长连接运行 | 远程 MCP 核心数据面完成 |
 | Browser、Web 与 Tool | Surface 枚举、Observed/Partial/Unprotected 分级、Tool Adapter SDK | 保守覆盖状态和 SDK 防夸大测试 | Browser 自动化、OAuth、上传下载、WebSocket 专用策略和数据面 | 真实浏览器及工具链 | 只能发现和分级，不能宣称内容保护 |
 | Routing、Auth 与 Network | Routing Graph、SSRF 防护、Bearer/Key/SigV4/Vertex、Direct/HTTP Proxy/SOCKS5/System Proxy | 单模块和模拟网络测试 | VPN/TUN 信息发现、复杂透明路由集成 | Bedrock、Vertex、自定义 Gateway 和真实中间件链路 | 模块完成，组合验证不足 |
-| 桌面控制面 | Fyne 桌面壳、托盘、通知、用户级自启动、Core 保活与 Dashboard 管理入口 | Supervisor 与自启动自动化 | 安装、自动更新、回滚和迁移管理 | 三平台完整用户流程与原生打包 | 桌面运行壳已开发，发行生命周期未完成 |
+| 桌面控制面 | Tauri 2 桌面壳、Web/Desktop 共用 Dashboard、托盘、用户级自启动与 Core 生命周期 | Rust 轻量编译、既有 Core 生命周期测试 | 自动更新、回滚和迁移管理 | 三平台完整用户流程与签名安装包 | 统一 GUI 与桌面运行壳已开发，发行验收未完成 |
 | Transparent Mode | 精确 Scope、CA、叶证书、Linux trust-store 与进程出口观察 | CA 生命周期、权限、恢复和 Linux `/proc` 测试 | HTTPS MITM、Protocol Adapter 接入和 pre-connect 阻断 | 证书固定、HTTP/3、QUIC、WebSocket、系统代理变化 | 安全底座完成，透明内容保护未实现 |
 | 跨平台 | Linux/macOS/Windows、amd64/arm64 交叉构建 | 六目标编译 | macOS/Windows 原生安全存储、证书、出口观察和阻断 | 两个平台的安装、运行、升级、回滚和卸载 | 可构建不等于可交付 |
 | 安装、升级与发布 | CI、SBOM、漏洞扫描、可复现构建和 provenance 工作流 | 仓库自动化门禁 | 正式安装器、自动更新、回滚、卸载和分发渠道 | 正式签名制品与发布演练 | 工程底座存在，正式发布未完成 |
@@ -179,7 +179,9 @@
 
 ### 已开发
 
-- Fyne v2 独立桌面壳、系统托盘、状态通知和关闭窗口隐藏；
+- Tauri 2 独立桌面壳，系统 WebView 复用 Core 内嵌 Dashboard；
+- 浏览器与桌面使用同一 GUI，桌面自动装载本机管理凭据；
+- 系统托盘、单实例、用户级开机启动和关闭窗口隐藏；
 - 用户级开机启动与 Linux、macOS、Windows 配置写入；
 - Core instance identity 预检、启动、探活、保活、崩溃重启和 Session-aware 退出；
 - Core 内嵌本地 Web Dashboard；
