@@ -26,6 +26,12 @@ ordinary development pushes do not start duplicate multi-platform builds:
    artifact, or enable it to create a GitHub Release. Development and beta
    GitHub Releases are marked as prereleases.
 
+The workflow uses GitHub's job token to publish by default. If repository tag
+or release rules do not allow GitHub Actions to create releases, add a
+fine-grained repository Actions secret named `RELEASE_TOKEN` with **Contents:
+Read and write** permission. The workflow automatically prefers that secret
+when present. Re-running the same version safely replaces its existing assets.
+
 The workflow rejects branch/channel mismatches. Development runs use a short
 compile, vet, and critical-package test gate. Beta runs execute the full test
 suite and acceptance evidence. Main runs additionally use the race detector.

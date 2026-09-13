@@ -42,6 +42,7 @@ concurrency:
 jobs:
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       CHANNEL: ${{ inputs.channel }}
       VERSION: ${{ inputs.version }}
@@ -151,6 +152,7 @@ jobs:
 
   desktop:
     needs: package
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -237,6 +239,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.publish_release
     needs: [package, desktop]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       CHANNEL: ${{ inputs.channel }}
       VERSION: ${{ inputs.version }}
@@ -247,18 +250,24 @@ jobs:
           merge-multiple: true
       - name: Publish GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         shell: bash
         run: |
+          set -euo pipefail
           tag="v${VERSION}"
-          prerelease=""
+          release_args=()
           if [ "${CHANNEL}" != main ]; then
-            prerelease="--prerelease"
+            release_args+=(--prerelease)
             if [[ "${VERSION}" != *-"${CHANNEL}"* ]]; then tag="v${VERSION}-${CHANNEL}"; fi
           fi
-          gh release create "${tag}" release-artifacts/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --title "AgentVeil ${VERSION} (${CHANNEL})" \
-            --generate-notes \
-            ${prerelease}
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${tag}" release-artifacts/* --clobber --repo "${GITHUB_REPOSITORY}"
+            gh release edit "${tag}" --repo "${GITHUB_REPOSITORY}" \
+              --title "AgentVeil ${VERSION} (${CHANNEL})" "${release_args[@]}"
+          else
+            gh release create "${tag}" release-artifacts/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "AgentVeil ${VERSION} (${CHANNEL})" \
+              --generate-notes "${release_args[@]}"
+          fi
