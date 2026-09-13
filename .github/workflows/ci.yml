@@ -20,7 +20,22 @@ jobs:
           cache: true
       - run: gofmt -w . && git diff --exit-code
       - run: go vet ./...
-      - run: go test -race -coverprofile=coverage.out ./...
+      - name: Test and scan logs for sensitive canary
+        env:
+          VEIL_CI_LEAK_CANARY: ghp_AgentVeilCILogCanary0123456789
+        run: |
+          output="$(mktemp "${RUNNER_TEMP}/agentveil-test-output.XXXXXX")"
+          trap 'rm -f "${output}"' EXIT
+          set +e
+          VEIL_TEST_LEAK_CANARY="${VEIL_CI_LEAK_CANARY}" go test -race -coverprofile=coverage.out ./... >"${output}" 2>&1
+          test_code=$?
+          set -e
+          if grep -Fq -- "${VEIL_CI_LEAK_CANARY}" "${output}"; then
+            echo "::error::Sensitive canary reached test output; log withheld"
+            exit 1
+          fi
+          cat "${output}"
+          exit "${test_code}"
       - run: go build -trimpath ./cmd/veil
 
   cross-build:

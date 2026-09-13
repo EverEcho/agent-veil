@@ -1,6 +1,7 @@
 package diagnostic
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,9 @@ import (
 func TestReportHashesIdentitiesAndSecondarilyRedactsFields(t *testing.T) {
 	scanner := detector.NewDefault()
 	secret := "AKIAIOSFODNN7EXAMPLE"
+	if canary := os.Getenv("VEIL_TEST_LEAK_CANARY"); canary != "" {
+		secret = canary
+	}
 	report, err := Build(scanner, time.Now().UTC(), "ok", 1, []Agent{{Reference: "agent-raw", Kind: secret, Version: "1.0", State: "active"}}, []domain.AuditEvent{{SessionID: "session-raw", AgentID: "agent-raw", SurfaceID: "primary", FindingTypes: []string{secret}, Action: domain.ActionBlock}})
 	if err != nil {
 		t.Fatal(err)

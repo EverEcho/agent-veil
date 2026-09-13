@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,9 @@ import (
 
 func TestAuditRejectsSensitiveContent(t *testing.T) {
 	secret := "ghp_this_is_a_test_secret"
+	if canary := os.Getenv("VEIL_TEST_LEAK_CANARY"); canary != "" {
+		secret = canary
+	}
 	event := domain.AuditEvent{Timestamp: time.Now(), AgentID: secret, Action: domain.ActionBlock}
 	if _, err := Marshal(event, secret); err == nil {
 		t.Fatal("audit marshal accepted forbidden sensitive content")

@@ -81,7 +81,8 @@ conservatively than discovered traffic.
 - pinned CI actions with race and static analysis, six-target Linux/macOS/Windows
   cross-builds, byte-for-byte reproducible Linux release-build verification,
   time-bounded protocol/SSE fuzzing, reachable-vulnerability and dependency
-  review gates, and SPDX JSON SBOM generation;
+  review gates, sensitive-Canary test-log scanning that withholds leaking output,
+  and SPDX JSON SBOM generation;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration and protected launch for same-runtime

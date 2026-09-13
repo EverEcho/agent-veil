@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1497,9 +1498,14 @@ func TestAmbiguousProviderRepresentationHeadersFailClosed(t *testing.T) {
 }
 
 func TestProviderSSEContentTypeRequiresExactMediaType(t *testing.T) {
+	providerSecret := "provider-secret"
+	if canary := os.Getenv("VEIL_TEST_LEAK_CANARY"); canary != "" {
+		providerSecret = canary
+	}
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-streaming")
-		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"provider-secret\"}\n\n"))
+		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": providerSecret})
+		_, _ = w.Write(append(append([]byte("data: "), payload...), '\n', '\n'))
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -1512,7 +1518,7 @@ func TestProviderSSEContentTypeRequiresExactMediaType(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || strings.Contains(recorder.Body.String(), "provider-secret") {
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || strings.Contains(recorder.Body.String(), providerSecret) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
