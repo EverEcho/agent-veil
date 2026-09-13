@@ -1013,6 +1013,9 @@ func runtimeOptions() planner.Options {
 }
 
 func writeInspection(writer io.Writer, manifest domain.AgentManifest) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "write inspection", "writer is required")
+	}
 	plan, err := planner.Build(manifest, runtimeOptions())
 	if err != nil {
 		return err
