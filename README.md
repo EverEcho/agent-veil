@@ -44,7 +44,9 @@ conservatively than discovered traffic.
   audit. Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
   metadata also drives local-day summaries and a seven-day risk trend, with
-  per-response nonce CSP and no inline event handlers;
+  per-response nonce CSP and no inline event handlers. The control surface has
+  a semantic main landmark, keyboard skip navigation, visible focus, reduced-
+  motion handling, labelled inputs, and polite assistive status announcements;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans,
   available from both CLI and a user-triggered local Dashboard download;
