@@ -35,6 +35,8 @@ go test -race ./...
 VEIL_PERFORMANCE_GATE=1 go test ./internal/pipeline -run '^TestPureRulePipelineP95Budget$' -count=1 -v
 ```
 
+CI 还会执行 `make acceptance-evidence`，逐项复跑下表引用的协议矩阵、Provider 边界、Registry 撤销、Routing Graph、隐私安全产物和 Compatibility Matrix 测试。该目标只汇总仓库内自动化范围，不替代实机验收。
+
 协议到模拟 Provider 的关键验收可以单独复跑：
 
 ```bash

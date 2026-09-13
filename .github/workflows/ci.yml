@@ -40,6 +40,8 @@ jobs:
         env:
           VEIL_PERFORMANCE_GATE: "1"
         run: go test ./internal/pipeline -run '^TestPureRulePipelineP95Budget$' -count=1 -v
+      - name: Reproduce documented acceptance evidence
+        run: make acceptance-evidence
       - run: go build -trimpath ./cmd/veil
 
   cross-build:
