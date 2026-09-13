@@ -315,7 +315,7 @@ func (s *Store) verifyManifest(manifest Manifest) error {
 		return domain.NewError(domain.ErrInvalidContract, "verify rule manifest", "rule SHA-256 is invalid")
 	}
 	signature, err := base64.StdEncoding.DecodeString(manifest.Signature)
-	if err != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(s.verifyKey, SigningPayload(manifest), signature) {
+	if err != nil || len(signature) != ed25519.SignatureSize || base64.StdEncoding.EncodeToString(signature) != manifest.Signature || !ed25519.Verify(s.verifyKey, SigningPayload(manifest), signature) {
 		return domain.NewError(domain.ErrInvalidContract, "verify rule manifest", "rule signature is invalid")
 	}
 	return nil

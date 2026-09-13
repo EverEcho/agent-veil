@@ -96,6 +96,11 @@ func TestStoreRejectsBadSignatureSizeAndTampering(t *testing.T) {
 	if err := store.Install(bad, bytes.NewReader(payload)); err == nil {
 		t.Fatal("invalid signature was accepted")
 	}
+	noncanonical := signedManifest(t, private, "noncanonical", payload)
+	noncanonical.Signature = noncanonical.Signature[:8] + "\n" + noncanonical.Signature[8:]
+	if err := store.Install(noncanonical, bytes.NewReader(payload)); err == nil {
+		t.Fatal("noncanonical signature encoding was accepted")
+	}
 	oversized := signedManifest(t, private, "large", payload)
 	oversized.Size = MaxArtifactBytes + 1
 	oversized.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, SigningPayload(oversized)))

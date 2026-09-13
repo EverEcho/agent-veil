@@ -100,6 +100,11 @@ func TestStoreRejectsBadSignatureInvalidRulesAndTampering(t *testing.T) {
 	if err := store.Install(bad, bytes.NewReader(payload)); err == nil {
 		t.Fatal("invalid signature was accepted")
 	}
+	noncanonical := signedManifest(t, private, "noncanonical", payload)
+	noncanonical.Signature = noncanonical.Signature[:8] + "\n" + noncanonical.Signature[8:]
+	if err := store.Install(noncanonical, bytes.NewReader(payload)); err == nil {
+		t.Fatal("noncanonical signature encoding was accepted")
+	}
 	invalid := []byte(`{"schema_version":"v1","rules":[{"id":"pii.email","category":"custom.email","severity":"high","suggested_action":"redact","pattern":"x+"}]}`)
 	if err := store.Install(signedManifest(t, private, "invalid", invalid), bytes.NewReader(invalid)); err == nil {
 		t.Fatal("signed but invalid rule pack was accepted")

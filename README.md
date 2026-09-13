@@ -22,7 +22,7 @@ conservatively than discovered traffic.
   policies, session-stable placeholders, and request-scoped bounded Vaults;
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
-- persistent policy and privacy-safe audit stores with retention, plus signed,
+- persistent policy and privacy-safe audit stores with retention, plus canonically signed,
   versioned rule-pack and semantic-model artifact stores with rollback; verified
   rule packs can be installed, listed, activated, deactivated, and removed
   through the authenticated management API without exposing a partially switched
