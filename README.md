@@ -54,7 +54,10 @@ conservatively than discovered traffic.
   a semantic main landmark, keyboard skip navigation, visible focus, reduced-
   motion handling, labelled inputs, and polite assistive status announcements.
   Its live Core status distinguishes healthy/degraded API, audit failure counts,
-  and required semantic availability. A browser-language-aware English/Simplified
+  and required semantic availability. Agent, Session, approval, audit, discovery,
+  policy, rule-pack, and model changes made through other local clients converge
+  automatically, while an actively edited policy buffer is preserved. A
+  browser-language-aware English/Simplified
   Chinese localization layer covers static controls, dynamically inserted
   actions, and parameterized runtime summaries for health, coverage, risks,
   trends, call trees, rule tests, and model resources while persisting only the

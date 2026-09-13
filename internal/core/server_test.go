@@ -201,6 +201,11 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 			t.Fatalf("dashboard generation-bound protection control is missing %q", required)
 		}
 	}
+	for _, required := range []string{"function refreshConfiguration", "if(document.activeElement!==document.querySelector('#policy'))", "if(token())refreshConfiguration()", "},5000)"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard configuration refresh is missing %q", required)
+		}
+	}
 	for _, required := range []string{"body:source", `body='{"manifest":'+manifestSource`, "new TextEncoder().encode(manifestSource)", "manifestBytes.length>6144"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard does not preserve strict JSON input: missing %q", required)
