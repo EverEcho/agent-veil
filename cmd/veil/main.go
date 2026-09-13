@@ -74,11 +74,13 @@ func run(args []string) error {
 		return errors.New("usage: veil <agents|approvals|audit|calls|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|sessions|status>")
 	}
 	switch args[0] {
-	case "agents", "calls", "sessions":
+	case "agents", "calls":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: veil %s", args[0])
 		}
 		return liveStateCommand(args[0], os.Stdout)
+	case "sessions":
+		return sessionsCommand(args[1:], os.Stdout)
 	case "approvals":
 		return approvalsCommand(args[1:], os.Stdout)
 	case "audit":
@@ -1218,6 +1220,47 @@ func liveStateCommand(resource string, writer io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return writeLiveState(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), resource)
+}
+
+func sessionsCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return executeSessionsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executeSessionsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	usage := errors.New("usage: veil sessions <list|revoke SESSION_ID>")
+	if len(args) == 0 || len(args) == 1 && args[0] == "list" {
+		return writeLiveState(ctx, writer, endpoint, token, "sessions")
+	}
+	if len(args) != 2 || args[0] != "revoke" || !validSessionID(args[1]) {
+		return usage
+	}
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "revoke session", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	return managementJSON(ctx, http.MethodDelete, endpoint+"/v1/sessions/"+args[1], token, nil, nil)
+}
+
+func validSessionID(value string) bool {
+	if !strings.HasPrefix(value, "session-") || len(value) != len("session-")+32 {
+		return false
+	}
+	for _, character := range value[len("session-"):] {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func writeLiveState(ctx context.Context, writer io.Writer, endpoint, token, resource string) error {

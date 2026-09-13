@@ -1003,6 +1003,47 @@ func TestLiveStateCommandsRejectInvalidInputsAndCallTrees(t *testing.T) {
 	}
 }
 
+func TestSessionsCommandListsAndRevokesAnExactSession(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	const sessionID = "session-0123456789abcdef0123456789abcdef"
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		methods = append(methods, request.Method+" "+request.URL.EscapedPath())
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		if request.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"id":"`+sessionID+`","core_endpoint":"http://127.0.0.1:1","started_at":"2026-01-02T03:04:05Z","expires_at":"2026-01-02T04:04:05Z","route_ids":["route-primary"]}]`)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := executeSessionsCommand(context.Background(), &output, server.URL, token, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeSessionsCommand(context.Background(), io.Discard, server.URL, token, []string{"revoke", sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), sessionID) || !slices.Equal(methods, []string{"GET /v1/sessions", "DELETE /v1/sessions/" + sessionID}) {
+		t.Fatalf("methods=%v output=%s", methods, output.String())
+	}
+}
+
+func TestSessionsCommandRejectsUnsafeIdentifiersAndArguments(t *testing.T) {
+	for _, args := range [][]string{{"revoke"}, {"revoke", "../agents"}, {"revoke", "session-0123456789ABCDEF0123456789ABCDEF"}, {"remove", "session-0123456789abcdef0123456789abcdef"}} {
+		if err := executeSessionsCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", args); err == nil || !strings.Contains(err.Error(), "usage:") {
+			t.Fatalf("args=%v error=%v", args, err)
+		}
+	}
+	if validSessionID("session-0123456789abcdef0123456789abcdeg") {
+		t.Fatal("non-hex session identifier was accepted")
+	}
+}
+
 func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(core.APIVersionHeader, core.APIVersion)
