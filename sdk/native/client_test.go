@@ -51,6 +51,36 @@ func TestNativeClientLeaseLifecycleAgainstCore(t *testing.T) {
 	}
 }
 
+func TestRouteClientCreatesScopedChildSession(t *testing.T) {
+	integrationRegistry := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	registered, err := integrationRegistry.Reconcile(nativeManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	server, _ := core.New(manager, testManagementToken)
+	server.WithRegistry(integrationRegistry)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	parent, err := manager.Create("", server.Endpoint(), []string{registered.Plan.Routes[0].ID}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewRouteClient(server.Endpoint(), parent.Session.ID, parent.Routes[0].RouteID, parent.Routes[0].Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := client.CreateChild(context.Background(), 30*time.Second)
+	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
+		t.Fatalf("child=%+v err=%v", child, err)
+	}
+	if !manager.Delete(parent.Session.ID) || manager.Authorize(child.Session.ID, child.Routes[0].RouteID, child.Routes[0].Token) {
+		t.Fatal("parent revocation did not revoke SDK-created child")
+	}
+}
+
 func TestNativeClientRejectsUnsafeAuthorityTokenAndMode(t *testing.T) {
 	for _, endpoint := range []string{"https://127.0.0.1:1234", "http://localhost:1234", "http://192.0.2.1:1234", "http://127.0.0.1:1234/path", "http://user@127.0.0.1:1234"} {
 		if _, err := NewClient(endpoint, testManagementToken, nil); err == nil {
@@ -59,6 +89,9 @@ func TestNativeClientRejectsUnsafeAuthorityTokenAndMode(t *testing.T) {
 	}
 	if _, err := NewClient("http://127.0.0.1:1234", "short", nil); err == nil {
 		t.Fatal("unsafe management token was accepted")
+	}
+	if _, err := NewRouteClient("http://127.0.0.1:1234", "session-valid", "route-valid", "not-a-route-token", nil); err == nil {
+		t.Fatal("unsafe route capability was accepted")
 	}
 	client, err := NewClient("http://127.0.0.1:1234", testManagementToken, nil)
 	if err != nil {

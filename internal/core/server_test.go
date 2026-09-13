@@ -29,6 +29,7 @@ import (
 	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
+	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
@@ -1106,6 +1107,76 @@ func TestCoreServesRegisteredProtectedRoute(t *testing.T) {
 	var events []domain.AuditEvent
 	if err := json.NewDecoder(auditResponse.Body).Decode(&events); err != nil || len(events) != 1 || events[0].FindingCount != 1 || events[0].FindingTypes[0] != "pii.email" {
 		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+func TestRouteCapabilityCreatesOnlySameRouteBoundedChildSession(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIResponses: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-parent", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{
+		{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true},
+		{ID: "other", Name: "Other", Type: domain.SurfaceModelAuxiliary, Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "https", Host: "other.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true},
+	}}
+	registered, err := reg.Reconcile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	server, _ := New(manager, "01234567890123456789012345678901")
+	server.WithRegistry(reg)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close(context.Background())
+	primaryRoute, otherRoute := registered.Plan.Routes[0].ID, registered.Plan.Routes[1].ID
+	parent, err := manager.CreateWithOptions("", server.Endpoint(), []string{primaryRoute, otherRoute}, time.Minute, session.CreateOptions{Interactive: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryToken := parent.Routes[0].Token
+	requestChild := func(routeID string, ttl int64, configure func(http.Header)) *http.Response {
+		payload, _ := json.Marshal(map[string]any{"ttl_seconds": ttl})
+		request, _ := http.NewRequest(http.MethodPost, server.Endpoint()+"/v1/sessions/"+parent.Session.ID+"/routes/"+routeID+"/children", bytes.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(APIVersionHeader, APIVersion)
+		request.Header.Set(veilproxy.HeaderSession, parent.Session.ID)
+		request.Header.Set(veilproxy.HeaderRouteToken, primaryToken)
+		if configure != nil {
+			configure(request.Header)
+		}
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		return response
+	}
+	response := requestChild(primaryRoute, 30, nil)
+	var child session.Created
+	if err := json.NewDecoder(response.Body).Decode(&child); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || len(child.Routes) != 1 || child.Routes[0].RouteID != primaryRoute || child.Routes[0].Token == primaryToken {
+		t.Fatalf("status=%d child=%+v", response.StatusCode, child)
+	}
+	response = requestChild(otherRoute, 30, nil)
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("cross-route child status=%d", response.StatusCode)
+	}
+	response = requestChild(primaryRoute, 90, nil)
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("overlong child status=%d", response.StatusCode)
+	}
+	response = requestChild(primaryRoute, 30, func(header http.Header) {
+		header[veilproxy.HeaderRouteToken] = []string{primaryToken, primaryToken}
+	})
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("duplicate token child status=%d", response.StatusCode)
+	}
+	if !manager.Delete(parent.Session.ID) || manager.Authorize(child.Session.ID, primaryRoute, child.Routes[0].Token) {
+		t.Fatal("parent deletion did not cascade to the child session")
 	}
 }
 

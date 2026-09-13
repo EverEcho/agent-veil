@@ -44,6 +44,7 @@ type SurfaceType = domain.SurfaceType
 type Protocol = domain.Protocol
 type AuthType = domain.AuthType
 type NetworkType = domain.NetworkType
+type ProtectionSession = domain.ProtectionSession
 
 const (
 	ModeNative  = domain.ModeNative
@@ -107,21 +108,41 @@ type Client struct {
 	http     *http.Client
 }
 
+type RouteCredential struct {
+	RouteID string `json:"route_id"`
+	Token   string `json:"token"`
+}
+
+type ChildSession struct {
+	Session ProtectionSession `json:"session"`
+	Routes  []RouteCredential `json:"routes"`
+}
+
+// RouteClient uses one short-lived parent route capability. It can create only
+// a non-interactive child Session for that exact route and has no registration
+// or management-plane authority.
+type RouteClient struct {
+	endpoint  string
+	sessionID string
+	routeID   string
+	token     string
+	http      *http.Client
+}
+
 func NewClient(endpoint, managementToken string, transport *http.Client) (*Client, error) {
 	normalized, err := validateEndpoint(endpoint)
 	if err != nil || !validToken(managementToken) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create native client", "numeric loopback endpoint and bounded management token are required")
 	}
-	client := http.DefaultClient
-	if transport != nil {
-		client = transport
+	return &Client{endpoint: normalized, token: managementToken, http: boundedHTTPClient(transport)}, nil
+}
+
+func NewRouteClient(endpoint, sessionID, routeID, routeToken string, transport *http.Client) (*RouteClient, error) {
+	normalized, err := validateEndpoint(endpoint)
+	if err != nil || !safeIdentifier(sessionID) || !safeIdentifier(routeID) || !validRouteToken(routeToken) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "create nested route client", "loopback endpoint and valid route capability are required")
 	}
-	copyClient := *client
-	if copyClient.Timeout == 0 || copyClient.Timeout > 30*time.Second {
-		copyClient.Timeout = 30 * time.Second
-	}
-	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{endpoint: normalized, token: managementToken, http: &copyClient}, nil
+	return &RouteClient{endpoint: normalized, sessionID: sessionID, routeID: routeID, token: routeToken, http: boundedHTTPClient(transport)}, nil
 }
 
 func (c *Client) Register(ctx context.Context, manifest AgentManifest, ttl time.Duration) (Registration, error) {
@@ -156,6 +177,38 @@ func (c *Client) Remove(ctx context.Context, agentID string, generation uint64) 
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, input any, expectedStatus int, output any) error {
+	return doJSONRequest(ctx, c.http, c.endpoint, method, path, input, expectedStatus, output, func(header http.Header) {
+		header.Set("Authorization", "Bearer "+c.token)
+	})
+}
+
+func (c *RouteClient) CreateChild(ctx context.Context, ttl time.Duration) (ChildSession, error) {
+	if c == nil || ctx == nil || ttl < time.Second || ttl > maxLeaseTTL || ttl%time.Second != 0 {
+		return ChildSession{}, domain.NewError(domain.ErrInvalidContract, "create nested child session", "client, context, and bounded TTL are required")
+	}
+	path := "/v1/sessions/" + url.PathEscape(c.sessionID) + "/routes/" + url.PathEscape(c.routeID) + "/children"
+	var result ChildSession
+	err := doJSONRequest(ctx, c.http, c.endpoint, http.MethodPost, path, map[string]any{"ttl_seconds": int64(ttl / time.Second)}, http.StatusCreated, &result, func(header http.Header) {
+		header.Set("X-Veil-Session", c.sessionID)
+		header.Set("X-Veil-Route-Token", c.token)
+	})
+	return result, err
+}
+
+func boundedHTTPClient(transport *http.Client) *http.Client {
+	client := http.DefaultClient
+	if transport != nil {
+		client = transport
+	}
+	copyClient := *client
+	if copyClient.Timeout == 0 || copyClient.Timeout > 30*time.Second {
+		copyClient.Timeout = 30 * time.Second
+	}
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &copyClient
+}
+
+func doJSONRequest(ctx context.Context, client *http.Client, endpoint, method, path string, input any, expectedStatus int, output any, configureHeaders func(http.Header)) error {
 	var body io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)
@@ -164,17 +217,19 @@ func (c *Client) doJSON(ctx context.Context, method, path string, input any, exp
 		}
 		body = bytes.NewReader(payload)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, body)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint+path, body)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	if configureHeaders != nil {
+		configureHeaders(request.Header)
+	}
 	request.Header.Set(apiVersionHeader, apiVersion)
 	request.Header.Set("Accept-Encoding", "identity")
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := c.http.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -238,6 +293,20 @@ func validToken(value string) bool {
 	for _, character := range value {
 		if character < 0x21 || character > 0x7e {
 			return false
+		}
+	}
+	return true
+}
+
+func validRouteToken(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
 		}
 	}
 	return true

@@ -27,3 +27,10 @@ func TestPublicManifestTypesRequireNoInternalImports(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPublicNestedRouteClientConstructor(t *testing.T) {
+	client, err := native.NewRouteClient("http://127.0.0.1:43123", "session-0123456789abcdef", "route-primary-g1", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", nil)
+	if err != nil || client == nil {
+		t.Fatalf("public route client construction failed: %v", err)
+	}
+}

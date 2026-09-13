@@ -285,6 +285,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /v1/health", s.auth(s.health))
 	mux.HandleFunc("GET /v1/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /v1/sessions", s.auth(s.createSession))
+	mux.HandleFunc("POST /v1/sessions/{parent}/routes/{route}/children", s.createChildSession)
 	mux.HandleFunc("DELETE /v1/sessions/{id}", s.auth(s.deleteSession))
 	mux.HandleFunc("GET /v1/agents", s.auth(s.listAgents))
 	mux.HandleFunc("GET /v1/agents/{id}", s.auth(s.getAgent))
@@ -1066,14 +1067,7 @@ func (s *Server) Close(ctx context.Context) error {
 
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(APIVersionHeader, APIVersion)
-		requestedVersions := r.Header.Values(APIVersionHeader)
-		if len(requestedVersions) > 1 || len(requestedVersions) == 1 && requestedVersions[0] != APIVersion {
-			writeJSON(w, http.StatusUpgradeRequired, map[string]string{"error": "INCOMPATIBLE_MANAGEMENT_API"})
-			return
-		}
-		if !security.ValidLocalOrigin(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": string(domain.ErrInvalidOrigin)})
+		if !validVersionedLocalRequest(w, r) {
 			return
 		}
 		provided, ok := managementBearer(r.Header.Values("Authorization"))
@@ -1083,6 +1077,20 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func validVersionedLocalRequest(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set(APIVersionHeader, APIVersion)
+	requestedVersions := r.Header.Values(APIVersionHeader)
+	if len(requestedVersions) > 1 || len(requestedVersions) == 1 && requestedVersions[0] != APIVersion {
+		writeJSON(w, http.StatusUpgradeRequired, map[string]string{"error": "INCOMPATIBLE_MANAGEMENT_API"})
+		return false
+	}
+	if !security.ValidLocalOrigin(r) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": string(domain.ErrInvalidOrigin)})
+		return false
+	}
+	return true
 }
 
 func validAdminToken(value string) bool {
@@ -1167,6 +1175,37 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	created, err := s.manager.CreateWithOptions(request.ParentSessionID, s.Endpoint(), request.RouteIDs, time.Duration(request.TTLSeconds)*time.Second, session.CreateOptions{Interactive: request.Interactive})
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_SESSION"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) createChildSession(w http.ResponseWriter, r *http.Request) {
+	if !validVersionedLocalRequest(w, r) {
+		return
+	}
+	parentID, routeID := r.PathValue("parent"), r.PathValue("route")
+	sessionValues, tokenValues := r.Header.Values(veilproxy.HeaderSession), r.Header.Values(veilproxy.HeaderRouteToken)
+	if len(sessionValues) != 1 || len(tokenValues) != 1 || sessionValues[0] != parentID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	_, ok := s.manager.AuthorizeRoute(parentID, routeID, tokenValues[0])
+	if !ok || !s.routeExists(routeID) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
+		return
+	}
+	var request struct {
+		TTLSeconds int64 `json:"ttl_seconds"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.TTLSeconds <= 0 || request.TTLSeconds > int64(session.DefaultMaxTTL/time.Second) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_CHILD_SESSION"})
+		return
+	}
+	ttl := time.Duration(request.TTLSeconds) * time.Second
+	created, err := s.manager.CreateWithOptions(parentID, s.Endpoint(), []string{routeID}, ttl, session.CreateOptions{Interactive: false})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_CHILD_SESSION"})
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
