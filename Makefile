@@ -1,4 +1,4 @@
-.PHONY: test verify acceptance-evidence build
+.PHONY: test verify acceptance-evidence build desktop-test desktop-build-ci package-dev
 
 test:
 	go test ./...
@@ -24,6 +24,24 @@ acceptance-evidence:
 	go test ./internal/routing -run '^TestContentModifierAfterDLPIsBlocked$$' -count=1
 	go test ./internal/audit ./internal/diagnostic -count=1
 	go test ./internal/compatibility -run '^(TestMatrixIsExplicitAndPlatformScoped|TestValidationRejectsUnsupportedProtectedProtocol)$$' -count=1
+	go test ./sdk/attach -run '^TestControllerAttachesRotatesAndRestores$$' -count=1
+	go test ./internal/desktopapp -run '^(TestSupervisorAdoptsButDoesNotStopExternalCore|TestAutoStartWritesAndRemovesPlatformEntries|TestDesktopTokenPersistsPrivately)$$' -count=1
 
 build:
 	go build -trimpath -o veil ./cmd/veil
+
+desktop-test:
+	go test ./internal/desktopapp
+
+# Uses Fyne's in-memory driver so CI can compile the shell without a display.
+desktop-build-ci:
+	cd desktop && go build -tags ci -trimpath -o agentveil-desktop .
+
+# Local, fast development package. CI produces the complete multi-platform bundle.
+package-dev:
+	test -z "$$(gofmt -l .)"
+	go vet ./...
+	go test ./internal/core ./internal/proxy ./internal/session ./internal/desktopapp ./sdk/attach
+	mkdir -p dist/dev
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o dist/dev/veil ./cmd/veil
+	cd desktop && go build -trimpath -buildvcs=false -o ../dist/dev/agentveil-desktop .

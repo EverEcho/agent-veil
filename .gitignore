@@ -2,4 +2,6 @@
 coverage.out
 *.test
 *.prof
+desktop/agentveil-desktop
+/dist/
 .DS_Store

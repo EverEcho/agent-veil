@@ -5,8 +5,18 @@ architecture, security invariants, and remaining work are defined in
 [`doc/`](doc/README.md); implemented coverage is intentionally reported more
 conservatively than discovered traffic.
 
+Release branches and manual package rules are defined in
+[`doc/10-release-channels.md`](doc/10-release-channels.md): `dev` permits known
+nonfatal bugs, `beta` requires self-testing with no known bugs, and `main`
+requires confirmed functionality with no known bugs.
+
 ## Implemented
 
+- an independently buildable Fyne v2 desktop shell with a tray menu, status
+  notifications, close-to-tray behavior, user-level Linux/macOS/Windows
+  autostart entries, and a Core supervisor that verifies instance identity,
+  launches and health-checks `veil serve`, restarts owned failed processes, and
+  never stops an external Core or an owned Core with active Sessions;
 - domain models for agents, egress surfaces, manifests, routes, plans, sessions,
   findings, policies, networking and audit events;
 - a loopback-only Core with capability-authenticated routes, session-revocable
@@ -104,6 +114,13 @@ conservatively than discovered traffic.
   performs health heartbeats, reports every renewed expiry, removes its exact
   generation on shutdown, and fails closed instead of fighting a superseding
   controller through unsafe automatic re-registration;
+- a fail-closed Attach controller SDK in `sdk/attach` for Agents with dynamic
+  routing APIs. It registers an Attach lease, creates least-authority Route
+  bindings, rotates Session credentials before expiry, atomically hands them to
+  an Agent-specific target adapter, and restores the original configuration on
+  cancellation, heartbeat failure, or reconfiguration failure. No concrete
+  Agent is advertised as Attach-capable until its target adapter is implemented
+  and version-verified;
 - a declarative Tool Surface Adapter SDK in `sdk/tooladapter` that enumerates
   Remote MCP and local stdio, forces Browser/OAuth/file/WebSocket/Tool HTTP
   interactions to remain unknown and non-rewritable until Core has a verified
@@ -200,6 +217,11 @@ of at least 32 characters:
 export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
 go run ./cmd/veil serve
 ```
+
+The Fyne desktop shell is isolated in `desktop/` so the Core remains CGO-free.
+It expects `veil` beside the desktop executable and can be compiled without a
+display using `make desktop-build-ci`; native builds require the platform Fyne
+development packages. See [`desktop/README.md`](desktop/README.md).
 
 To have Core own and continuously reconcile one Managed/Native integration,
 point it at a private, absolute JSON `AgentManifest` file. The initial manifest

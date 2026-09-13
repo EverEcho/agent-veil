@@ -22,6 +22,12 @@ Integration 不实现检测、策略、Vault 或流式恢复。相同协议必�
 
 透明 MITM 仅用于不能修改 Base URL 的客户端，是高级集成方式，不是默认架构。
 
+### Attach 通用生命周期
+
+支持动态配置的 Agent 通过 `sdk/attach` 接入：控制器先注册 `ModeAttach` Manifest，再为完整 Protected Route 集合创建短期 Session，将 loopback Base URL、Session/Route Header 和兼容 API Key carrier 一次性交给 Agent 专用 `Target.Apply`。控制器在运行期间维持 generation-bound lease，并在 Session 半寿命处先应用新能力、再撤销旧能力。取消、心跳失败、轮换失败或 Apply 失败都会调用幂等 `Target.Restore`，随后撤销 Session 和当前 registration generation。管理 Token 不进入 Target 或 Agent 进程。
+
+该 SDK 只负责安全生命周期，不代表具体 Agent 已实现动态配置。每个 Agent 的 Target 仍需证明原配置快照、原子替换、重连以及精确恢复能力后，才能在兼容矩阵中标为 Attach Protected。
+
 ## 3. Agent 优先级
 
 ### Codex

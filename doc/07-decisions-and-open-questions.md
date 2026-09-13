@@ -30,7 +30,7 @@
 
 ## 3. ADR 状态
 
-- 桌面技术栈、托盘/自启动/升级机制和 Core 安装生命周期：**待决策**；
+- 桌面技术栈、托盘/自启动和 Core 运行生命周期：[ADR-0006](./adr/0006-desktop-shell-and-core-lifecycle.md) **部分接受**；Fyne v2 独立 module、用户级自启动和 Session-aware Core 退出语义已锁定，安装、升级、签名和三平台实机仍待完成；
 - Policy v1 JSON、Scope 优先级、显式 BLOCK 不降级与原子持久化：[ADR-0001](./adr/0001-policy-document-and-precedence.md) **已接受**；
 - HMAC-SHA256 Session 稳定占位符、请求级 Vault，以及 `SHA-256(path || NUL || chunk)` 有界 Finding 缓存：[ADR-0002](./adr/0002-placeholder-vault-and-detection-cache.md) **已接受**；
 - Bedrock SigV4、Vertex OAuth 与 Custom Auth 的运行时凭据边界：[ADR-0003](./adr/0003-runtime-credential-boundary.md) **已接受当前接口**，新增 Provider 前需逐项安全 ADR；

@@ -19,17 +19,17 @@
 
 | 功能领域 | 已开发 | 已验证 | 待开发 | 待验证 | 当前结论 |
 |---|---|---|---|---|---|
-| Privacy Core 与本地管理面 | Core、Session、Route Capability、管理 API、健康检查、单实例与恢复 | 自动化测试覆盖认证、生命周期、并发、撤销和崩溃状态 | 桌面进程统一托管 Core 生命周期 | 系统重启、强制退出和桌面进程故障注入 | 核心完成，产品生命周期未闭环 |
+| Privacy Core 与本地管理面 | Core、Session、Route Capability、管理 API、健康检查、单实例、恢复与桌面 Supervisor | 自动化测试覆盖认证、生命周期、并发、撤销和崩溃状态 | 安装升级期间的 Core 迁移编排 | 系统重启、强制退出和桌面进程故障注入 | 运行生命周期已接入桌面，安装升级未闭环 |
 | 协议感知数据面 | OpenAI Chat、Responses、Anthropic、Gemini、MCP HTTP、Streamable HTTP、legacy SSE | 协议金样、流分片、错误格式和模拟 Provider 边界 | Browser、OAuth、文件传输、WebSocket 专用适配器 | 真实 Provider 与真实 Agent 端到端 | 主要模型与远程 MCP 已完成 |
 | 检测、策略与 Vault | 确定性规则、熵检测、分层策略、ASK、Placeholder、响应恢复 | Detector、Policy、Vault、响应 DLP 和隐私安全产物测试 | 正式本地语义模型运行时 | 中文模型基准、误报率、召回率和硬件档位 | 确定性链路完成，语义能力未产品化 |
 | Agent 发现 | 八类目标 Agent 的配置发现与 Surface 枚举 | 配置 fixture 与未知版本降级测试 | 动态、IDE Host、Workspace 等缺失配置入口 | 各目标 Agent 精确版本实机核对 | 发现较广，完整性仍待实机确认 |
 | Protected Launch | Linux Codex、Claude、Hermes 启动与临时配置注入 | 指定版本 launch smoke 和崩溃清理 | 其他 Agent 与其他平台 Protected Launch | 真实请求、复杂配置和长期运行 | 当前只覆盖三种 Linux Agent |
-| Attach | 无 | 无 | 通用运行中接管、撤销与重连 | 所有目标 Agent Attach 实机 | 尚未实现 |
+| Attach | 通用 Attach SDK、短期 Route 能力轮换、租约、失败恢复与撤销 | Core 集成自动化 | 各目标 Agent 动态配置适配器 | 所有目标 Agent Attach 实机 | 通用安全生命周期已完成，Agent 适配待接入 |
 | Managed、Native、Nested | Managed Manifest Monitor、Native SDK、lease/heartbeat、父子 Session | 自动化集成与调用树测试 | OpenClaw Gateway、ACP、Provider Plugin 等产品集成 | 真实 Managed/Native Agent | 通用底座完成，产品集成不足 |
 | MCP | HTTP、Streamable HTTP、legacy SSE 双端点保护、stdio Local 建模 | 请求/响应/流、能力绑定、Vault、撤销和 Provider 边界 | stdio 子进程跨平台连接前阻断 | 真实远程 MCP、重连和长连接运行 | 远程 MCP 核心数据面完成 |
 | Browser、Web 与 Tool | Surface 枚举、Observed/Partial/Unprotected 分级、Tool Adapter SDK | 保守覆盖状态和 SDK 防夸大测试 | Browser 自动化、OAuth、上传下载、WebSocket 专用策略和数据面 | 真实浏览器及工具链 | 只能发现和分级，不能宣称内容保护 |
 | Routing、Auth 与 Network | Routing Graph、SSRF 防护、Bearer/Key/SigV4/Vertex、Direct/HTTP Proxy/SOCKS5/System Proxy | 单模块和模拟网络测试 | VPN/TUN 信息发现、复杂透明路由集成 | Bedrock、Vertex、自定义 Gateway 和真实中间件链路 | 模块完成，组合验证不足 |
-| 桌面控制面 | Core 内嵌 Dashboard、策略、审计、规则与模型管理 | 页面契约和管理 API 测试 | 正式桌面壳、托盘、自启动、通知和升级管理 | 三平台完整用户流程 | 管理界面存在，但不是正式桌面产品 |
+| 桌面控制面 | Fyne 桌面壳、托盘、通知、用户级自启动、Core 保活与 Dashboard 管理入口 | Supervisor 与自启动自动化 | 安装、自动更新、回滚和迁移管理 | 三平台完整用户流程与原生打包 | 桌面运行壳已开发，发行生命周期未完成 |
 | Transparent Mode | 精确 Scope、CA、叶证书、Linux trust-store 与进程出口观察 | CA 生命周期、权限、恢复和 Linux `/proc` 测试 | HTTPS MITM、Protocol Adapter 接入和 pre-connect 阻断 | 证书固定、HTTP/3、QUIC、WebSocket、系统代理变化 | 安全底座完成，透明内容保护未实现 |
 | 跨平台 | Linux/macOS/Windows、amd64/arm64 交叉构建 | 六目标编译 | macOS/Windows 原生安全存储、证书、出口观察和阻断 | 两个平台的安装、运行、升级、回滚和卸载 | 可构建不等于可交付 |
 | 安装、升级与发布 | CI、SBOM、漏洞扫描、可复现构建和 provenance 工作流 | 仓库自动化门禁 | 正式安装器、自动更新、回滚、卸载和分发渠道 | 正式签名制品与发布演练 | 工程底座存在，正式发布未完成 |
@@ -96,6 +96,8 @@
 - 超长上下文、超大 Tool Result 和高并发 Session 压测。
 
 ## 5. Agent 与 Integration 进度
+
+通用 Attach SDK 已接入 Core 的 leased registration 与 Session API，可将多 Surface Route 绑定原子交给 Agent 专用动态配置适配器，并负责心跳、短期能力轮换、失败恢复、Session 级联撤销和原配置恢复。当前尚无目标 Agent 的动态配置适配器，因此不能据此宣称任何具体 Agent 已支持 Attach。
 
 | Agent | 已开发 | 已验证 | 待开发 | 待验证 |
 |---|---|---|---|---|
@@ -177,6 +179,9 @@
 
 ### 已开发
 
+- Fyne v2 独立桌面壳、系统托盘、状态通知和关闭窗口隐藏；
+- 用户级开机启动与 Linux、macOS、Windows 配置写入；
+- Core instance identity 预检、启动、探活、保活、崩溃重启和 Session-aware 退出；
 - Core 内嵌本地 Web Dashboard；
 - Agent 发现、Inspection Preview、Protection Plan 和覆盖率展示；
 - Routing Graph、父子调用树、Session 与 Agent 撤销；
@@ -193,9 +198,8 @@
 
 ### 待开发
 
-- 正式桌面应用技术栈；
-- 系统托盘或菜单栏、开机启动、后台 Core 状态和桌面通知；
-- 安装、升级、回滚和卸载入口。
+- 安装、升级、回滚、迁移和卸载入口；
+- 三平台签名、原生打包与平台安全存储适配。
 
 ### 待验证
 
@@ -260,7 +264,7 @@
 
 ### 外部阻塞
 
-- 桌面技术栈和系统生命周期产品决策；
+- 桌面安装、升级、签名和分发决策；
 - 本地语义模型选型、许可证、中文基准和可信下载源；
 - Apple 与 Windows 签名身份；
 - 正式发布授权和分发渠道。
@@ -273,13 +277,13 @@
 - Codex 0.153.4、Claude Code 2.1.220、Hermes 0.20.6 的指定 Protected Launch 链路；
 - OpenAI Responses、Anthropic、Hermes 多模型和远程 MCP；
 - 本地规则、策略、脱敏、响应恢复、审计和 Dashboard；
-- Native SDK 与 Managed Manifest 实验性接入。
+- Native SDK、Managed Manifest 与通用 Attach SDK 实验性接入。
 
 当前不能宣称：
 
 - 所有目标 Agent 均已受保护；
 - macOS 和 Windows 已达到生产可用；
-- 已支持运行中 Agent 的通用 Attach；
+- 已支持具体目标 Agent 的运行中 Attach（通用安全生命周期已开发，Agent 动态配置适配器仍待实现）；
 - Browser、OAuth、WebSocket 和文件传输已获得内容保护；
 - Transparent Mode 已提供完整 HTTPS 内容保护；
 - 已具备正式桌面客户端和安装升级体验；
@@ -287,13 +291,12 @@
 
 ## 12. 建议开发顺序
 
-1. 收敛桌面技术栈，完成桌面壳、托盘、自启动和 Core 生命周期；
-2. 实现通用 Attach 与撤销恢复；
-3. 选择 OpenClaw 或 OpenCode，完成首个三大 CLI Agent 之外的 Protected 集成；
-4. 完成 Transparent pre-connect 阻断，再接入受限 HTTPS MITM；
-5. 补齐 macOS、Windows 原生平台生命周期；
-6. 落地正式 ONNX 语义模型运行时与中文基准；
-7. 完成安装、升级、回滚、卸载和正式发布链路。
+1. 为首个支持动态配置的目标 Agent 接入 Attach Target；
+2. 选择 OpenClaw 或 OpenCode，完成首个三大 CLI Agent 之外的 Protected 集成；
+3. 完成 Transparent pre-connect 阻断，再接入受限 HTTPS MITM；
+4. 补齐 macOS、Windows 原生平台生命周期；
+5. 落地正式 ONNX 语义模型运行时与中文基准；
+6. 完成安装、升级、回滚、卸载和正式发布链路。
 
 ## 13. 更新规则
 

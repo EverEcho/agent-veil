@@ -20,8 +20,8 @@
 | 6 | 自动化通过 | `TestSSEPlaceholderCrossesEventsWithoutTouchingSignature`、`TestSSEProcessorBlocksCredentialSplitAcrossEvents`、随机 SSE 分片 fuzz、各 Provider 流式矩阵 | 新协议或新事件字段加入时必须扩展同一矩阵 |
 | 7 | 自动化通过 | `internal/audit`、`internal/diagnostic` 的二次扫描与敏感字段拒绝测试；CI 使用 canary 扫描完整测试输出 | 正式安装器和更新器产生的日志尚不存在，加入后需纳入扫描 |
 | 8 | 部分通过 | `internal/routing` 的 DLP 后内容修改阻断；Registry call tree；Linux Process Tree/Unexpected Egress 测试 | 非 Linux 出口观察、真实中间件链路和 Transparent pre-connect 阻断未完成 |
-| 9 | 部分通过 | Planner 禁止将不完整能力标成 Protected；未知版本被降级为风险 Manifest；`TestInspectionPreviewReturnsManifestAndTruthfulCoverage` 与 `TestInspectionIncludesManifestAndTruthfulPlan` 分别证明 Core、CLI 保留 Observed 与必需 Unprotected 缺口且不创建 Route；Compatibility Matrix 是唯一验证事实源，其生产校验器拒绝不在运行时完整协议适配器集合内的 Protected 记录；Dashboard/CLI 从同一 Core API 读取运行状态 | 当前 Dashboard 是 Core 内嵌本地页面，不是具备托盘/生命周期的正式桌面应用 |
-| 10 | 部分通过 | 临时 Launch 配置清理、Session/lease 级联撤销、能力内存擦除、CA 中断恢复与可验证卸载测试；`TestOperatingSystemReleasesCoreLockAfterCrash`、`TestResolveCoreEndpointRejectsStaleIdentityWithoutSendingAdminToken` 与 `TestServeClearsCrashedCoreStateBeforeLaterStartupFailure` 证明崩溃释放实例锁、旧状态不会泄露管理 Token，且重启取得锁后先清除旧状态与 Hermes 隔离配置残留；`TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData` 固定清理所有权边界 | 桌面进程崩溃、系统重启和三平台安装生命周期的实机故障注入 |
+| 9 | 部分通过 | Planner 禁止将不完整能力标成 Protected；未知版本被降级为风险 Manifest；`TestInspectionPreviewReturnsManifestAndTruthfulCoverage` 与 `TestInspectionIncludesManifestAndTruthfulPlan` 分别证明 Core、CLI 保留 Observed 与必需 Unprotected 缺口且不创建 Route；Compatibility Matrix 是唯一验证事实源，其生产校验器拒绝不在运行时完整协议适配器集合内的 Protected 记录；Dashboard/CLI 从同一 Core API 读取运行状态；Fyne 桌面壳已接入托盘、通知、自启动和 Core Supervisor | 桌面壳仍缺 Linux、macOS、Windows 的原生编译、托盘和完整普通用户流程证据 |
+| 10 | 部分通过 | 临时 Launch 配置清理、Session/lease 级联撤销、能力内存擦除、CA 中断恢复与可验证卸载测试；`TestOperatingSystemReleasesCoreLockAfterCrash`、`TestResolveCoreEndpointRejectsStaleIdentityWithoutSendingAdminToken` 与 `TestServeClearsCrashedCoreStateBeforeLaterStartupFailure` 证明崩溃释放实例锁、旧状态不会泄露管理 Token，且重启取得锁后先清除旧状态与 Hermes 隔离配置残留；`TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData` 固定清理所有权边界；Desktop Supervisor 自动化覆盖外部 Core 不误杀、私有 Token 恢复和三平台用户级自启动文件生命周期 | 桌面进程崩溃、系统重启和三平台安装生命周期的实机故障注入 |
 | 11 | 部分通过 | CI 对 Linux/macOS/Windows 的 amd64/arm64 交叉构建；统一 Core 数据面测试；Linux CA trust-store 与出口观察测试 | macOS/Windows 安装、权限、安全存储、出口阻断、升级/回滚/卸载实机证据 |
 | 12 | 自动化通过（模拟 Provider） | `TestEndToEndProviderOnlyReceivesRedactedContent` 和六协议 `TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider` 证明 Provider 只收到允许或脱敏内容 | 各 Compatibility Matrix 中版本的真实 Provider/Agent 端到端验证仍归验收 1、2 |
 
@@ -48,7 +48,7 @@ go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestor
 
 以下事项必须保留为显式阻塞，不能用单元测试、交叉编译或模拟 Provider 替代：
 
-1. 桌面技术栈、托盘、自启动、升级机制和 Core 安装生命周期决策；
+1. 桌面原生打包、签名、升级、回滚和 Core 安装迁移；
 2. 语义模型选型、许可证、中文基准、硬件分档和可信下载源；
 3. macOS、Windows 的签名身份、权限和真实安装/卸载环境；
 4. 每个受支持 Agent 精确版本的真实应用启动、接管和崩溃恢复证据；

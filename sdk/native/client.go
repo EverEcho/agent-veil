@@ -52,6 +52,7 @@ type ProtectionSession = domain.ProtectionSession
 const (
 	ModeNative  = domain.ModeNative
 	ModeManaged = domain.ModeManaged
+	ModeAttach  = domain.ModeAttach
 
 	SurfaceModelPrimary   = domain.SurfaceModelPrimary
 	SurfaceModelAuxiliary = domain.SurfaceModelAuxiliary
@@ -74,6 +75,7 @@ const (
 	ProtocolGemini          = domain.ProtocolGemini
 	ProtocolMCPHTTP         = domain.ProtocolMCPHTTP
 	ProtocolMCPStreamable   = domain.ProtocolMCPStreamable
+	ProtocolMCPLegacySSE    = domain.ProtocolMCPLegacySSE
 	ProtocolLocalStdio      = domain.ProtocolLocalStdio
 	ProtocolUnknown         = domain.ProtocolUnknown
 
@@ -91,7 +93,7 @@ const (
 	NetworkSystemProxy = domain.NetworkSystemProxy
 )
 
-// Registration is the Core-owned result of a Native/Managed manifest lease.
+// Registration is the Core-owned result of a Native/Managed/Attach manifest lease.
 type Registration struct {
 	Manifest   AgentManifest  `json:"manifest"`
 	Plan       ProtectionPlan `json:"plan"`
@@ -114,6 +116,14 @@ type Client struct {
 type RouteCredential struct {
 	RouteID string `json:"route_id"`
 	Token   string `json:"token"`
+}
+
+// CreatedSession is a management-plane Session and its one-time Route
+// credentials. It is intended for trusted Launch/Attach controllers; the
+// management token must never be copied into the controlled process.
+type CreatedSession struct {
+	Session ProtectionSession `json:"session"`
+	Routes  []RouteCredential `json:"routes"`
 }
 
 type ChildSession struct {
@@ -165,8 +175,8 @@ func (c *Client) Register(ctx context.Context, manifest AgentManifest, ttl time.
 	if c == nil || ctx == nil || ttl < time.Second || ttl > maxLeaseTTL || ttl%time.Second != 0 {
 		return Registration{}, domain.NewError(domain.ErrInvalidContract, "register native integration", "client, context, and bounded lease TTL are required")
 	}
-	if manifest.Agent.Mode != ModeNative && manifest.Agent.Mode != ModeManaged {
-		return Registration{}, domain.NewError(domain.ErrInvalidContract, "register native integration", "agent mode must be native or managed")
+	if manifest.Agent.Mode != ModeNative && manifest.Agent.Mode != ModeManaged && manifest.Agent.Mode != ModeAttach {
+		return Registration{}, domain.NewError(domain.ErrInvalidContract, "register integration", "agent mode must be native, managed, or attach")
 	}
 	if err := manifest.Validate(); err != nil {
 		return Registration{}, err
@@ -174,6 +184,77 @@ func (c *Client) Register(ctx context.Context, manifest AgentManifest, ttl time.
 	var result Registration
 	err := c.doJSON(ctx, http.MethodPost, "/v1/agents/leases", map[string]any{"manifest": manifest, "ttl_seconds": int64(ttl / time.Second)}, http.StatusCreated, &result)
 	return result, err
+}
+
+// CreateSession allocates Route-scoped credentials for a trusted integration
+// controller. Callers should apply all returned bindings atomically and delete
+// the Session when control is released.
+func (c *Client) CreateSession(ctx context.Context, routeIDs []string, ttl time.Duration, interactive bool) (CreatedSession, error) {
+	if c == nil || ctx == nil || len(routeIDs) == 0 || len(routeIDs) > domain.MaxManifestSurfaces || ttl < time.Second || ttl > maxChildTTL || ttl%time.Second != 0 {
+		return CreatedSession{}, domain.NewError(domain.ErrInvalidContract, "create integration session", "client, routes, and bounded whole-second TTL are required")
+	}
+	seen := make(map[string]struct{}, len(routeIDs))
+	for _, routeID := range routeIDs {
+		if !safeIdentifier(routeID) {
+			return CreatedSession{}, domain.NewError(domain.ErrInvalidContract, "create integration session", "route id is invalid")
+		}
+		if _, duplicate := seen[routeID]; duplicate {
+			return CreatedSession{}, domain.NewError(domain.ErrInvalidContract, "create integration session", "route id is duplicated")
+		}
+		seen[routeID] = struct{}{}
+	}
+	var result CreatedSession
+	err := c.doJSON(ctx, http.MethodPost, "/v1/sessions", map[string]any{"route_ids": routeIDs, "ttl_seconds": int64(ttl / time.Second), "interactive": interactive}, http.StatusCreated, &result)
+	if err == nil && !validCreatedSession(result, routeIDs, c.endpoint, interactive) {
+		if safeIdentifier(result.Session.ID) {
+			cleanupContext, cancel := context.WithTimeout(context.Background(), leaseCleanupTTL)
+			_ = c.DeleteSession(cleanupContext, result.Session.ID)
+			cancel()
+		}
+		result = CreatedSession{}
+		err = domain.NewError(domain.ErrInvalidContract, "create integration session", "Core returned invalid Route credentials")
+	}
+	return result, err
+}
+
+// DeleteSession revokes a root Session and all of its descendants.
+func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {
+	if c == nil || ctx == nil || !safeIdentifier(sessionID) {
+		return domain.NewError(domain.ErrInvalidContract, "delete integration session", "client, context, and session id are required")
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/v1/sessions/"+url.PathEscape(sessionID), nil, http.StatusNoContent, nil)
+}
+
+func validCreatedSession(result CreatedSession, routeIDs []string, endpoint string, interactive bool) bool {
+	if !safeIdentifier(result.Session.ID) || result.Session.ParentSessionID != "" || result.Session.CoreEndpoint != endpoint || result.Session.Interactive != interactive || result.Session.StartedAt.IsZero() || !result.Session.ExpiresAt.After(result.Session.StartedAt) || len(result.Session.RouteIDs) != len(routeIDs) || len(result.Routes) != len(routeIDs) {
+		return false
+	}
+	expected := make(map[string]struct{}, len(routeIDs))
+	for _, routeID := range routeIDs {
+		expected[routeID] = struct{}{}
+	}
+	credentials := make(map[string]struct{}, len(result.Routes))
+	tokens := make(map[string]struct{}, len(result.Routes))
+	for _, route := range result.Routes {
+		if _, ok := expected[route.RouteID]; !ok || !validRouteToken(route.Token) {
+			return false
+		}
+		if _, duplicate := credentials[route.RouteID]; duplicate {
+			return false
+		}
+		if _, duplicate := tokens[route.Token]; duplicate {
+			return false
+		}
+		credentials[route.RouteID] = struct{}{}
+		tokens[route.Token] = struct{}{}
+	}
+	for _, routeID := range result.Session.RouteIDs {
+		if _, ok := expected[routeID]; !ok {
+			return false
+		}
+		delete(expected, routeID)
+	}
+	return len(expected) == 0
 }
 
 func (c *Client) Heartbeat(ctx context.Context, agentID string, generation uint64, ttl time.Duration) (Registration, error) {
@@ -192,7 +273,7 @@ func (c *Client) Remove(ctx context.Context, agentID string, generation uint64) 
 	return c.doJSON(ctx, http.MethodDelete, "/v1/agents/"+url.PathEscape(agentID)+"?generation="+strconv.FormatUint(generation, 10), nil, http.StatusNoContent, nil)
 }
 
-// MaintainLease registers a Native/Managed manifest, renews its generation,
+// MaintainLease registers a Native/Managed/Attach manifest, renews its generation,
 // and removes that exact generation when the context ends. Any heartbeat or
 // update failure stops the loop; callers can then fail closed without an SDK
 // client racing another controller by silently re-registering.
@@ -267,7 +348,7 @@ func validChildSession(result ChildSession, parent *RouteClient) bool {
 
 func routableProtocol(protocol Protocol) bool {
 	switch protocol {
-	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic, ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable:
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic, ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable, ProtocolMCPLegacySSE:
 		return true
 	default:
 		return false

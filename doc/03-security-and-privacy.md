@@ -51,6 +51,7 @@ AgentVeil 主要防止以下数据通过受支持的 AI Agent 出口意外离开
 |---|---|---|
 | Session Secret | 进程内存 | Session |
 | Placeholder -> Original | 请求级内存 Vault | Request/Response |
+| 桌面管理 Token | 用户私有配置文件；后续由 macOS/Windows 原生凭据库替换 | 桌面安装实例，卸载时清除 |
 | Agent 配置快照 | 最小化临时文件或内存 | Session，退出清理 |
 | 审计事件 | 本地持久化 | 用户配置的保留期 |
 | 敏感原文 | 禁止持久化 | 不适用 |

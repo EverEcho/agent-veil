@@ -66,6 +66,20 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: go build -trimpath -o veil-${GOOS}-${GOARCH} ./cmd/veil
 
+  desktop-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - name: Compile desktop shell with in-memory driver
+        working-directory: desktop
+        run: go build -tags ci -trimpath -o agentveil-desktop .
+
   reproducible-build:
     runs-on: ubuntu-latest
     steps:
