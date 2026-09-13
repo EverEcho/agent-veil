@@ -12,7 +12,7 @@
 
 | # | 当前状态 | 自动化证据 | 尚未闭环的退出条件 |
 |---|---|---|---|
-| 1 | 部分通过 | `internal/integration` 的各 Agent 配置解析、未知版本阻断和 Hermes 全 Surface 测试；`internal/planner` 的覆盖率测试；`internal/compatibility` 的平台/版本矩阵测试 | Codex、Claude、Hermes 以外目标 Agent 的真实版本 fixture 与完整 Surface 实机核对 |
+| 1 | 部分通过 | `internal/integration` 的各 Agent 配置解析和 Hermes 全 Surface 测试；`TestUnverifiedProtectedAgentsReturnRiskOnlyManifests` 证明未知版本只返回不可改写且含必需未知缺口的风险 Manifest；`internal/planner` 的覆盖率测试；`internal/compatibility` 的平台/版本矩阵测试 | Codex、Claude、Hermes 以外目标 Agent 的真实版本 fixture 与完整 Surface 实机核对 |
 | 2 | 部分通过 | `cmd/veil` 的 Protected Launch、进程组清理、Managed Monitor 与 Native lease 测试；`sdk/native`；`internal/transparent` 的 CA 生命周期测试 | 通用 Attach 尚未实现；Transparent 数据面尚未完成；五种模式仍需真实应用验证 |
 | 3 | 部分通过 | `TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip`、`TestNonStreamingResponseProtocolMatrixRestoresPlaceholders`、`TestSSEProtocolMatrixRestoresFragmentedPlaceholders`、`TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider` 覆盖 OpenAI Chat/Responses、Anthropic、Gemini、MCP Streamable HTTP；`TestMCPRoutesUseExactConfiguredUpstreamPath` 固定任意配置端点 | MCP legacy SSE 当前明确为 Observed，完成适配前不能把整个 MCP 范围标为完成 |
 | 4 | 自动化通过（显式 Route） | `TestUnknownProtocolAndCompressionFailClosed`、`TestMalformedProtocolEnvelopesFailClosed`、`TestProxyRejectsUnboundedRoutesAndBodies`、`TestExternalOriginIsRejectedBeforeForward`、Pipeline 的 Vault/Detector/Semantic failure 测试 | Transparent 数据面加入后需复用同一套失败关闭证据 |
@@ -20,7 +20,7 @@
 | 6 | 自动化通过 | `TestSSEPlaceholderCrossesEventsWithoutTouchingSignature`、`TestSSEProcessorBlocksCredentialSplitAcrossEvents`、随机 SSE 分片 fuzz、各 Provider 流式矩阵 | 新协议或新事件字段加入时必须扩展同一矩阵 |
 | 7 | 自动化通过 | `internal/audit`、`internal/diagnostic` 的二次扫描与敏感字段拒绝测试；CI 使用 canary 扫描完整测试输出 | 正式安装器和更新器产生的日志尚不存在，加入后需纳入扫描 |
 | 8 | 部分通过 | `internal/routing` 的 DLP 后内容修改阻断；Registry call tree；Linux Process Tree/Unexpected Egress 测试 | 非 Linux 出口观察、真实中间件链路和 Transparent pre-connect 阻断未完成 |
-| 9 | 部分通过 | Planner 禁止将不完整能力标成 Protected；Compatibility Matrix 是唯一验证事实源；Dashboard/CLI 从同一 Core API 读取 Agent、Session、Call Tree 与覆盖率 | 当前 Dashboard 是 Core 内嵌本地页面，不是具备托盘/生命周期的正式桌面应用 |
+| 9 | 部分通过 | Planner 禁止将不完整能力标成 Protected；未知版本被降级为风险 Manifest；Compatibility Matrix 是唯一验证事实源；Dashboard/CLI 从同一 Core API 读取 Agent、Session、Call Tree 与覆盖率 | 当前 Dashboard 是 Core 内嵌本地页面，不是具备托盘/生命周期的正式桌面应用 |
 | 10 | 部分通过 | 临时 Launch 配置清理、Session/lease 级联撤销、能力内存擦除、CA 中断恢复与可验证卸载测试 | Core/桌面进程崩溃、系统重启和三平台安装生命周期的实机故障注入 |
 | 11 | 部分通过 | CI 对 Linux/macOS/Windows 的 amd64/arm64 交叉构建；统一 Core 数据面测试；Linux CA trust-store 与出口观察测试 | macOS/Windows 安装、权限、安全存储、出口阻断、升级/回滚/卸载实机证据 |
 | 12 | 自动化通过（模拟 Provider） | `TestEndToEndProviderOnlyReceivesRedactedContent` 和六协议 `TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider` 证明 Provider 只收到允许或脱敏内容 | 各 Compatibility Matrix 中版本的真实 Provider/Agent 端到端验证仍归验收 1、2 |
