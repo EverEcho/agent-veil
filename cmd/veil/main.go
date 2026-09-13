@@ -832,7 +832,7 @@ func validateManagementAPIVersion(response *http.Response) error {
 	return nil
 }
 
-func serve() error {
+func serve() (resultErr error) {
 	token := os.Getenv("VEIL_ADMIN_TOKEN")
 	configDir, err := os.UserConfigDir()
 	if err != nil {
@@ -843,7 +843,11 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	defer coreLock.Close()
+	defer func() {
+		if closeErr := coreLock.Close(); closeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("release Core instance lock: %w", closeErr))
+		}
+	}()
 	manager := session.NewManager()
 	server, err := core.New(manager, token)
 	if err != nil {
@@ -910,7 +914,11 @@ func serve() error {
 		_ = server.Close(context.Background())
 		return err
 	}
-	defer instance.RemoveState(statePath)
+	defer func() {
+		if removeErr := instance.RemoveState(statePath); removeErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove Core state: %w", removeErr))
+		}
+	}()
 	fmt.Println(server.Endpoint())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
