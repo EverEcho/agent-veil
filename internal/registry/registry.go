@@ -244,13 +244,25 @@ type CallSurface struct {
 	RouteID   string                `json:"route_id"`
 	AgentID   string                `json:"agent_id,omitempty"`
 	SurfaceID string                `json:"surface_id,omitempty"`
+	Protocol  domain.Protocol       `json:"protocol,omitempty"`
+	PolicyID  string                `json:"policy_id,omitempty"`
 	Coverage  domain.CoverageStatus `json:"coverage"`
+}
+
+type CallAudit struct {
+	EventCount   int           `json:"event_count"`
+	FindingCount int           `json:"finding_count"`
+	LastAction   domain.Action `json:"last_action,omitempty"`
+	LastAt       time.Time     `json:"last_at,omitempty"`
 }
 
 type CallNode struct {
 	SessionID       string        `json:"session_id"`
 	ParentSessionID string        `json:"parent_session_id,omitempty"`
+	Interactive     bool          `json:"interactive"`
+	ExpiresAt       time.Time     `json:"expires_at"`
 	Surfaces        []CallSurface `json:"surfaces"`
+	Audit           *CallAudit    `json:"audit,omitempty"`
 }
 
 func CallTree(nodes []CallNode) (map[string][]CallNode, error) {

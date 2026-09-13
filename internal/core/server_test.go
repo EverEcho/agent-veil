@@ -579,8 +579,16 @@ func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "private", "audit.jsonl"), time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditTime := time.Now().UTC()
+	if err := auditStore.Append(domain.AuditEvent{Timestamp: auditTime, SessionID: child.Session.ID, AgentID: "native-agent", SurfaceID: "primary", Protocol: domain.ProtocolOpenAIChat, FindingCount: 2, FindingTypes: []string{"pii.email"}, Severity: domain.SeverityHigh, Action: domain.ActionRedact, LatencyMS: 3}); err != nil {
+		t.Fatal(err)
+	}
 	s, _ := New(manager, "01234567890123456789012345678901")
-	s.WithRegistry(reg)
+	s.WithRegistry(reg).WithAuditor(auditStore)
 	load := func() map[string][]registry.CallNode {
 		request := httptest.NewRequest(http.MethodGet, "/v1/call-tree", nil)
 		request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
@@ -599,12 +607,16 @@ func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	if len(tree[""]) != 1 || tree[""][0].SessionID != parent.Session.ID || len(tree[parent.Session.ID]) != 1 || tree[parent.Session.ID][0].SessionID != child.Session.ID {
 		t.Fatalf("tree=%+v", tree)
 	}
-	if got := tree[""][0].Surfaces[0]; got.AgentID != "native-agent" || got.SurfaceID != "primary" || got.Coverage != domain.CoverageProtected {
+	if got := tree[""][0].Surfaces[0]; got.AgentID != "native-agent" || got.SurfaceID != "primary" || got.Protocol != domain.ProtocolOpenAIChat || got.PolicyID != "default" || got.Coverage != domain.CoverageProtected {
 		t.Fatalf("root surface=%+v", got)
+	}
+	childNode := tree[parent.Session.ID][0]
+	if childNode.Interactive || !childNode.ExpiresAt.Equal(child.Session.ExpiresAt) || childNode.Audit == nil || childNode.Audit.EventCount != 1 || childNode.Audit.FindingCount != 2 || childNode.Audit.LastAction != domain.ActionRedact || !childNode.Audit.LastAt.Equal(auditTime) {
+		t.Fatalf("child call metadata=%+v", childNode)
 	}
 	reg.Remove("native-agent")
 	tree = load()
-	if got := tree[""][0].Surfaces[0]; got.AgentID != "" || got.SurfaceID != "" || got.Coverage != domain.CoverageUnprotected {
+	if got := tree[""][0].Surfaces[0]; got.AgentID != "" || got.SurfaceID != "" || got.Protocol != "" || got.PolicyID != "" || got.Coverage != domain.CoverageUnprotected {
 		t.Fatalf("removed route retained protected claim: %+v", got)
 	}
 }

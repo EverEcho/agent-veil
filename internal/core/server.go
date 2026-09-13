@@ -823,12 +823,37 @@ func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
 			continue
 		}
 		for _, route := range entry.Plan.Routes {
-			owners[route.ID] = registry.CallSurface{RouteID: route.ID, AgentID: entry.Manifest.Agent.ID, SurfaceID: route.SurfaceID, Coverage: domain.CoverageProtected}
+			owners[route.ID] = registry.CallSurface{RouteID: route.ID, AgentID: entry.Manifest.Agent.ID, SurfaceID: route.SurfaceID, Protocol: route.Protocol, PolicyID: route.PolicyID, Coverage: domain.CoverageProtected}
+		}
+	}
+	activeSessions := s.manager.List()
+	auditBySession := make(map[string]*registry.CallAudit)
+	if s.auditReader != nil {
+		events, err := s.auditReader.Recent(time.Now().UTC())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CALL_TREE_AUDIT_FAILED"})
+			return
+		}
+		for _, event := range events {
+			if event.SessionID == "" {
+				continue
+			}
+			summary := auditBySession[event.SessionID]
+			if summary == nil {
+				summary = &registry.CallAudit{}
+				auditBySession[event.SessionID] = summary
+			}
+			summary.EventCount++
+			summary.FindingCount += event.FindingCount
+			if summary.LastAt.IsZero() || event.Timestamp.After(summary.LastAt) {
+				summary.LastAt = event.Timestamp
+				summary.LastAction = event.Action
+			}
 		}
 	}
 	nodes := make([]registry.CallNode, 0)
-	for _, activeSession := range s.manager.List() {
-		node := registry.CallNode{SessionID: activeSession.ID, ParentSessionID: activeSession.ParentSessionID}
+	for _, activeSession := range activeSessions {
+		node := registry.CallNode{SessionID: activeSession.ID, ParentSessionID: activeSession.ParentSessionID, Interactive: activeSession.Interactive, ExpiresAt: activeSession.ExpiresAt, Audit: auditBySession[activeSession.ID]}
 		for _, routeID := range activeSession.RouteIDs {
 			owner, ok := owners[routeID]
 			if !ok {
@@ -1017,7 +1042,7 @@ const dashboardHTML = `<!doctype html><html><head><meta charset="utf-8"><meta na
 <script>
 const e=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),token=()=>document.querySelector('#token').value;
 async function decide(id,action){await fetch('/v1/approvals/'+id,{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({action})});await load()}
-function renderCalls(tree,parent,depth){return(tree[parent]||[]).map(node=>'<div class="card call depth-'+Math.min(depth,8)+'"><div class="muted">Session '+e(node.session_id)+'</div>'+node.surfaces.map(surface=>'<div><span class="status '+e(surface.coverage)+'">'+e(surface.coverage)+'</span> · '+e(surface.agent_id||'unregistered')+' / '+e(surface.surface_id||surface.route_id)+'</div>').join('')+'</div>'+renderCalls(tree,node.session_id,depth+1)).join('')}
+function renderCalls(tree,parent,depth){return(tree[parent]||[]).map(node=>'<div class="card call depth-'+Math.min(depth,8)+'"><div class="muted">Session '+e(node.session_id)+' · '+(node.interactive?'interactive':'non-interactive')+' · expires '+e(node.expires_at)+'</div>'+node.surfaces.map(surface=>'<div><span class="status '+e(surface.coverage)+'">'+e(surface.coverage)+'</span> · '+e(surface.agent_id||'unregistered')+' / '+e(surface.surface_id||'unknown surface')+'<br><span class="muted">Route '+e(surface.route_id)+' · '+e(surface.protocol||'unknown protocol')+' · policy '+e(surface.policy_id||'unavailable')+'</span></div>').join('')+(node.audit?'<p class="muted">Audit '+Number(node.audit.event_count||0)+' events · '+Number(node.audit.finding_count||0)+' findings · last '+e(node.audit.last_action||'none')+' at '+e(node.audit.last_at||'unknown')+'</p>':'<p class="muted">No retained audit events</p>')+'</div>'+renderCalls(tree,node.session_id,depth+1)).join('')}
 async function loadPolicy(){const response=await fetch('/v1/policy',{headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('policy unavailable');if(document.activeElement!==document.querySelector('#policy'))document.querySelector('#policy').value=JSON.stringify(await response.json(),null,2)}
 async function savePolicy(){const result=document.querySelector('#policy-result');try{const documentValue=JSON.parse(document.querySelector('#policy').value),response=await fetch('/v1/policy',{method:'PUT',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify(documentValue)});if(!response.ok)throw Error('invalid policy');result.className='active';result.textContent='Policy saved atomically'}catch(err){result.className='error';result.textContent='Policy rejected; check JSON, actions, and scoped identifiers'}}
 async function loadRulePacks(){const output=document.querySelector('#rule-packs'),response=await fetch('/v1/rules',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed rule storage is not configured.</p>';return}if(!response.ok)throw Error('rule inventory unavailable');const inventory=await response.json(),active=inventory.active||'';output.innerHTML='<section class="card"><p><span class="status '+(active?'active':'local')+'">'+(active?'verified '+e(active):'built-in')+'</span></p><div class="controls"><button id="use-built-in" '+(active?'':'disabled')+'>Use built-in rules</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status active">active</span>':'<button class="activate-rule" data-version="'+e(version.version)+'">Activate</button> <button class="remove-rule" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
