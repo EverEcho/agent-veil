@@ -41,6 +41,39 @@ func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
 	}
 }
 
+func TestWriteLaunchProtectionPlanShowsCoverageWithoutSecretsOrUpstreams(t *testing.T) {
+	entry := registry.Entry{
+		Manifest: domain.AgentManifest{
+			Agent:    domain.AgentInstance{Kind: "hermes", Version: "0.20.6"},
+			Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary Model", Protocol: domain.ProtocolOpenAIResponses, Upstream: &domain.Upstream{Scheme: "https", Host: "secret-upstream.example", Port: 443}, Auth: domain.AuthStrategy{Source: "environment:SECRET_KEY"}}},
+		},
+		Plan: domain.ProtectionPlan{
+			Coverage: []domain.SurfaceCoverage{{SurfaceID: "primary", Status: domain.CoverageProtected, Reason: "rewritten through an authenticated route", RouteID: "route-secret"}},
+			Summary:  domain.CoverageSummary{Total: 1, Protected: 1},
+		},
+	}
+	var output bytes.Buffer
+	if err := writeLaunchProtectionPlan(&output, entry); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "hermes 0.20.6") || !strings.Contains(text, "[protected] Primary Model (openai_responses)") || !strings.Contains(text, "1 protected") {
+		t.Fatalf("launch plan omitted required coverage: %q", text)
+	}
+	for _, secret := range []string{"secret-upstream.example", "SECRET_KEY", "route-secret"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("launch plan leaked %q: %q", secret, text)
+		}
+	}
+}
+
+func TestWriteLaunchProtectionPlanRejectsUnknownSurface(t *testing.T) {
+	entry := registry.Entry{Manifest: domain.AgentManifest{Agent: domain.AgentInstance{Kind: "test"}}, Plan: domain.ProtectionPlan{Coverage: []domain.SurfaceCoverage{{SurfaceID: "missing", Status: domain.CoverageProtected}}}}
+	if err := writeLaunchProtectionPlan(&bytes.Buffer{}, entry); err == nil {
+		t.Fatal("unknown plan surface was displayed")
+	}
+}
+
 func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 	args := protectedCodexArgs("http://127.0.0.1:1234/route/primary/v1", []string{"exec", "hello"}, true)
 	joined := strings.Join(args, " ")

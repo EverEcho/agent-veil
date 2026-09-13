@@ -159,6 +159,9 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if err != nil {
 		return err
 	}
+	if err := writeLaunchProtectionPlan(os.Stderr, registered); err != nil {
+		return fmt.Errorf("display protection plan: %w", err)
+	}
 	if name != "hermes" && len(protectedRoutes) != 1 {
 		return errors.New("agent-specific multi-route launch injection is not verified")
 	}
@@ -280,6 +283,30 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return egressErr
 	}
 	return runErr
+}
+
+func writeLaunchProtectionPlan(writer io.Writer, entry registry.Entry) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "display protection plan", "writer is required")
+	}
+	surfaces := make(map[string]domain.EgressSurface, len(entry.Manifest.Surfaces))
+	for _, surface := range entry.Manifest.Surfaces {
+		surfaces[surface.ID] = surface
+	}
+	summary := entry.Plan.Summary
+	if _, err := fmt.Fprintf(writer, "AgentVeil protection plan: %s %s — %d protected, %d local, %d partial, %d observed, %d unprotected\n", entry.Manifest.Agent.Kind, entry.Manifest.Agent.Version, summary.Protected, summary.Local, summary.Partial, summary.Observed, summary.Unprotected); err != nil {
+		return err
+	}
+	for _, coverage := range entry.Plan.Coverage {
+		surface, ok := surfaces[coverage.SurfaceID]
+		if !ok {
+			return domain.NewError(domain.ErrInvalidContract, "display protection plan", "coverage references an unknown surface")
+		}
+		if _, err := fmt.Fprintf(writer, "  [%s] %s (%s) — %s\n", coverage.Status, surface.Name, surface.Protocol, coverage.Reason); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateHermesProtectedArgs(args []string) error {

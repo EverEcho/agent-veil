@@ -33,10 +33,10 @@ var hermesRouteIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}
 
 // RewriteHermesConfig returns an isolated launch configuration in which every
 // discovered network surface points at its own authenticated Core route. It
-// preserves the original provider name and credentials so Hermes can continue
-// to resolve OAuth and provider-specific credential pools; route capabilities
-// are attached through temporary provider entries matched by the rewritten
-// base URL.
+// preserves the primary provider identity so Hermes can continue to resolve
+// OAuth credentials. Model capabilities use a local path segment because some
+// Hermes auxiliary clients discard configured headers; remote MCP capabilities
+// use its supported per-server header map.
 func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, bindings map[string]HermesRouteBinding) ([]byte, error) {
 	if len(content) == 0 || len(content) > maxHermesConfigBytes {
 		return nil, hermesRewriteError("configuration is empty or too large")
@@ -361,14 +361,6 @@ func hermesMappingValue(parent *yaml.Node, key string) *yaml.Node {
 
 func setHermesScalar(parent *yaml.Node, key, value string) {
 	setHermesNode(parent, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
-}
-
-func setHermesBool(parent *yaml.Node, key string, value bool) {
-	text := "false"
-	if value {
-		text = "true"
-	}
-	setHermesNode(parent, key, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: text})
 }
 
 func setHermesNode(parent *yaml.Node, key string, value *yaml.Node) {
