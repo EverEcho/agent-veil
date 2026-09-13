@@ -78,7 +78,7 @@ Tool Arguments 既可能是对象，也可能是包含 JSON 的字符串。Adapt
 
 - `MCP stdio` 是本地 IPC，可标记为 Local；其子进程的独立外联属于进程出口问题；
 - Remote MCP 应通过专用 MCP Proxy 检查 tool arguments、results、resources 和 prompt payload；
-- 已弃用的 HTTP+SSE 双端点传输独立标记为 `mcp_legacy_sse`；在 Core 实现有界会话、动态 POST endpoint 改写和背压前保持 Unprotected，不得借用 `mcp_http` 或 Streamable HTTP 能力；
+- 已弃用的 HTTP+SSE 双端点传输独立标记为 `mcp_legacy_sse`；Core 已具备精确绑定 Session/Route/动态 Provider URL/共享 Vault 的有界通道注册表及每通道 POST 并发额度，但 endpoint 事件改写和 GET/POST 双请求数据面尚未接通，因此继续保持 Unprotected，不得借用 `mcp_http` 或 Streamable HTTP 能力；
 - Browser、OAuth、文件上传和任意 WebSocket 语义复杂，首期只能准确展示为 Observed/Partial/Unprotected；
 - 不应通过通用字符串替换伪装成完整 Browser DLP。
 

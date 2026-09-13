@@ -15,7 +15,7 @@ acceptance-evidence:
 	go test ./internal/integration -run '^(TestResetHermesLaunchRootRemovesBoundedOwnedResidue|TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData)$$' -count=1
 	go test ./internal/planner -run '^TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability$$' -count=1
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
-	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath)$$' -count=1
+	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath|TestLegacySSEManagerBindsExactCapabilityAndOwnsVault|TestLegacySSEManagerIsBoundedAndRevocationFailsClosed)$$' -count=1
 	go test ./internal/registry -run '^(TestIntegrationLeaseExpiresAndRejectsStaleGeneration|TestRegistryQueuesRoutesForEveryActiveGenerationInvalidation|TestRegistryRevocationQueueFailsClosedWhenBoundExceeded)$$' -count=1
 	go test ./internal/instance -run '^(TestOperatingSystemReleasesCoreLockAfterCrash|TestCoreStateRoundTripAndPermissions)$$' -count=1
 	go test ./internal/discovery -run '^(TestUnverifiedProtectedAgentsReturnRiskOnlyManifests|TestAutomaticDiscoveryReportsUnknownVersionsWithoutClaimingCompatibility)$$' -count=1

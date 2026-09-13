@@ -157,7 +157,11 @@ conservatively than discovered traffic.
   OpenAI Chat, Responses, and Anthropic api-mode aliases. Runtime `main`, `auto`,
   and legacy custom fallback semantics are expanded before routes are pinned,
   while unsupported specialized transports and legacy MCP SSE remain
-  fail-closed and explicitly Unprotected;
+  fail-closed and explicitly Unprotected. Legacy SSE now has a bounded,
+  exact-capability channel registry for joining GET streams to dynamic Provider
+  POST endpoints and destroying shared Vaults on revocation; endpoint-event
+  rewriting and the dual-request data path must still be connected before this
+  transport can become Protected;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;
