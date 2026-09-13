@@ -80,6 +80,7 @@ func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
 		providerHeader = r.Header.Get("X-Request-Context")
 		response, _ := json.Marshal(map[string]any{"output_text": providerHeader})
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Echo-Context", providerHeader)
 		_, _ = w.Write(response)
 	}))
 	defer provider.Close()
@@ -98,8 +99,8 @@ func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || strings.Contains(providerHeader, "dev@example.com") || !strings.Contains(providerHeader, "[[VEIL_PII_EMAIL_") || !strings.Contains(recorder.Body.String(), "dev@example.com") {
-		t.Fatalf("status=%d provider header=%q body=%s", recorder.Code, providerHeader, recorder.Body.String())
+	if recorder.Code != http.StatusOK || strings.Contains(providerHeader, "dev@example.com") || !strings.Contains(providerHeader, "[[VEIL_PII_EMAIL_") || !strings.Contains(recorder.Body.String(), "dev@example.com") || recorder.Header().Get("X-Echo-Context") != "contact dev@example.com" {
+		t.Fatalf("status=%d provider header=%q response header=%q body=%s", recorder.Code, providerHeader, recorder.Header().Get("X-Echo-Context"), recorder.Body.String())
 	}
 	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact {
 		t.Fatalf("audit=%+v", auditor.events)
@@ -1291,7 +1292,8 @@ func TestProviderResponseHeadersAreBoundedAndScannedBeforeForwarding(t *testing.
 			upstream, _ := url.Parse(provider.URL)
 			manager := session.NewManager()
 			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
-			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			auditor := &recordingAuditor{}
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1304,7 +1306,32 @@ func TestProviderResponseHeadersAreBoundedAndScannedBeforeForwarding(t *testing.
 			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Debug-Token") != "" || strings.Contains(recorder.Body.String(), "ghp_") {
 				t.Fatalf("unsafe response header escaped: status=%d header=%q body=%s", recorder.Code, recorder.Header().Get("X-Debug-Token"), recorder.Body.String())
 			}
+			if name == "sensitive" && (len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "secret.github_pat") {
+				t.Fatalf("response header finding missing from audit: %+v", auditor.events)
+			}
 		})
+	}
+}
+
+func TestProviderResponseHeaderRejectsUnknownPlaceholder(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Echo-Context", "[[VEIL_EMAIL_0123456789ABCDEF]]")
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Echo-Context") != "" || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownPlaceholder)) {
+		t.Fatalf("status=%d header=%q body=%s", recorder.Code, recorder.Header().Get("X-Echo-Context"), recorder.Body.String())
 	}
 }
 

@@ -388,7 +388,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
 		return
 	}
-	if err := validateResponseHeaders(response.Header, h.scanner); err != nil {
+	responseHeaderResult, err := processResponseHeaders(response.Header, h.scanner, vault)
+	processed.Findings = append(processed.Findings, responseHeaderResult.Findings...)
+	processed.Actions = append(processed.Actions, responseHeaderResult.Actions...)
+	applyAuditResult(&auditEvent, processed)
+	if err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusBadGateway, errorCode(err))
@@ -738,9 +742,10 @@ func isProviderCredentialHeader(key string) bool {
 	return false
 }
 
-func validateResponseHeaders(headers http.Header, scanner detector.ContentScanner) error {
+func processResponseHeaders(headers http.Header, scanner detector.ContentScanner, vault *redactor.Vault) (pipeline.TextResult, error) {
+	var result pipeline.TextResult
 	if scanner == nil {
-		return domain.NewError(domain.ErrDetectorFailure, "scan response headers", "content scanner is unavailable")
+		return result, domain.NewError(domain.ErrDetectorFailure, "scan response headers", "content scanner is unavailable")
 	}
 	valueCount := 0
 	totalBytes := 0
@@ -748,23 +753,32 @@ func validateResponseHeaders(headers http.Header, scanner detector.ContentScanne
 		valueCount += len(values)
 		totalBytes += len(key)
 		if valueCount > maxResponseHeaders {
-			return domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response has too many headers")
+			return result, domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response has too many headers")
 		}
-		for _, value := range values {
+		for index, value := range values {
 			totalBytes += len(value)
 			if totalBytes > maxResponseHeaderBytes {
-				return domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response headers exceed their size limit")
+				return result, domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response headers exceed their size limit")
 			}
 			matches, err := scanner.ScanChecked("/response/headers/"+http.CanonicalHeaderKey(key), key+": "+value)
 			if err != nil {
-				return domain.NewError(domain.ErrDetectorFailure, "scan response headers", "provider response header scan failed")
+				return result, domain.NewError(domain.ErrDetectorFailure, "scan response headers", "provider response header scan failed")
 			}
 			if len(matches) != 0 {
-				return domain.NewError(domain.ErrPolicyBlocked, "scan response headers", "provider response header contains sensitive content")
+				for _, match := range matches {
+					result.Findings = append(result.Findings, match.Finding)
+					result.Actions = append(result.Actions, domain.ActionBlock)
+				}
+				return result, domain.NewError(domain.ErrPolicyBlocked, "scan response headers", "provider response header contains sensitive content")
 			}
+			restored, err := vault.Restore(value)
+			if err != nil {
+				return result, err
+			}
+			headers[key][index] = restored
 		}
 	}
-	return nil
+	return result, nil
 }
 
 func uniqueHeaderValue(header http.Header, name string) (string, bool) {
@@ -808,6 +822,10 @@ func errorCode(err error) string {
 func errorCodeValue(err error) domain.ErrorCode { return domain.ErrorCode(errorCode(err)) }
 
 func applyAuditResult(event *domain.AuditEvent, result pipeline.Result) {
+	event.FindingCount = 0
+	event.FindingTypes = nil
+	event.Severity = ""
+	event.Action = domain.ActionAllow
 	if result.Protocol != "" {
 		event.Protocol = result.Protocol
 	}
