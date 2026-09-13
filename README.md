@@ -16,7 +16,7 @@ conservatively than discovered traffic.
 - protocol-aware request/response rewriting for OpenAI Chat and Responses,
   Anthropic Messages, Gemini, MCP HTTP, and MCP Streamable HTTP;
 - incremental SSE protection with cross-chunk secret detection and placeholder
-  restoration;
+  restoration, plus bounded sensitive-data scanning of Provider response headers;
 - deterministic and structured PII/secret detection, chunk caching, layered
   policies, session-stable placeholders, and request-scoped bounded Vaults;
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime

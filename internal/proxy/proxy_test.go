@@ -954,6 +954,38 @@ func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testi
 	}
 }
 
+func TestProviderResponseHeadersAreBoundedAndScannedBeforeForwarding(t *testing.T) {
+	for name, headerValue := range map[string]string{
+		"sensitive": "token=ghp_abcdefghijklmnopqrstuvwxyz",
+		"oversized": strings.Repeat("x", maxResponseHeaderBytes),
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Debug-Token", headerValue)
+				_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Debug-Token") != "" || strings.Contains(recorder.Body.String(), "ghp_") {
+				t.Fatalf("unsafe response header escaped: status=%d header=%q body=%s", recorder.Code, recorder.Header().Get("X-Debug-Token"), recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestAmbiguousProviderRepresentationHeadersFailClosed(t *testing.T) {
 	for _, test := range []struct {
 		name, header, first, second string

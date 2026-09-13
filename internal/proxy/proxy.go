@@ -25,13 +25,15 @@ import (
 )
 
 const (
-	HeaderSession       = "X-Veil-Session"
-	HeaderRouteToken    = "X-Veil-Route-Token"
-	CapabilityPrefix    = "veil-v1:"
-	defaultChunkBytes   = detector.DefaultChunkBytes
-	defaultOverlapBytes = detector.DefaultOverlapBytes
-	MaxProxyRoutes      = 256
-	MaxProxyBodyBytes   = 64 << 20
+	HeaderSession          = "X-Veil-Session"
+	HeaderRouteToken       = "X-Veil-Route-Token"
+	CapabilityPrefix       = "veil-v1:"
+	defaultChunkBytes      = detector.DefaultChunkBytes
+	defaultOverlapBytes    = detector.DefaultOverlapBytes
+	MaxProxyRoutes         = 256
+	MaxProxyBodyBytes      = 64 << 20
+	maxResponseHeaders     = 256
+	maxResponseHeaderBytes = 64 << 10
 )
 
 var routeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -325,6 +327,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	if err := validateResponseHeaders(response.Header, h.scanner); err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = errorCodeValue(err)
+		fail(w, http.StatusBadGateway, errorCode(err))
+		return
+	}
 	responseEncoding, uniqueEncoding := uniqueHeaderValue(response.Header, "Content-Encoding")
 	if !uniqueEncoding || strings.TrimSpace(responseEncoding) != "" && !strings.EqualFold(responseEncoding, "identity") {
 		auditEvent.Action = domain.ActionBlock
@@ -549,6 +557,35 @@ func copyHeaders(destination, source http.Header) {
 			destination[key] = append([]string(nil), values...)
 		}
 	}
+}
+
+func validateResponseHeaders(headers http.Header, scanner detector.ContentScanner) error {
+	if scanner == nil {
+		return domain.NewError(domain.ErrDetectorFailure, "scan response headers", "content scanner is unavailable")
+	}
+	valueCount := 0
+	totalBytes := 0
+	for key, values := range headers {
+		valueCount += len(values)
+		totalBytes += len(key)
+		if valueCount > maxResponseHeaders {
+			return domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response has too many headers")
+		}
+		for _, value := range values {
+			totalBytes += len(value)
+			if totalBytes > maxResponseHeaderBytes {
+				return domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response headers exceed their size limit")
+			}
+			matches, err := scanner.ScanChecked("/response/headers/"+http.CanonicalHeaderKey(key), key+": "+value)
+			if err != nil {
+				return domain.NewError(domain.ErrDetectorFailure, "scan response headers", "provider response header scan failed")
+			}
+			if len(matches) != 0 {
+				return domain.NewError(domain.ErrPolicyBlocked, "scan response headers", "provider response header contains sensitive content")
+			}
+		}
+	}
+	return nil
 }
 
 func uniqueHeaderValue(header http.Header, name string) (string, bool) {
