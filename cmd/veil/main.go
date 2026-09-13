@@ -40,6 +40,7 @@ import (
 const protectedLaunchLease = 30 * time.Second
 const protectedLaunchHeartbeat = 10 * time.Second
 const maxManagementResponseBytes = 4 << 20
+const maxManagementErrorBytes = 4 << 10
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -392,8 +393,7 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("core returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+		return managementResponseError(response)
 	}
 	if output != nil {
 		return decodeManagementResponse(response, output)
@@ -420,6 +420,10 @@ func decodeManagementResponse(response *http.Response, output any) error {
 	if err != nil {
 		return err
 	}
+	return decodeManagementPayload(payload, output)
+}
+
+func decodeManagementPayload(payload []byte, output any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(output); err != nil {
@@ -430,6 +434,33 @@ func decodeManagementResponse(response *http.Response, output any) error {
 		return errors.New("management response contains trailing data")
 	}
 	return nil
+}
+
+func managementResponseError(response *http.Response) error {
+	payload, err := readManagementResponse(response, maxManagementErrorBytes)
+	if err != nil {
+		return fmt.Errorf("core returned %s with an invalid error response", response.Status)
+	}
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	if decodeManagementPayload(payload, &envelope) != nil || !validManagementErrorCode(envelope.Error) {
+		return fmt.Errorf("core returned %s with an invalid error response", response.Status)
+	}
+	return fmt.Errorf("core returned %s: %s", response.Status, envelope.Error)
+}
+
+func validManagementErrorCode(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func readManagementResponse(response *http.Response, limit int64) ([]byte, error) {

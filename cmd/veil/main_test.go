@@ -250,6 +250,32 @@ func TestManagementJSONDecodesStrictBoundedResponse(t *testing.T) {
 	}
 }
 
+func TestManagementJSONSanitizesErrorResponses(t *testing.T) {
+	for name, body := range map[string]string{
+		"valid":   `{"error":"INVALID_SESSION"}`,
+		"control": "{\"error\":\"BAD\\u001b[31m\"}",
+		"unknown": `{"error":"INVALID_SESSION","detail":"secret"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(core.APIVersionHeader, core.APIVersion)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, body)
+			}))
+			defer server.Close()
+			err := managementJSON(context.Background(), http.MethodPost, server.URL, "01234567890123456789012345678901", nil, nil)
+			if err == nil {
+				t.Fatal("management error response was accepted")
+			}
+			message := err.Error()
+			if strings.Contains(message, "\x1b") || name == "valid" && !strings.Contains(message, "INVALID_SESSION") || name != "valid" && strings.Contains(message, "secret") {
+				t.Fatalf("unsafe or missing error message=%q", message)
+			}
+		})
+	}
+}
+
 func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Accept-Encoding") != "identity" {
