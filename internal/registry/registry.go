@@ -27,17 +27,28 @@ type Entry struct {
 	ErrorCode  domain.ErrorCode      `json:"error_code,omitempty"`
 }
 type Registry struct {
-	mu           sync.RWMutex
-	entries      map[string]Entry
-	generations  map[string]uint64
-	capabilities planner.Options
-	now          func() time.Time
+	mu                      sync.RWMutex
+	entries                 map[string]Entry
+	generations             map[string]uint64
+	pendingRouteRevocations map[string]struct{}
+	revokeAllSessions       bool
+	capabilities            planner.Options
+	now                     func() time.Time
 }
 
-const maxRegistryEntries = 1024
+const (
+	maxRegistryEntries         = 1024
+	maxPendingRouteRevocations = 4096
+)
 
 func New(options planner.Options) *Registry {
-	return &Registry{entries: map[string]Entry{}, generations: map[string]uint64{}, capabilities: options, now: time.Now}
+	return &Registry{
+		entries:                 map[string]Entry{},
+		generations:             map[string]uint64{},
+		pendingRouteRevocations: map[string]struct{}{},
+		capabilities:            options,
+		now:                     time.Now,
+	}
 }
 
 func (r *Registry) Preview(manifest domain.AgentManifest) (domain.ProtectionPlan, error) {
@@ -83,6 +94,7 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 	}
 	generation := lastGeneration + 1
 	r.generations[manifest.Agent.ID] = generation
+	r.queueEntryRevocationLocked(previous)
 	bindPlanGeneration(&plan, generation)
 	if err != nil {
 		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}
@@ -157,6 +169,7 @@ func (r *Registry) Heartbeat(agentID string, generation uint64, ttl time.Duratio
 func (r *Registry) Remove(agentID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.queueEntryRevocationLocked(r.entries[agentID])
 	delete(r.entries, agentID)
 }
 
@@ -170,8 +183,28 @@ func (r *Registry) RemoveGeneration(agentID string, generation uint64) bool {
 	if !ok || entry.Generation != generation {
 		return false
 	}
+	r.queueEntryRevocationLocked(entry)
 	delete(r.entries, agentID)
 	return true
+}
+
+// DrainRouteRevocations returns invalidated Route capabilities accumulated by
+// registry changes. If all is true, the bounded queue overflowed and callers
+// must revoke every Session to fail closed.
+func (r *Registry) DrainRouteRevocations() (routeIDs []string, all bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	all = r.revokeAllSessions
+	if !all {
+		routeIDs = make([]string, 0, len(r.pendingRouteRevocations))
+		for routeID := range r.pendingRouteRevocations {
+			routeIDs = append(routeIDs, routeID)
+		}
+		sort.Strings(routeIDs)
+	}
+	clear(r.pendingRouteRevocations)
+	r.revokeAllSessions = false
+	return routeIDs, all
 }
 
 // Block invalidates any prior active protection claim while retaining the last
@@ -204,6 +237,7 @@ func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {
 	}
 	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: lastGeneration + 1, UpdatedAt: now, ErrorCode: code}
 	r.generations[agentID] = entry.Generation
+	r.queueEntryRevocationLocked(previous)
 	r.entries[agentID] = cloneEntry(entry)
 	return cloneEntry(entry), domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
 }
@@ -248,14 +282,34 @@ func (r *Registry) expireLocked(now time.Time) {
 		if entry.State != StateActive || entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(now) {
 			continue
 		}
+		r.queueEntryRevocationLocked(entry)
 		entry.State = StateBlocked
 		entry.Plan = domain.ProtectionPlan{}
-		entry.Generation++
+		if entry.Generation != ^uint64(0) {
+			entry.Generation++
+		}
 		r.generations[agentID] = entry.Generation
 		entry.UpdatedAt = now
 		entry.ExpiresAt = time.Time{}
 		entry.ErrorCode = domain.ErrIntegrationExpired
 		r.entries[agentID] = entry
+	}
+}
+
+func (r *Registry) queueEntryRevocationLocked(entry Entry) {
+	if entry.State != StateActive || r.revokeAllSessions {
+		return
+	}
+	for _, route := range entry.Plan.Routes {
+		if _, exists := r.pendingRouteRevocations[route.ID]; exists {
+			continue
+		}
+		if len(r.pendingRouteRevocations) >= maxPendingRouteRevocations {
+			clear(r.pendingRouteRevocations)
+			r.revokeAllSessions = true
+			return
+		}
+		r.pendingRouteRevocations[route.ID] = struct{}{}
 	}
 }
 func required(manifest domain.AgentManifest, id string) bool {

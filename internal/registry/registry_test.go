@@ -246,6 +246,13 @@ func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
 	if !ok || entry.State != StateBlocked || entry.Generation != 2 || entry.ErrorCode != domain.ErrIntegrationExpired || len(entry.Plan.Routes) != 0 || !entry.ExpiresAt.IsZero() {
 		t.Fatalf("expired lease retained active protection: %+v", entry)
 	}
+	revokedRoutes, all := registry.DrainRouteRevocations()
+	if all || len(revokedRoutes) != 1 || revokedRoutes[0] != oldRouteID {
+		t.Fatalf("expired lease did not queue its old route: routes=%v all=%v", revokedRoutes, all)
+	}
+	if routes, all := registry.DrainRouteRevocations(); all || len(routes) != 0 {
+		t.Fatalf("route revocations were not drained: routes=%v all=%v", routes, all)
+	}
 	if _, err := registry.Heartbeat("native", 1, time.Minute); err == nil {
 		t.Fatal("expired generation renewed lease")
 	}
@@ -258,5 +265,55 @@ func TestIntegrationLeaseExpiresAndRejectsStaleGeneration(t *testing.T) {
 	}
 	if _, ok := registry.Get("native"); !ok || !registry.RemoveGeneration("native", entry.Generation) {
 		t.Fatal("current generation could not be removed")
+	}
+}
+
+func TestRegistryQueuesRoutesForEveryActiveGenerationInvalidation(t *testing.T) {
+	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
+	registry := New(options)
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	first, err := registry.Reconcile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := registry.Reconcile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := registry.Block("native", domain.ErrInvalidContract)
+	if err == nil || blocked.State != StateBlocked {
+		t.Fatalf("active entry was not blocked: entry=%+v err=%v", blocked, err)
+	}
+	routes, all := registry.DrainRouteRevocations()
+	want := []string{first.Plan.Routes[0].ID, second.Plan.Routes[0].ID}
+	if all || len(routes) != len(want) || routes[0] != want[0] || routes[1] != want[1] {
+		t.Fatalf("generation invalidations were not queued: got=%v all=%v want=%v", routes, all, want)
+	}
+}
+
+func TestRegistryRevocationQueueFailsClosedWhenBoundExceeded(t *testing.T) {
+	registry := New(planner.Options{})
+	entry := Entry{State: StateActive, Plan: domain.ProtectionPlan{Routes: make([]domain.ProtectedRoute, maxPendingRouteRevocations+1)}}
+	for index := range entry.Plan.Routes {
+		entry.Plan.Routes[index].ID = fmt.Sprintf("route-%05d", index)
+	}
+	registry.mu.Lock()
+	registry.queueEntryRevocationLocked(entry)
+	registry.mu.Unlock()
+	routes, all := registry.DrainRouteRevocations()
+	if !all || len(routes) != 0 {
+		t.Fatalf("overflow did not request fail-closed global revocation: routes=%d all=%v", len(routes), all)
+	}
+}
+
+func TestExpiredMaximumGenerationDoesNotWrap(t *testing.T) {
+	registry := New(planner.Options{})
+	now := time.Now()
+	registry.now = func() time.Time { return now }
+	registry.entries["native"] = Entry{Manifest: domain.AgentManifest{Agent: domain.AgentInstance{ID: "native"}}, State: StateActive, Generation: ^uint64(0), ExpiresAt: now}
+	registry.generations["native"] = ^uint64(0)
+	entry, ok := registry.Get("native")
+	if !ok || entry.State != StateBlocked || entry.Generation != ^uint64(0) {
+		t.Fatalf("maximum generation wrapped during expiry: %+v", entry)
 	}
 }

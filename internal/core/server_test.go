@@ -632,6 +632,36 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	}
 }
 
+func TestExpiredIntegrationLeaseCancelsRouteSessions(t *testing.T) {
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	entry, err := reg.ReconcileLeased(manifest, 5*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := session.NewManager()
+	created, err := manager.Create("", "http://127.0.0.1:8787", []string{entry.Plan.Routes[0].ID}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, ok := manager.AuthorizeRoute(created.Session.ID, entry.Plan.Routes[0].ID, created.Routes[0].Token)
+	if !ok {
+		t.Fatal("route session authorization failed")
+	}
+	s, _ := New(manager, "01234567890123456789012345678901")
+	s.WithRegistry(reg)
+	time.Sleep(time.Until(entry.ExpiresAt) + time.Millisecond)
+	entries := s.registryEntries()
+	if len(entries) != 1 || entries[0].State != registry.StateBlocked || len(manager.List()) != 0 {
+		t.Fatalf("expired integration state=%+v sessions=%+v", entries, manager.List())
+	}
+	select {
+	case <-authorization.Context.Done():
+	default:
+		t.Fatal("expired Integration did not cancel an in-flight Route authorization")
+	}
+}
+
 func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
 	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native-agent", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}})
@@ -685,8 +715,8 @@ func TestCallTreeMapsNestedSessionsToCurrentCoverage(t *testing.T) {
 	}
 	reg.Remove("native-agent")
 	tree = load()
-	if got := tree[""][0].Surfaces[0]; got.AgentID != "" || got.SurfaceID != "" || got.Protocol != "" || got.PolicyID != "" || got.Coverage != domain.CoverageUnprotected {
-		t.Fatalf("removed route retained protected claim: %+v", got)
+	if len(tree) != 0 || len(manager.List()) != 0 {
+		t.Fatalf("removed route retained active call tree: tree=%+v sessions=%+v", tree, manager.List())
 	}
 }
 

@@ -358,6 +358,10 @@ func (s *Server) Start() error {
 		for {
 			select {
 			case <-ticker.C:
+				if s.registry != nil {
+					s.registry.List()
+					s.applyRegistryRevocations()
+				}
 				s.manager.PruneExpired()
 			case <-cleanupContext.Done():
 				return
@@ -398,7 +402,7 @@ func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {
 	}
 	agents := make([]diagnostic.Agent, 0)
 	if s.registry != nil {
-		entries := s.registry.List()
+		entries := s.registryEntries()
 		agents = make([]diagnostic.Agent, 0, len(entries))
 		for _, entry := range entries {
 			agents = append(agents, diagnostic.Agent{Reference: entry.Manifest.Agent.ID, Kind: entry.Manifest.Agent.Kind, Version: entry.Manifest.Agent.Version, State: string(entry.State), Generation: entry.Generation, Coverage: entry.Plan.Summary, ErrorCode: entry.ErrorCode})
@@ -452,7 +456,7 @@ func (s *Server) reportUnexpectedEgress(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": string(domain.ErrInvalidContract)})
 		return
 	}
-	entry, ok := s.registry.Get(report.AgentID)
+	entry, ok := s.registryEntry(report.AgentID)
 	if !ok || entry.State != registry.StateActive || entry.Generation != report.Generation || !s.manager.ContainsRoute(report.SessionID, report.RouteID) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
 		return
@@ -947,7 +951,7 @@ func (s *Server) getCallTree(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	owners := map[string]registry.CallSurface{}
-	for _, entry := range s.registry.List() {
+	for _, entry := range s.registryEntries() {
 		if entry.State != registry.StateActive {
 			continue
 		}
@@ -1068,7 +1072,28 @@ func (s *Server) listAgents(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.registry.List())
+	writeJSON(w, http.StatusOK, s.registryEntries())
+}
+
+func (s *Server) registryEntries() []registry.Entry {
+	entries := s.registry.List()
+	s.applyRegistryRevocations()
+	return entries
+}
+
+func (s *Server) registryEntry(agentID string) (registry.Entry, bool) {
+	entry, ok := s.registry.Get(agentID)
+	s.applyRegistryRevocations()
+	return entry, ok
+}
+
+func (s *Server) applyRegistryRevocations() {
+	routeIDs, all := s.registry.DrainRouteRevocations()
+	if all {
+		s.manager.DeleteAll()
+		return
+	}
+	s.manager.DeleteRoutes(routeIDs)
 }
 
 func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
@@ -1076,7 +1101,7 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
-	entry, ok := s.registry.Get(r.PathValue("id"))
+	entry, ok := s.registryEntry(r.PathValue("id"))
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "NOT_FOUND"})
 		return
@@ -1089,6 +1114,7 @@ func (s *Server) registerAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
+	defer s.applyRegistryRevocations()
 	var manifest domain.AgentManifest
 	if err := decodeManagement(r, &manifest); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MANIFEST"})
@@ -1107,6 +1133,7 @@ func (s *Server) registerLeasedAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
+	defer s.applyRegistryRevocations()
 	var request struct {
 		Manifest   domain.AgentManifest `json:"manifest"`
 		TTLSeconds int64                `json:"ttl_seconds"`
@@ -1128,6 +1155,7 @@ func (s *Server) heartbeatAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
+	defer s.applyRegistryRevocations()
 	var request struct {
 		Generation uint64 `json:"generation"`
 		TTLSeconds int64  `json:"ttl_seconds"`
@@ -1149,8 +1177,9 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "REGISTRY_UNAVAILABLE"})
 		return
 	}
+	defer s.applyRegistryRevocations()
 	generationValue := r.URL.Query().Get("generation")
-	entry, exists := s.registry.Get(r.PathValue("id"))
+	entry, exists := s.registryEntry(r.PathValue("id"))
 	if generationValue != "" {
 		generation, err := strconv.ParseUint(generationValue, 10, 64)
 		if err != nil || generation == 0 {
@@ -1163,13 +1192,6 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		s.registry.Remove(r.PathValue("id"))
-	}
-	if exists {
-		routeIDs := make([]string, 0, len(entry.Plan.Routes))
-		for _, route := range entry.Plan.Routes {
-			routeIDs = append(routeIDs, route.ID)
-		}
-		s.manager.DeleteRoutes(routeIDs)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1460,7 +1482,7 @@ func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, string, boo
 	if s.registry == nil {
 		return domain.ProtectedRoute{}, "", false
 	}
-	for _, entry := range s.registry.List() {
+	for _, entry := range s.registryEntries() {
 		if entry.State != registry.StateActive {
 			continue
 		}
@@ -1502,7 +1524,7 @@ func (s *Server) proxyHandler() http.Handler {
 		var selectedAgentID string
 		var selectedAgentKind string
 		var selectedWorkspace string
-		for _, entry := range s.registry.List() {
+		for _, entry := range s.registryEntries() {
 			if entry.State != registry.StateActive {
 				continue
 			}

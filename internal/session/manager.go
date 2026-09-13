@@ -316,6 +316,18 @@ func (m *Manager) DeleteRoutes(routeIDs []string) int {
 	return before - len(m.sessions)
 }
 
+// DeleteAll revokes every active Session and cancels all in-flight route
+// authorizations. It is the fail-closed fallback for a bounded revocation queue.
+func (m *Manager) DeleteAll() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	removed := len(m.sessions)
+	for sessionID := range m.sessions {
+		m.deleteCascadeLocked(sessionID)
+	}
+	return removed
+}
+
 // DeleteChildAuthorized lets a single-route nested process revoke only its own
 // child Session. Root and multi-route Sessions remain management-plane only.
 func (m *Manager) DeleteChildAuthorized(sessionID, routeID, token string) bool {

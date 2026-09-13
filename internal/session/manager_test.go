@@ -95,6 +95,36 @@ func TestDeleteRoutesCancelsMatchingSessionTreesOnly(t *testing.T) {
 	}
 }
 
+func TestDeleteAllCancelsEverySession(t *testing.T) {
+	m := NewManager()
+	first, err := m.Create("", "http://127.0.0.1:8787", []string{"route-a"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := m.Create("", "http://127.0.0.1:8787", []string{"route-b"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAuthorization, ok := m.AuthorizeRoute(first.Session.ID, "route-a", first.Routes[0].Token)
+	if !ok {
+		t.Fatal("first session authorization failed")
+	}
+	secondAuthorization, ok := m.AuthorizeRoute(second.Session.ID, "route-b", second.Routes[0].Token)
+	if !ok {
+		t.Fatal("second session authorization failed")
+	}
+	if removed := m.DeleteAll(); removed != 2 || len(m.List()) != 0 {
+		t.Fatalf("delete all removed %d sessions; remaining=%d", removed, len(m.List()))
+	}
+	for _, authorization := range []Authorization{firstAuthorization, secondAuthorization} {
+		select {
+		case <-authorization.Context.Done():
+		default:
+			t.Fatal("delete all did not cancel an in-flight authorization")
+		}
+	}
+}
+
 func TestManagerEnforcesTTLRouteAndActiveSessionLimits(t *testing.T) {
 	m, err := NewManagerWithLimits(Limits{MaxSessions: 2, MaxRoutes: 2, MaxTTL: time.Minute})
 	if err != nil {

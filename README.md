@@ -79,8 +79,9 @@ conservatively than discovered traffic.
 - generation-bound Native integration leases, route capabilities, and heartbeats
   that revoke stale active plans after plugin failure, reconfiguration, or
   disconnect; generation counters are not reused after explicit removal, and
-  removing a generation cascades through matching Session trees to cancel
-  already authorized in-flight requests;
+  lease expiry, re-registration, monitoring failure, and explicit removal all
+  cascade through matching Session trees to cancel already authorized in-flight
+  requests; a bounded revocation backlog fails closed by revoking all Sessions;
 - route-capability-authenticated child Session creation that can only reuse the
   authenticated parent Route, cannot outlive its parent or enable interaction,
   shares the existing Core, is revoked by parent-session deletion, and can
