@@ -130,8 +130,27 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 		t.Fatal("dashboard leaked management data")
 	}
 	assertLocalSecurityHeaders(t, recorder.Header())
+	csp := recorder.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "base-uri 'none'") || !strings.Contains(csp, "form-action 'none'") {
+		t.Fatalf("dashboard CSP=%q", csp)
+	}
+	noncePrefix := "script-src 'nonce-"
+	nonceStart := strings.Index(csp, noncePrefix)
+	if nonceStart < 0 {
+		t.Fatalf("dashboard CSP has no script nonce: %q", csp)
+	}
+	nonceStart += len(noncePrefix)
+	nonceEnd := strings.IndexByte(csp[nonceStart:], '\'')
+	if nonceEnd < 0 {
+		t.Fatalf("dashboard CSP has malformed nonce: %q", csp)
+	}
+	nonce := csp[nonceStart : nonceStart+nonceEnd]
+	body := recorder.Body.String()
+	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
+		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
+	}
 	for _, required := range []string{"/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
-		if !strings.Contains(recorder.Body.String(), required) {
+		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
 	}

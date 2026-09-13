@@ -27,7 +27,8 @@ conservatively than discovered traffic.
   through the authenticated management API without exposing a partially switched
   data plane;
 - an authenticated local dashboard for discovery, risk-only surface inspection,
-  coverage plans, nested calls, approvals, policy editing, rule tests, and audit;
+  coverage plans, nested calls, approvals, policy editing, rule tests, and audit,
+  with per-response nonce CSP and no inline event handlers;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans;
 - capability-based coverage planning that cannot label incomplete inspection as
