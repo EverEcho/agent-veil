@@ -21,6 +21,22 @@ type ContentScanner interface {
 	ScanChecked(path, text string) ([]Match, error)
 }
 
+// ScanContent is the fail-closed boundary for replaceable scanners. It keeps a
+// faulty rule-pack or semantic runtime from crashing proxy, stream, audit, or
+// diagnostic processing.
+func ScanContent(scanner ContentScanner, path, text string) (matches []Match, err error) {
+	if scanner == nil {
+		return nil, domain.NewError(domain.ErrDetectorFailure, "scan content", "content scanner is unavailable")
+	}
+	defer func() {
+		if recover() != nil {
+			matches = nil
+			err = domain.NewError(domain.ErrDetectorFailure, "scan content", "content scanner panicked")
+		}
+	}()
+	return scanner.ScanChecked(path, text)
+}
+
 type rule struct {
 	id, category string
 	severity     domain.Severity

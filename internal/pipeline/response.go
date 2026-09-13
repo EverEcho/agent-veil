@@ -25,7 +25,7 @@ func ProcessResponseDetailed(protocolType domain.Protocol, contentType string, b
 	}
 	replacements := map[string]string{}
 	for _, field := range document.Fields {
-		matches, scanErr := scanner.ScanChecked(field.Path, field.Text)
+		matches, scanErr := detector.ScanContent(scanner, field.Path, field.Text)
 		if scanErr != nil {
 			return result, scanErr
 		}

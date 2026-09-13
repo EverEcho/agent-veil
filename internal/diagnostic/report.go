@@ -82,7 +82,7 @@ func Marshal(scanner detector.ContentScanner, report Report) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	matches, err := scanner.ScanChecked("/diagnostics", string(payload))
+	matches, err := detector.ScanContent(scanner, "/diagnostics", string(payload))
 	if err != nil {
 		return nil, domain.NewError(domain.ErrDetectorFailure, "marshal diagnostics", "secondary diagnostic scan failed")
 	}
@@ -96,7 +96,7 @@ func sanitize(scanner detector.ContentScanner, value string) (string, error) {
 	if value == "" {
 		return "", nil
 	}
-	matches, err := scanner.ScanChecked("/diagnostics/field", value)
+	matches, err := detector.ScanContent(scanner, "/diagnostics/field", value)
 	if err != nil {
 		return "", domain.NewError(domain.ErrDetectorFailure, "sanitize diagnostics", "diagnostic field scan failed")
 	}

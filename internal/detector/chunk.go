@@ -57,7 +57,7 @@ func (s *ChunkedScanner) Scan(path, text string) ([]Match, error) {
 		hash := chunkCacheKey(path, chunk)
 		findings, ok := s.cached(hash)
 		if !ok {
-			matches, err := s.Scanner.ScanChecked(path, chunk)
+			matches, err := ScanContent(s.Scanner, path, chunk)
 			if err != nil {
 				return nil, err
 			}

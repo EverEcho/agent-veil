@@ -14,6 +14,22 @@ func (wrongPathSemantic) Detect(string, string) ([]domain.Finding, error) {
 	return []domain.Finding{{RuleID: "pii.semantic_name", Category: "pii.semantic_name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: "/other", Start: 0, End: 1}, Confidence: 0.8, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
 }
 
+type panickingContentScanner struct{}
+
+func (*panickingContentScanner) ScanChecked(string, string) ([]Match, error) {
+	panic("replaceable scanner fault")
+}
+
+func TestScanContentFailsClosedForUnavailableOrPanickingScanner(t *testing.T) {
+	for _, scanner := range []ContentScanner{nil, (*panickingContentScanner)(nil)} {
+		matches, err := ScanContent(scanner, "/input", "must not escape")
+		var veil *domain.VeilError
+		if matches != nil || !errors.As(err, &veil) || veil.Code != domain.ErrDetectorFailure {
+			t.Fatalf("matches=%+v error=%v", matches, err)
+		}
+	}
+}
+
 func TestValidatedPIIAndSecrets(t *testing.T) {
 	s := NewDefault()
 	matches := scan(t, s, "mail dev@example.com phone 13800138000 id 11010519491231002X card 4111111111111111 ghp_abcdefghijklmnopqrstuvwxyz")

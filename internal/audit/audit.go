@@ -26,7 +26,7 @@ func Marshal(event domain.AuditEvent, forbiddenValues ...string) ([]byte, error)
 		return nil, err
 	}
 	text := string(payload)
-	matches, err := metadataScanner.ScanChecked("/audit", text)
+	matches, err := detector.ScanContent(metadataScanner, "/audit", text)
 	if err != nil {
 		return nil, domain.NewError(domain.ErrDetectorFailure, "marshal audit", "audit leak scan failed")
 	}

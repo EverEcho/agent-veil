@@ -787,7 +787,7 @@ func processResponseHeaders(headers http.Header, scanner detector.ContentScanner
 			if totalBytes > maxResponseHeaderBytes {
 				return result, domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response headers exceed their size limit")
 			}
-			matches, err := scanner.ScanChecked("/response/headers/"+http.CanonicalHeaderKey(key), key+": "+value)
+			matches, err := detector.ScanContent(scanner, "/response/headers/"+http.CanonicalHeaderKey(key), key+": "+value)
 			if err != nil {
 				return result, domain.NewError(domain.ErrDetectorFailure, "scan response headers", "provider response header scan failed")
 			}

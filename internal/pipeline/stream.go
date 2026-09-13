@@ -96,7 +96,7 @@ func (p *SSEProcessor) append(events []veilstream.Event) error {
 func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 	parts, references, eventEnds := p.parts()
 	combined := strings.Join(parts, "")
-	matches, err := p.scanner.ScanChecked("/response-stream", combined)
+	matches, err := detector.ScanContent(p.scanner, "/response-stream", combined)
 	if err != nil {
 		return nil, err
 	}

@@ -66,7 +66,7 @@ func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, content
 // used for protocol body fields to one bounded metadata value.
 func ProcessText(ctx Context, path, text string, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (TextResult, error) {
 	result := TextResult{Text: text}
-	matches, err := scanner.ScanChecked(path, text)
+	matches, err := detector.ScanContent(scanner, path, text)
 	if err != nil {
 		return result, err
 	}

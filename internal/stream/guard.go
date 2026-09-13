@@ -36,7 +36,7 @@ func (g *Guard) Push(text string) (string, error) {
 		return "", domain.NewError(domain.ErrInvalidContract, "guard response", "response safety buffer limit exceeded")
 	}
 	g.pending += text
-	if matches, err := g.scanner.ScanChecked("/response", g.pending); err != nil {
+	if matches, err := detector.ScanContent(g.scanner, "/response", g.pending); err != nil {
 		return "", err
 	} else if len(matches) > 0 {
 		return "", domain.NewError(domain.ErrPolicyBlocked, "guard response", "provider response contains credential-shaped content")
@@ -60,7 +60,7 @@ func (g *Guard) Push(text string) (string, error) {
 }
 
 func (g *Guard) Close() (string, error) {
-	if matches, err := g.scanner.ScanChecked("/response", g.pending); err != nil {
+	if matches, err := detector.ScanContent(g.scanner, "/response", g.pending); err != nil {
 		return "", err
 	} else if len(matches) > 0 {
 		return "", domain.NewError(domain.ErrPolicyBlocked, "guard response", "provider response contains credential-shaped content")

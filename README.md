@@ -24,7 +24,9 @@ conservatively than discovered traffic.
 - explicit rejection of request or Provider protocol upgrades and implicit
   Cookie/Set-Cookie authentication state;
 - deterministic and structured PII/secret detection, chunk caching, layered
-  policies, session-stable placeholders, and request-scoped bounded Vaults;
+  policies, session-stable placeholders, request-scoped bounded Vaults, and a
+  shared fail-closed panic boundary for replaceable scanners across request,
+  response, stream, audit, rule-test, and diagnostic paths;
 - direct, HTTP proxy, system proxy, and SOCKS5 network transports, plus runtime
   Bearer, Anthropic, Google, Vertex, custom, and AWS SigV4 authentication;
 - persistent policy and privacy-safe audit stores with retention, plus canonically signed,

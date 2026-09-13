@@ -514,7 +514,7 @@ func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_DETECTION_TEST"})
 		return
 	}
-	matches, err := s.currentScanner().ScanChecked("/test-input", request.Text)
+	matches, err := detector.ScanContent(s.currentScanner(), "/test-input", request.Text)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DETECTOR_FAILURE"})
 		return
