@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1197,6 +1198,25 @@ func TestRouteCapabilityCreatesOnlySameRouteBoundedChildSession(t *testing.T) {
 	}
 	if !manager.Delete(parent.Session.ID) || manager.Authorize(child.Session.ID, primaryRoute, child.Routes[0].Token) {
 		t.Fatal("parent deletion did not cascade to the child session")
+	}
+}
+
+func TestRouteCapabilityTransportMatchesProxyInjectionMode(t *testing.T) {
+	tests := []struct {
+		kind string
+		auth domain.AuthType
+		want []string
+	}{
+		{kind: "native", auth: domain.AuthPassthrough, want: []string{capabilityTransportHeaders}},
+		{kind: "claude", auth: domain.AuthAnthropicKey, want: []string{capabilityTransportAnthropicAPIKey}},
+		{kind: "claude", auth: domain.AuthPassthrough, want: []string{capabilityTransportHeaders}},
+		{kind: "hermes", auth: domain.AuthCustom, want: []string{capabilityTransportHeaders, capabilityTransportPath}},
+	}
+	for _, test := range tests {
+		route := domain.ProtectedRoute{Auth: domain.AuthStrategy{Type: test.auth}}
+		if got := routeCapabilityTransports(route, test.kind); !slices.Equal(got, test.want) {
+			t.Fatalf("kind=%q auth=%q transports=%q want=%q", test.kind, test.auth, got, test.want)
+		}
 	}
 }
 

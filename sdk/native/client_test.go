@@ -2,6 +2,7 @@ package native
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -73,7 +74,7 @@ func TestRouteClientCreatesScopedChildSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	child, err := client.CreateChild(context.Background(), time.Hour)
-	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || child.Protocol != domain.ProtocolOpenAIChat || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
+	if err != nil || child.Session.ParentSessionID != parent.Session.ID || child.Session.Interactive || child.Protocol != domain.ProtocolOpenAIChat || len(child.CapabilityTransports) != 1 || child.CapabilityTransports[0] != CapabilityTransportHeaders || len(child.Routes) != 1 || child.Routes[0].RouteID != parent.Routes[0].RouteID || child.Routes[0].Token == parent.Routes[0].Token {
 		t.Fatalf("parent=%+v child=%+v err=%v", parent, child, err)
 	}
 	if !child.Session.ExpiresAt.Equal(parent.Session.ExpiresAt) {
@@ -208,6 +209,27 @@ func TestNativeClientRejectsRedirectsAndAmbiguousResponses(t *testing.T) {
 	}
 	if err := client.doJSON(context.Background(), http.MethodPost, "/ambiguous", map[string]string{"x": "y"}, http.StatusOK, &Registration{}); err == nil {
 		t.Fatal("ambiguous JSON response was accepted")
+	}
+}
+
+func TestRouteClientRejectsInvalidChildCapabilitySemantics(t *testing.T) {
+	parentToken := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		now := time.Now().UTC()
+		w.Header().Set(apiVersionHeader, apiVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ChildSession{
+			Session: ProtectionSession{ID: "session-child", ParentSessionID: "session-parent", CoreEndpoint: "http://127.0.0.1:1", StartedAt: now, ExpiresAt: now.Add(time.Minute), RouteIDs: []string{"route-primary"}},
+			Routes:  []RouteCredential{{RouteID: "route-primary", Token: parentToken}}, Protocol: ProtocolOpenAIResponses, CapabilityTransports: []string{CapabilityTransportHeaders},
+		})
+	}))
+	defer server.Close()
+	client, err := NewRouteClient(server.URL, "session-parent", "route-primary", parentToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateChild(context.Background(), time.Minute); err == nil {
+		t.Fatal("Core response that reused the parent token and mismatched its endpoint was accepted")
 	}
 }
 

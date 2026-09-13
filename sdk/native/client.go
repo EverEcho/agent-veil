@@ -28,6 +28,7 @@ const (
 	apiVersionHeader = "X-AgentVeil-API-Version"
 	maxResponseBytes = 2 << 20
 	maxLeaseTTL      = time.Hour
+	maxChildTTL      = 24 * time.Hour
 	minHeartbeat     = 100 * time.Millisecond
 	leaseCleanupTTL  = 2 * time.Second
 	minTokenBytes    = 32
@@ -116,10 +117,17 @@ type RouteCredential struct {
 }
 
 type ChildSession struct {
-	Session  ProtectionSession `json:"session"`
-	Routes   []RouteCredential `json:"routes"`
-	Protocol Protocol          `json:"protocol"`
+	Session              ProtectionSession `json:"session"`
+	Routes               []RouteCredential `json:"routes"`
+	Protocol             Protocol          `json:"protocol"`
+	CapabilityTransports []string          `json:"capability_transports"`
 }
+
+const (
+	CapabilityTransportHeaders         = "headers"
+	CapabilityTransportAnthropicAPIKey = "anthropic_api_key"
+	CapabilityTransportPath            = "path"
+)
 
 type LeaseOptions struct {
 	TTL               time.Duration
@@ -233,7 +241,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, input any, exp
 }
 
 func (c *RouteClient) CreateChild(ctx context.Context, ttl time.Duration) (ChildSession, error) {
-	if c == nil || ctx == nil || ttl < time.Second || ttl > maxLeaseTTL || ttl%time.Second != 0 {
+	if c == nil || ctx == nil || ttl < time.Second || ttl > maxChildTTL || ttl%time.Second != 0 {
 		return ChildSession{}, domain.NewError(domain.ErrInvalidContract, "create nested child session", "client, context, and bounded TTL are required")
 	}
 	path := "/v1/sessions/" + url.PathEscape(c.sessionID) + "/routes/" + url.PathEscape(c.routeID) + "/children"
@@ -242,7 +250,28 @@ func (c *RouteClient) CreateChild(ctx context.Context, ttl time.Duration) (Child
 		header.Set("X-Veil-Session", c.sessionID)
 		header.Set("X-Veil-Route-Token", c.token)
 	})
+	if err == nil && !validChildSession(result, c) {
+		err = domain.NewError(domain.ErrInvalidContract, "create nested child session", "Core returned invalid nested capability semantics")
+	}
 	return result, err
+}
+
+func validChildSession(result ChildSession, parent *RouteClient) bool {
+	if parent == nil || !safeIdentifier(result.Session.ID) || result.Session.ParentSessionID != parent.sessionID || result.Session.CoreEndpoint != parent.endpoint || result.Session.Interactive || result.Session.StartedAt.IsZero() || !result.Session.ExpiresAt.After(result.Session.StartedAt) || len(result.Session.RouteIDs) != 1 || result.Session.RouteIDs[0] != parent.routeID || len(result.Routes) != 1 || result.Routes[0].RouteID != parent.routeID || !validRouteToken(result.Routes[0].Token) || result.Routes[0].Token == parent.token || !routableProtocol(result.Protocol) {
+		return false
+	}
+	transports := result.CapabilityTransports
+	return len(transports) == 1 && (transports[0] == CapabilityTransportHeaders || transports[0] == CapabilityTransportAnthropicAPIKey) ||
+		len(transports) == 2 && transports[0] == CapabilityTransportHeaders && transports[1] == CapabilityTransportPath
+}
+
+func routableProtocol(protocol Protocol) bool {
+	switch protocol {
+	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic, ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable:
+		return true
+	default:
+		return false
+	}
 }
 
 // Delete revokes this Session only when the capability belongs to a

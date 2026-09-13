@@ -21,6 +21,7 @@ import (
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/session"
+	nativesdk "github.com/agentveil/agentveil/sdk/native"
 )
 
 func TestInspectionIncludesManifestAndTruthfulPlan(t *testing.T) {
@@ -145,6 +146,53 @@ func TestProtectedRunInteractionFlagIsExplicitAndDoesNotConsumeChildFlag(t *test
 	}
 }
 
+func TestNestedRunParsingPreservesChildArguments(t *testing.T) {
+	name, child, err := parseNestedRun([]string{"codex", "--", "exec", "delegated task"})
+	if err != nil || name != "codex" || strings.Join(child, "|") != "exec|delegated task" {
+		t.Fatalf("name=%q child=%v err=%v", name, child, err)
+	}
+	if _, _, err := parseNestedRun(nil); err == nil {
+		t.Fatal("missing nested target was accepted")
+	}
+}
+
+func TestPrepareNestedLaunchBindsVerifiedCapabilityTransports(t *testing.T) {
+	endpoint := "http://127.0.0.1:1234"
+	parentID := "session-0123456789abcdef"
+	routeID := "route-primary-g1"
+	token := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	baseChild := nativesdk.ChildSession{
+		Session: nativesdk.ProtectionSession{ID: "session-fedcba9876543210", ParentSessionID: parentID, CoreEndpoint: endpoint, RouteIDs: []string{routeID}},
+		Routes:  []nativesdk.RouteCredential{{RouteID: routeID, Token: token}},
+	}
+	agent := domain.AgentInstance{Kind: "codex", Mode: domain.ModeLaunch, Executable: "/bin/true"}
+	for _, transports := range [][]string{{nativesdk.CapabilityTransportHeaders}, {nativesdk.CapabilityTransportHeaders, nativesdk.CapabilityTransportPath}} {
+		child := baseChild
+		child.Protocol = domain.ProtocolOpenAIResponses
+		child.CapabilityTransports = transports
+		launch, args, err := prepareNestedLaunch("codex", agent, endpoint, parentID, routeID, child, []string{"exec", "task"}, false)
+		if err != nil || launch.Environment["VEIL_PARENT_SESSION"] != parentID || launch.Environment["VEIL_ROUTE_ID"] != routeID {
+			t.Fatalf("transports=%q launch=%+v err=%v", transports, launch, err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "env_http_headers") || strings.Contains(joined, token) || strings.Contains(joined, "/__veil/") {
+			t.Fatalf("transports=%q exposed or omitted nested headers: args=%v", transports, args)
+		}
+	}
+	claudeChild := baseChild
+	claudeChild.Protocol = domain.ProtocolAnthropic
+	claudeChild.CapabilityTransports = []string{nativesdk.CapabilityTransportAnthropicAPIKey}
+	claudeAgent := domain.AgentInstance{Kind: "claude", Mode: domain.ModeLaunch, Executable: "/bin/true"}
+	launch, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil, false)
+	if err != nil || launch.Environment["ANTHROPIC_BASE_URL"] != endpoint+"/route/"+routeID || launch.Environment["ANTHROPIC_API_KEY"] != "veil-v1:"+claudeChild.Session.ID+":"+token {
+		t.Fatalf("nested Claude launch=%+v err=%v", launch, err)
+	}
+	claudeChild.Protocol = domain.ProtocolOpenAIResponses
+	if _, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil, false); err == nil {
+		t.Fatal("nested Claude accepted a mismatched protocol")
+	}
+}
+
 func TestHermesProtectedArgsRejectConfigurationBypasses(t *testing.T) {
 	for _, args := range [][]string{{"--ignore-user-config"}, {"chat", "--safe-mode"}, {"--profile", "work"}, {"--profile=work"}, {"-p", "work"}} {
 		if err := validateHermesProtectedArgs(args); err == nil {
@@ -208,11 +256,11 @@ func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing
 
 func TestProtectedChildEnvironmentNeverInheritsCoreAdminToken(t *testing.T) {
 	environment := protectedChildEnvironment(
-		[]string{"PATH=/bin", "VEIL_ADMIN_TOKEN=management-secret", "veil_admin_token=case-variant", "VEIL_PARENT_SESSION=stale-parent", "veil_session_id=stale-session"},
-		map[string]string{"VEIL_SESSION_ID": "session", "VEIL_ADMIN_TOKEN": "override-secret"},
+		[]string{"PATH=/bin", "VEIL_ADMIN_TOKEN=management-secret", "veil_admin_token=case-variant", "VEIL_PARENT_SESSION=stale-parent", "veil_session_id=stale-session", "veil_route_id=stale-route"},
+		map[string]string{"VEIL_SESSION_ID": "session", "VEIL_ROUTE_ID": "route", "VEIL_ADMIN_TOKEN": "override-secret"},
 	)
 	joined := strings.Join(environment, "\n")
-	if strings.Contains(strings.ToLower(joined), "veil_admin_token=") || strings.Contains(joined, "stale-parent") || strings.Contains(joined, "stale-session") || strings.Count(strings.ToLower(joined), "veil_session_id=") != 1 || !strings.Contains(joined, "VEIL_SESSION_ID=session") || !strings.Contains(joined, "PATH=/bin") {
+	if strings.Contains(strings.ToLower(joined), "veil_admin_token=") || strings.Contains(joined, "stale-parent") || strings.Contains(joined, "stale-session") || strings.Contains(joined, "stale-route") || strings.Count(strings.ToLower(joined), "veil_session_id=") != 1 || strings.Count(strings.ToLower(joined), "veil_route_id=") != 1 || !strings.Contains(joined, "VEIL_SESSION_ID=session") || !strings.Contains(joined, "VEIL_ROUTE_ID=route") || !strings.Contains(joined, "PATH=/bin") {
 		t.Fatalf("protected child environment=%v", environment)
 	}
 }

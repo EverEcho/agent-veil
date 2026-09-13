@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,12 @@ const maxAdminTokenBytes = 4096
 
 const APIVersion = "v1"
 const APIVersionHeader = "X-AgentVeil-API-Version"
+
+const (
+	capabilityTransportHeaders         = "headers"
+	capabilityTransportAnthropicAPIKey = "anthropic_api_key"
+	capabilityTransportPath            = "path"
+)
 
 type SemanticRuntimeLoader interface {
 	Load(*os.File, modelstore.Manifest) (detector.Semantic, error)
@@ -1217,7 +1224,7 @@ func (s *Server) createChildSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, ok := s.manager.AuthorizeRoute(parentID, routeID, tokenValues[0])
-	protectedRoute, routeActive := s.activeRoute(routeID)
+	protectedRoute, routeAgentKind, routeActive := s.activeRoute(routeID)
 	if !ok || !routeActive {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": string(domain.ErrUnauthorizedRoute)})
 		return
@@ -1248,8 +1255,9 @@ func (s *Server) createChildSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, struct {
 		session.Created
-		Protocol domain.Protocol `json:"protocol"`
-	}{Created: created, Protocol: protectedRoute.Protocol})
+		Protocol             domain.Protocol `json:"protocol"`
+		CapabilityTransports []string        `json:"capability_transports"`
+	}{Created: created, Protocol: protectedRoute.Protocol, CapabilityTransports: routeCapabilityTransports(protectedRoute, routeAgentKind)})
 }
 
 func (s *Server) deleteChildSession(w http.ResponseWriter, r *http.Request) {
@@ -1266,13 +1274,13 @@ func (s *Server) deleteChildSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) routeExists(routeID string) bool {
-	_, ok := s.activeRoute(routeID)
+	_, _, ok := s.activeRoute(routeID)
 	return ok
 }
 
-func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, bool) {
+func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, string, bool) {
 	if s.registry == nil {
-		return domain.ProtectedRoute{}, false
+		return domain.ProtectedRoute{}, "", false
 	}
 	for _, entry := range s.registry.List() {
 		if entry.State != registry.StateActive {
@@ -1280,11 +1288,21 @@ func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, bool) {
 		}
 		for _, route := range entry.Plan.Routes {
 			if route.ID == routeID {
-				return route, true
+				return route, entry.Manifest.Agent.Kind, true
 			}
 		}
 	}
-	return domain.ProtectedRoute{}, false
+	return domain.ProtectedRoute{}, "", false
+}
+
+func routeCapabilityTransports(route domain.ProtectedRoute, agentKind string) []string {
+	if agentKind == "hermes" {
+		return []string{capabilityTransportHeaders, capabilityTransportPath}
+	}
+	if agentKind == "claude" && route.Auth.Type == domain.AuthAnthropicKey {
+		return []string{capabilityTransportAnthropicAPIKey}
+	}
+	return []string{capabilityTransportHeaders}
 }
 
 func (s *Server) proxyHandler() http.Handler {
@@ -1340,10 +1358,11 @@ func (s *Server) proxyHandler() http.Handler {
 			workspaceRef = audit.WorkspaceReference(selectedWorkspace)
 		}
 		capabilityHeader := ""
-		if selectedAgentKind == "claude" && selected.Auth.Type == domain.AuthAnthropicKey {
+		capabilityTransports := routeCapabilityTransports(*selected, selectedAgentKind)
+		if slices.Contains(capabilityTransports, capabilityTransportAnthropicAPIKey) {
 			capabilityHeader = "X-Api-Key"
 		}
-		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, CapabilityPath: selectedAgentKind == "hermes", Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
+		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, CapabilityPath: slices.Contains(capabilityTransports, capabilityTransportPath), Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

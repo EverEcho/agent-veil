@@ -195,7 +195,18 @@ go run ./cmd/veil inspect cursor
 go run ./cmd/veil run codex -- --help
 go run ./cmd/veil run codex --interactive -- exec "review this change"
 go run ./cmd/veil run hermes -- --help
+go run ./cmd/veil nested codex -- exec "review delegated work"
 ```
+
+`veil nested` is intended for a process already launched inside an AgentVeil
+Route context. It uses only the inherited `VEIL_CORE_ENDPOINT`,
+`VEIL_SESSION_ID`, `VEIL_ROUTE_ID`, and `VEIL_PROTECTION_TOKEN`, creates a
+non-interactive child Session on that exact Route, reuses the existing Core,
+and revokes the child Session on exit. Nested Codex uses standard capability
+Headers, including on Hermes Routes that additionally support path capabilities,
+so Route Tokens never enter child argv; nested Claude requires a verified
+Anthropic API-key capability Route. No Core management token is inherited or
+required.
 
 Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
 Claude launch remains unverified and fails closed. Hermes protected launch is

@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,6 +37,7 @@ import (
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
+	nativesdk "github.com/agentveil/agentveil/sdk/native"
 )
 
 const protectedLaunchLease = 30 * time.Second
@@ -44,6 +46,7 @@ const managedManifestInterval = time.Second
 const maxManagementResponseBytes = 4 << 20
 const maxManagementErrorBytes = 4 << 10
 const maxHermesLaunchConfigBytes = 1 << 20
+const nestedSessionMaxTTL = 24 * time.Hour
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -62,7 +65,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <diagnostics|discover|inspect|run|serve|status>")
+		return errors.New("usage: veil <diagnostics|discover|inspect|nested|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
@@ -98,9 +101,28 @@ func run(args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return runProtected(ctx, name, childArgs, interactive)
+	case "nested":
+		name, childArgs, err := parseNestedRun(args[1:])
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runNestedProtected(ctx, name, childArgs)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func parseNestedRun(args []string) (string, []string, error) {
+	if len(args) == 0 {
+		return "", nil, errors.New("usage: veil nested <codex|claude> [-- agent arguments]")
+	}
+	childArgs := append([]string(nil), args[1:]...)
+	if len(childArgs) > 0 && childArgs[0] == "--" {
+		childArgs = childArgs[1:]
+	}
+	return args[0], childArgs, nil
 }
 
 func parseProtectedRun(args []string) (string, []string, bool, error) {
@@ -228,6 +250,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if err != nil {
 		return err
 	}
+	launch.Environment["VEIL_ROUTE_ID"] = protectedRoute.ID
 	defer func() {
 		if cleanupErr := launch.Cleanup(); cleanupErr != nil && resultErr == nil {
 			resultErr = cleanupErr
@@ -284,6 +307,104 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return egressErr
 	}
 	return runErr
+}
+
+func runNestedProtected(ctx context.Context, name string, childArgs []string) (resultErr error) {
+	if name != "codex" && name != "claude" {
+		return fmt.Errorf("nested protected launch for %s is not verified", name)
+	}
+	endpoint := os.Getenv("VEIL_CORE_ENDPOINT")
+	parentSessionID := os.Getenv("VEIL_SESSION_ID")
+	routeID := os.Getenv("VEIL_ROUTE_ID")
+	parentRouteToken := os.Getenv("VEIL_PROTECTION_TOKEN")
+	parentClient, err := nativesdk.NewRouteClient(endpoint, parentSessionID, routeID, parentRouteToken, nil)
+	if err != nil {
+		return fmt.Errorf("load parent route capability: %w", err)
+	}
+	manifest, err := discovery.Default().Inspect(ctx, name)
+	if err != nil {
+		return err
+	}
+	child, err := parentClient.CreateChild(ctx, nestedSessionMaxTTL)
+	if err != nil {
+		return fmt.Errorf("create nested protection session: %w", err)
+	}
+	if len(child.Routes) != 1 || child.Routes[0].RouteID != routeID || child.Routes[0].Token == "" {
+		return errors.New("Core returned an incomplete nested route capability")
+	}
+	childRoute := child.Routes[0]
+	childClient, err := nativesdk.NewRouteClient(endpoint, child.Session.ID, childRoute.RouteID, childRoute.Token, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if cleanupErr := childClient.Delete(cleanupContext); cleanupErr != nil && resultErr == nil && ctx.Err() == nil {
+			resultErr = fmt.Errorf("revoke nested protection session: %w", cleanupErr)
+		}
+	}()
+	launch, args, err := prepareNestedLaunch(name, manifest.Agent, endpoint, parentSessionID, routeID, child, childArgs, os.Getenv("OPENAI_API_KEY") != "")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cleanupErr := launch.Cleanup(); cleanupErr != nil && resultErr == nil {
+			resultErr = cleanupErr
+		}
+	}()
+	launch.Environment["VEIL_ROUTE_ID"] = routeID
+	localBypass := localNoProxy(os.Getenv("NO_PROXY"), os.Getenv("no_proxy"))
+	launch.Environment["NO_PROXY"] = localBypass
+	launch.Environment["no_proxy"] = localBypass
+	if _, err := fmt.Fprintf(os.Stderr, "AgentVeil nested protection: %s · %s · %s · non-interactive\n", name, child.Protocol, strings.Join(child.CapabilityTransports, "+")); err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, launch.Executable, args...)
+	configureProtectedCommand(command)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	command.Env = protectedChildEnvironment(os.Environ(), launch.Environment)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	runErr := command.Wait()
+	if command.Cancel != nil {
+		_ = command.Cancel()
+	}
+	return runErr
+}
+
+func prepareNestedLaunch(name string, agent domain.AgentInstance, endpoint, parentSessionID, routeID string, child nativesdk.ChildSession, childArgs []string, hasOpenAIKey bool) (integration.LaunchPlan, []string, error) {
+	if len(child.Routes) != 1 || child.Routes[0].RouteID != routeID || child.Routes[0].Token == "" {
+		return integration.LaunchPlan{}, nil, errors.New("Core returned an incomplete nested route capability")
+	}
+	childRoute := child.Routes[0]
+	launch, err := integration.PrepareLaunch(agent, childArgs, endpoint, child.Session.ID, parentSessionID, childRoute.Token)
+	if err != nil {
+		return integration.LaunchPlan{}, nil, err
+	}
+	launch.Environment["VEIL_ROUTE_ID"] = routeID
+	args := launch.Args
+	switch name {
+	case "codex":
+		if child.Protocol != domain.ProtocolOpenAIResponses {
+			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Codex requires an OpenAI Responses Route, got %s", child.Protocol)
+		}
+		if !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportHeaders) {
+			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Codex cannot use Route capability transports %q", child.CapabilityTransports)
+		}
+		baseURL := endpoint + "/route/" + routeID + "/v1"
+		args = protectedCodexArgs(baseURL, childArgs, hasOpenAIKey)
+	case "claude":
+		if child.Protocol != domain.ProtocolAnthropic || !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportAnthropicAPIKey) {
+			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Claude requires an Anthropic API-key capability Route, got %s/%q", child.Protocol, child.CapabilityTransports)
+		}
+		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + routeID
+		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(child.Session.ID, childRoute.Token)
+	default:
+		return integration.LaunchPlan{}, nil, fmt.Errorf("nested protected launch for %s is not verified", name)
+	}
+	return launch, args, nil
 }
 
 func writeLaunchProtectionPlan(writer io.Writer, entry registry.Entry) error {
@@ -479,7 +600,7 @@ func protectedChildEnvironment(base []string, overrides map[string]string) []str
 }
 
 func isVeilChildControlVariable(key string) bool {
-	for _, protected := range []string{"VEIL_ADMIN_TOKEN", "VEIL_SESSION_ID", "VEIL_PROTECTION_TOKEN", "VEIL_CORE_ENDPOINT", "VEIL_PARENT_SESSION"} {
+	for _, protected := range []string{"VEIL_ADMIN_TOKEN", "VEIL_SESSION_ID", "VEIL_ROUTE_ID", "VEIL_PROTECTION_TOKEN", "VEIL_CORE_ENDPOINT", "VEIL_PARENT_SESSION"} {
 		if strings.EqualFold(key, protected) {
 			return true
 		}
