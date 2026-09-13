@@ -23,7 +23,7 @@ func TestSupervisorAdoptsButDoesNotStopExternalCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close(context.Background())
-	directory := t.TempDir()
+	directory := privateTestDirectory(t)
 	state := instance.State{SchemaVersion: "v1", APIEndpoint: server.Endpoint(), InstanceID: server.InstanceID(), ProcessID: 1, StartedAt: time.Now().UTC()}
 	if err := instance.WriteState(filepath.Join(directory, "core.json"), state); err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestSupervisorAdoptsButDoesNotStopExternalCore(t *testing.T) {
 }
 
 func TestDesktopTokenPersistsPrivately(t *testing.T) {
-	directory := t.TempDir()
+	directory := privateTestDirectory(t)
 	first, err := LoadOrCreateToken(directory)
 	if err != nil || len(first) < 32 {
 		t.Fatalf("token=%q err=%v", first, err)
@@ -58,6 +58,15 @@ func TestDesktopTokenPersistsPrivately(t *testing.T) {
 	if _, err := LoadOrCreateToken(directory); err == nil {
 		t.Fatal("unsafe desktop token permissions were accepted")
 	}
+}
+
+func privateTestDirectory(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }
 
 func TestAutoStartWritesAndRemovesPlatformEntries(t *testing.T) {
