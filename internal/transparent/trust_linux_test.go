@@ -67,6 +67,33 @@ func TestLinuxTrustStoreInstallsRefreshesAndUninstallsExactCA(t *testing.T) {
 	if err := store.Uninstall(context.Background(), receipt); err != nil {
 		t.Fatalf("idempotent uninstall failed: %v", err)
 	}
+	if runner.calls != 4 {
+		t.Fatalf("idempotent uninstall did not reconcile trust database: calls=%d", runner.calls)
+	}
+}
+
+func TestLinuxTrustStoreMissingCertificateStillReconcilesTrustDatabase(t *testing.T) {
+	ca, err := CreateCA(privateCARoot(t), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ca.Remove()
+	runner := &recordingTrustRunner{fail: map[int]error{1: errors.New("refresh failed")}}
+	store, err := NewLinuxTrustStore(linuxTrustRoot(t), "/usr/sbin/update-ca-certificates", nil, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := store.Receipt(ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Uninstall(context.Background(), receipt); err == nil || runner.calls != 1 {
+		t.Fatalf("missing certificate reconciliation calls=%d error=%v", runner.calls, err)
+	}
+	delete(runner.fail, 1)
+	if err := store.Uninstall(context.Background(), receipt); err != nil || runner.calls != 2 {
+		t.Fatalf("missing certificate retry calls=%d error=%v", runner.calls, err)
+	}
 }
 
 func TestLinuxTrustStoreRollsBackFailedInstallRefresh(t *testing.T) {

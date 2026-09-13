@@ -107,6 +107,9 @@ func (s *LinuxTrustStore) Uninstall(ctx context.Context, receipt TrustReceipt) e
 	}
 	payload, err := readTrustedCertificate(expected)
 	if errors.Is(err, os.ErrNotExist) {
+		if err := s.refresh(ctx); err != nil {
+			return domain.NewError(domain.ErrInvalidContract, "uninstall Linux trust", "missing trust target could not be reconciled")
+		}
 		return nil
 	}
 	if err != nil {
