@@ -52,10 +52,10 @@ conservatively than discovered traffic.
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
   credentials;
-- version-gated Codex and Claude Code discovery/protected launch, plus
-  discovery-only Hermes and Cursor compatibility records; protected children
-  receive only fresh Session/parent/route capabilities and never inherit the
-  Core management token;
+- version-gated Codex, Claude Code, and Hermes discovery/protected launch, plus
+  a discovery-only Cursor compatibility record; protected children receive
+  only fresh Session/parent/route capabilities and never inherit the Core
+  management token;
 - bounded Agent configuration inspection restricted to stable regular files,
   with hard deadlines for version commands and inherited output pipes, plus a
   fixed concurrency ceiling for deterministic discovery; temporary Hermes homes
@@ -66,12 +66,13 @@ conservatively than discovered traffic.
   review gates, and SPDX JSON SBOM generation;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
-- Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
-  surfaces without retaining credentials, including its documented OpenAI Chat,
-  Responses, and Anthropic api-mode aliases while leaving specialized transports
-  unknown; auxiliary slots that name the exact primary Provider inherit its
-  resolved route unless they explicitly override it, while runtime-fixed and
-  model-dependent Provider protocol precedence is mirrored conservatively;
+- Hermes 0.20.6 enumeration and protected launch for primary, fallback,
+  auxiliary, delegation, and remote MCP surfaces without retaining credentials
+  in the manifest; every network Surface receives an independent Core route and
+  capability in an isolated temporary `HERMES_HOME`, including documented
+  OpenAI Chat, Responses, and Anthropic api-mode aliases. Runtime `main`, `auto`,
+  and legacy custom fallback semantics are expanded before routes are pinned,
+  while unsupported specialized transports remain fail-closed;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;
@@ -156,13 +157,16 @@ go run ./cmd/veil inspect cline
 go run ./cmd/veil inspect cursor
 go run ./cmd/veil run codex -- --help
 go run ./cmd/veil run codex --interactive -- exec "review this change"
+go run ./cmd/veil run hermes -- --help
 ```
 
 Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
-Claude and Hermes protected launch remain unverified and fail closed. CLI
-protected launches create non-interactive Sessions by default, so an `ASK`
-policy blocks instead of waiting indefinitely. Pass `--interactive` before the
-argument separator to opt into one-time decisions through the Dashboard.
+Claude launch remains unverified and fails closed. Hermes protected launch is
+version-gated to 0.20.6 and requires every discovered network Surface to be
+rewritable; an unknown route blocks the whole launch. CLI protected launches
+create non-interactive Sessions by default, so an `ASK` policy blocks instead
+of waiting indefinitely. Pass `--interactive` before the argument separator to
+opt into one-time decisions through the Dashboard.
 
 ## Verification
 
