@@ -64,9 +64,11 @@ func (OSSystem) Version(ctx context.Context, executable string) (string, error) 
 	output := &boundedVersionOutput{limit: maxAgentVersionBytes}
 	command := exec.CommandContext(bounded, executable, "--version")
 	command.WaitDelay = agentVersionWaitDelay
+	configureVersionCommand(command)
 	command.Stdout = output
 	command.Stderr = output
 	err := command.Run()
+	cleanupVersionCommand(command)
 	if output.Exceeded() {
 		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version output exceeds its size limit")
 	}
