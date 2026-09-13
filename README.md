@@ -57,6 +57,9 @@ conservatively than discovered traffic.
   locale preference. A plain-language safety
   guide explains every coverage class, request-scoped sensitive-data lifetime,
   metadata-only retention, and the limits of detection and compliance claims;
+  policy and signed-manifest editors preserve the original JSON representation
+  so Core can reject duplicate keys instead of accepting a browser-normalized
+  interpretation;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans,
   available from both CLI and a user-triggered local Dashboard download;

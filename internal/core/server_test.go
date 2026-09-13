@@ -188,6 +188,16 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
 	}
+	for _, required := range []string{"body:source", `body='{"manifest":'+manifestSource`, "new TextEncoder().encode(manifestSource)", "manifestBytes.length>6144"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard does not preserve strict JSON input: missing %q", required)
+		}
+	}
+	for _, normalized := range []string{"JSON.stringify(documentValue)", "JSON.stringify({manifest,artifact_base64})", "JSON.stringify(manifest)"} {
+		if strings.Contains(body, normalized) {
+			t.Fatalf("dashboard normalizes ambiguous JSON through %q", normalized)
+		}
+	}
 }
 
 func assertLocalSecurityHeaders(t *testing.T, header http.Header) {
