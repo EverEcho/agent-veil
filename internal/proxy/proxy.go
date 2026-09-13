@@ -63,6 +63,7 @@ type Route struct {
 	}
 	CapabilityHeader string
 	CapabilityPath   bool
+	LegacySessions   *LegacySSEManager
 }
 type configuredRoute struct {
 	Route
@@ -120,6 +121,9 @@ func NewHandlerWithScanner(sessions *session.Manager, routes []Route, client *ht
 		if _, exists := h.routes[route.ID]; exists {
 			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "duplicate route id")
 		}
+		if route.Protocol == domain.ProtocolMCPLegacySSE && route.LegacySessions == nil {
+			return nil, domain.NewError(domain.ErrInvalidContract, "create proxy", "legacy SSE route requires a shared channel manager")
+		}
 		routeClient := *client
 		// Provider cookies are an implicit cross-request credential channel. A
 		// caller-supplied Jar would persist response headers before DLP can inspect
@@ -156,11 +160,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sessionValues, routeTokenValues := r.Header.Values(HeaderSession), r.Header.Values(HeaderRouteToken)
 	var sessionID, routeToken string
 	if encoded, strippedEndpoint, pathCapability := splitCapabilityPath(endpoint); route.CapabilityPath && pathCapability {
-		if len(sessionValues) != 0 || len(routeTokenValues) != 0 {
-			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
-			return
-		}
 		if decodedSession, decodedToken, valid := DecodeCapability(encoded); valid {
+			redundantLegacyHeaders := route.Protocol == domain.ProtocolMCPLegacySSE && len(sessionValues) == 1 && len(routeTokenValues) == 1 && sessionValues[0] == decodedSession && routeTokenValues[0] == decodedToken
+			if len(sessionValues) != 0 || len(routeTokenValues) != 0 {
+				if !redundantLegacyHeaders {
+					fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+					return
+				}
+			}
 			sessionID, routeToken, endpoint = decodedSession, decodedToken, strippedEndpoint
 		} else {
 			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
@@ -209,6 +216,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		auditEvent.LatencyMS = time.Since(started).Milliseconds()
 		_ = route.Auditor.Append(auditEvent)
 	}()
+	if route.Protocol == domain.ProtocolMCPLegacySSE {
+		h.serveLegacySSE(w, r, route, routeID, endpoint, sessionID, routeToken, authorization, interactive, &auditEvent)
+		return
+	}
 	vault, err := redactor.NewVault(authorization.Secret, route.VaultLimits)
 	for i := range authorization.Secret {
 		authorization.Secret[i] = 0
@@ -614,12 +625,15 @@ func splitCapabilityPath(endpoint string) (string, string, bool) {
 }
 
 func routeAllowsMethod(protocolType domain.Protocol, method string) bool {
-	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && (method == http.MethodGet || method == http.MethodDelete)
+	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && (method == http.MethodGet || method == http.MethodDelete) || protocolType == domain.ProtocolMCPLegacySSE && method == http.MethodGet
 }
 
 func allowedMethods(protocolType domain.Protocol) string {
 	if protocolType == domain.ProtocolMCPStreamable {
 		return http.MethodDelete + ", " + http.MethodGet + ", " + http.MethodPost
+	}
+	if protocolType == domain.ProtocolMCPLegacySSE {
+		return http.MethodGet + ", " + http.MethodPost
 	}
 	return http.MethodPost
 }

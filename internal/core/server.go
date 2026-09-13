@@ -93,6 +93,8 @@ type Server struct {
 	}
 	feedbackStore *feedback.Store
 	proxySlots    chan struct{}
+	streamSlots   chan struct{}
+	legacySSE     *veilproxy.LegacySSEManager
 	discoverer    interface {
 		DetectAll(context.Context) []discovery.Detection
 	}
@@ -128,7 +130,7 @@ func New(manager *session.Manager, adminToken string) (*Server, error) {
 	if _, err := rand.Read(instanceBytes); err != nil {
 		return nil, fmt.Errorf("generate Core instance identity: %w", err)
 	}
-	return &Server{manager: manager, adminToken: adminToken, instanceID: base64.RawStdEncoding.EncodeToString(instanceBytes), broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), discoverer: discovery.Default(), scanner: scanner}, nil
+	return &Server{manager: manager, adminToken: adminToken, instanceID: base64.RawStdEncoding.EncodeToString(instanceBytes), broker: policy.NewBroker(), policy: policy.Engine{Default: domain.ActionRedact}, proxySlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), streamSlots: make(chan struct{}, defaultMaxConcurrentProxyRequests), legacySSE: veilproxy.NewDefaultLegacySSEManager(), discoverer: discovery.Default(), scanner: scanner}, nil
 }
 
 func (s *Server) WithDiscoverer(value interface {
@@ -148,6 +150,7 @@ func (s *Server) WithProxyConcurrency(limit int) error {
 		return domain.NewError(domain.ErrInvalidContract, "configure proxy concurrency", "limit cannot change after the server starts")
 	}
 	s.proxySlots = make(chan struct{}, limit)
+	s.streamSlots = make(chan struct{}, limit)
 	return nil
 }
 
@@ -1296,6 +1299,7 @@ func (s *Server) Close(ctx context.Context) error {
 	cleanupCancel, cleanupDone, httpServer := s.cleanupCancel, s.cleanupDone, s.httpServer
 	s.lifecycleMu.Unlock()
 	s.manager.Close()
+	s.legacySSE.CloseAll()
 	if cleanupCancel != nil {
 		cleanupCancel()
 		<-cleanupDone
@@ -1527,14 +1531,6 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
 			return
 		}
-		select {
-		case s.proxySlots <- struct{}{}:
-			defer func() { <-s.proxySlots }()
-		default:
-			w.Header().Set("Retry-After", "1")
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "CONCURRENCY_LIMIT"})
-			return
-		}
 		var selected *domain.ProtectedRoute
 		var selectedAgentID string
 		var selectedAgentKind string
@@ -1558,6 +1554,18 @@ func (s *Server) proxyHandler() http.Handler {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "UNKNOWN_ROUTE"})
 			return
 		}
+		slots := s.proxySlots
+		if r.Method == http.MethodGet && (selected.Protocol == domain.ProtocolMCPStreamable || selected.Protocol == domain.ProtocolMCPLegacySSE) {
+			slots = s.streamSlots
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			w.Header().Set("Retry-After", "1")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "CONCURRENCY_LIMIT"})
+			return
+		}
 		upstream := &url.URL{Scheme: selected.Upstream.Scheme, Host: net.JoinHostPort(selected.Upstream.Host, strconv.Itoa(int(selected.Upstream.Port))), Path: selected.Upstream.Path}
 		if err := selected.Upstream.Validate(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
@@ -1577,7 +1585,7 @@ func (s *Server) proxyHandler() http.Handler {
 		if slices.Contains(capabilityTransports, capabilityTransportAnthropicAPIKey) {
 			capabilityHeader = "X-Api-Key"
 		}
-		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, CapabilityPath: slices.Contains(capabilityTransports, capabilityTransportPath), Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
+		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, CapabilityPath: slices.Contains(capabilityTransports, capabilityTransportPath), LegacySessions: s.legacySSE, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

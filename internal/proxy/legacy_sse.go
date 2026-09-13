@@ -40,6 +40,9 @@ type legacySSEChannel struct {
 	binding LegacySSEBinding
 	cancel  context.CancelFunc
 	posts   chan struct{}
+	refs    int
+	closing bool
+	destroy sync.Once
 }
 
 // LegacySSEManager owns the state that joins a legacy MCP GET event stream to
@@ -142,13 +145,27 @@ func (m *LegacySSEManager) Acquire(ctx context.Context, id, sessionID, routeID s
 	m.mu.Lock()
 	current := m.channels[id]
 	stillActive := current == channel && channel.binding.ExpiresAt.After(m.now())
+	if stillActive {
+		channel.refs++
+	}
 	m.mu.Unlock()
 	if !stillActive {
 		<-channel.posts
 		return LegacySSEBinding{}, nil, false
 	}
 	var once sync.Once
-	release := func() { once.Do(func() { <-channel.posts }) }
+	release := func() {
+		once.Do(func() {
+			<-channel.posts
+			m.mu.Lock()
+			channel.refs--
+			destroy := channel.closing && channel.refs == 0
+			m.mu.Unlock()
+			if destroy {
+				destroyLegacyChannel(channel)
+			}
+		})
+	}
 	return cloneLegacyBinding(channel.binding), release, true
 }
 
@@ -158,14 +175,17 @@ func (m *LegacySSEManager) Close(id, sessionID, routeID string) bool {
 	}
 	m.mu.Lock()
 	channel, ok := m.channels[id]
+	destroy := false
 	if ok && channel.binding.SessionID == sessionID && channel.binding.RouteID == routeID {
 		delete(m.channels, id)
+		channel.closing = true
+		destroy = channel.refs == 0
 	} else {
 		ok = false
 	}
 	m.mu.Unlock()
-	if ok {
-		destroyLegacyChannels([]*legacySSEChannel{channel})
+	if destroy {
+		destroyLegacyChannel(channel)
 	}
 	return ok
 }
@@ -215,9 +235,15 @@ func (m *LegacySSEManager) pruneLocked(now time.Time) []*legacySSEChannel {
 
 func destroyLegacyChannels(channels []*legacySSEChannel) {
 	for _, channel := range channels {
+		destroyLegacyChannel(channel)
+	}
+}
+
+func destroyLegacyChannel(channel *legacySSEChannel) {
+	channel.destroy.Do(func() {
 		channel.cancel()
 		channel.binding.Vault.Destroy()
-	}
+	})
 }
 
 func cloneLegacyBinding(binding LegacySSEBinding) LegacySSEBinding {

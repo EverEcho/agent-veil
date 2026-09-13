@@ -28,7 +28,7 @@ func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
 		t.Fatal("Hermes protected launch-smoke version was omitted")
 	}
 	hermes := ForAgent("hermes", "0.20.6", "linux")
-	if len(hermes) != 6 {
+	if len(hermes) != 7 {
 		t.Fatalf("Hermes verified surfaces=%+v", hermes)
 	}
 	for _, record := range hermes {
@@ -44,14 +44,9 @@ func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
 }
 
 func TestValidationRejectsUnsupportedProtectedProtocol(t *testing.T) {
-	valid := Record{Agent: "agent", Version: "1.0.0", Platform: "linux", Mode: domain.ModeLaunch, Surface: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPLegacySSE, Auth: domain.AuthPassthrough, Coverage: domain.CoverageUnprotected, Verification: VerificationDiscoveryOnly, Notes: "legacy transport is visible but unsupported"}
-	if err := Validate([]Record{valid}); err != nil {
-		t.Fatalf("truthful legacy record rejected: %v", err)
-	}
-	valid.Coverage = domain.CoverageProtected
-	valid.Verification = VerificationLaunchSmoke
-	if err := Validate([]Record{valid}); err == nil {
-		t.Fatal("legacy MCP SSE was allowed to claim Protected compatibility")
+	invalid := Record{Agent: "agent", Version: "1.0.0", Platform: "linux", Mode: domain.ModeLaunch, Surface: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolLocalStdio, Auth: domain.AuthPassthrough, Coverage: domain.CoverageProtected, Verification: VerificationLaunchSmoke, Notes: "not a remotely inspected protocol"}
+	if err := Validate([]Record{invalid}); err == nil {
+		t.Fatal("protocol without a complete content adapter claimed Protected compatibility")
 	}
 }
 

@@ -97,12 +97,12 @@ func TestHermesConfigEnumeratesEveryIndependentSurface(t *testing.T) {
 	}
 }
 
-func TestHermesLegacyMCPSSEIsVisibleButNotClaimedProtected(t *testing.T) {
+func TestHermesLegacyMCPSSEIsBoundToStatefulAdapter(t *testing.T) {
 	slots, _, err := ParseHermesConfig([]byte("model:\n  provider: custom\n  model: x\n  base_url: https://api.example/v1\n  api_mode: chat_completions\nmcp_servers:\n  legacy:\n    url: https://mcp.example/sse\n    transport: sse\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(slots) != 2 || slots[1].ID != "mcp-legacy" || slots[1].Protocol != domain.ProtocolMCPLegacySSE || slots[1].BaseURL != "https://mcp.example/sse" || slots[1].Rewritable {
+	if len(slots) != 2 || slots[1].ID != "mcp-legacy" || slots[1].Protocol != domain.ProtocolMCPLegacySSE || slots[1].BaseURL != "https://mcp.example/sse" || !slots[1].Rewritable {
 		t.Fatalf("legacy SSE coverage was overstated or hidden: %+v", slots)
 	}
 }

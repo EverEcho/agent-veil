@@ -48,7 +48,7 @@ func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*
 		}
 	case domain.ProtocolGemini:
 		extractGeminiResponse(document)
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable, domain.ProtocolMCPLegacySSE:
 		extractMCP(document)
 	default:
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "protocol is unsupported")
@@ -64,7 +64,7 @@ func validResponseEnvelope(protocolType domain.Protocol, root any) bool {
 	if !ok {
 		return false
 	}
-	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable {
+	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable || protocolType == domain.ProtocolMCPLegacySSE {
 		return validMCPResponseEnvelope(object)
 	}
 	if _, hasError := object["error"]; hasError {
@@ -128,7 +128,7 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		}
 	case domain.ProtocolGemini:
 		extractGeminiResponse(document)
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable, domain.ProtocolMCPLegacySSE:
 		extractMCP(document)
 	default:
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse stream event", "protocol is unsupported")
@@ -144,7 +144,7 @@ func validStreamEnvelope(protocolType domain.Protocol, root any) bool {
 	if !ok {
 		return false
 	}
-	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable {
+	if protocolType == domain.ProtocolMCPHTTP || protocolType == domain.ProtocolMCPStreamable || protocolType == domain.ProtocolMCPLegacySSE {
 		return validMCPResponseEnvelope(object) || validMCPRequestEnvelope(object)
 	}
 	if _, hasError := object["error"]; hasError {

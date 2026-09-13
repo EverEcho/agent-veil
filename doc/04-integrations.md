@@ -78,7 +78,7 @@ Tool Arguments 既可能是对象，也可能是包含 JSON 的字符串。Adapt
 
 - `MCP stdio` 是本地 IPC，可标记为 Local；其子进程的独立外联属于进程出口问题；
 - Remote MCP 应通过专用 MCP Proxy 检查 tool arguments、results、resources 和 prompt payload；
-- 已弃用的 HTTP+SSE 双端点传输独立标记为 `mcp_legacy_sse`；Core 已具备精确绑定 Session/Route/动态 Provider URL/共享 Vault 的有界通道注册表及每通道 POST 并发额度，但 endpoint 事件改写和 GET/POST 双请求数据面尚未接通，因此继续保持 Unprotected，不得借用 `mcp_http` 或 Streamable HTTP 能力；
+- 已弃用的 HTTP+SSE 双端点传输独立标记为 `mcp_legacy_sse`，不得借用 `mcp_http` 或 Streamable HTTP 能力；Hermes 0.20.6 的该 Surface 由专用有状态适配器保护：Core 将 Provider 的 `endpoint` 事件改写为绑定 Session/Route 的不透明 loopback POST URL，以同一 Vault 检查双向 GET/POST 数据，精确保留 Provider query，拒绝跨源动态端点，并对通道数量、每通道 POST、正文、事件和 URL 设置硬上限；长连接 GET 与普通请求分别使用有界并发槽，关闭时排空已取得的 POST，过期或撤销则立即销毁通道；
 - Browser、OAuth、文件上传和任意 WebSocket 语义复杂，首期只能准确展示为 Observed/Partial/Unprotected；
 - 不应通过通用字符串替换伪装成完整 Browser DLP。
 

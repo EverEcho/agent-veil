@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -1666,6 +1667,97 @@ func TestCoreRoutesMCPStreamableLifecycleMethods(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusNoContent || len(providerMethods) != 2 || providerMethods[0] != http.MethodGet || providerMethods[1] != http.MethodDelete {
 		t.Fatalf("DELETE status=%d provider methods=%v", response.StatusCode, providerMethods)
+	}
+}
+
+func TestCoreKeepsLegacyMCPSSEStateAcrossPerRequestHandlers(t *testing.T) {
+	providerMessage := make(chan string, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/sse":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "event: endpoint\ndata: /messages?transport=legacy\n\n")
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, "event: message\ndata: "+<-providerMessage+"\n\n")
+		case "/messages":
+			if request.URL.RawQuery != "transport=legacy" {
+				t.Errorf("dynamic endpoint query=%q", request.URL.RawQuery)
+			}
+			body, _ := io.ReadAll(request.Body)
+			if !strings.Contains(string(body), `"method":"tools/list"`) {
+				t.Errorf("legacy POST body=%s", body)
+			}
+			providerMessage <- `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer provider.Close()
+	parsed, _ := url.Parse(provider.URL)
+	port, _ := strconv.Atoi(parsed.Port())
+	manager := session.NewManager()
+	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolMCPLegacySSE: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
+	registered, err := reg.Reconcile(domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "hermes-legacy", Kind: "hermes", Version: "0.20.6"}, Surfaces: []domain.EgressSurface{{ID: "mcp-legacy", Name: "Legacy MCP", Type: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPLegacySSE, Upstream: &domain.Upstream{Scheme: "http", Host: parsed.Hostname(), Port: uint16(port), Path: "/sse"}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "test", Rewritable: true, Required: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(manager, "01234567890123456789012345678901")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.WithRegistry(reg)
+	if err := s.WithProxyConcurrency(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close(context.Background())
+	routeID := registered.Plan.Routes[0].ID
+	created, err := manager.Create("", s.Endpoint(), []string{routeID}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamRequest, _ := http.NewRequest(http.MethodGet, s.Endpoint()+"/route/"+routeID+"/mcp", nil)
+	streamRequest.Header.Set("Accept", "text/event-stream")
+	streamRequest.Header.Set(veilproxy.HeaderSession, created.Session.ID)
+	streamRequest.Header.Set(veilproxy.HeaderRouteToken, created.Routes[0].Token)
+	streamResponse, err := http.DefaultClient.Do(streamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamResponse.Body.Close()
+	reader := bufio.NewReader(streamResponse.Body)
+	dynamicEndpoint := ""
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.HasPrefix(line, "data: ") {
+			dynamicEndpoint = strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		}
+		if line == "\n" {
+			break
+		}
+	}
+	if !strings.HasPrefix(dynamicEndpoint, s.Endpoint()+"/route/"+routeID+"/__veil/") {
+		t.Fatalf("dynamic endpoint=%q", dynamicEndpoint)
+	}
+	postRequest, _ := http.NewRequest(http.MethodPost, dynamicEndpoint, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	postRequest.Header.Set("Content-Type", "application/json")
+	postResponse, err := http.DefaultClient.Do(postRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = postResponse.Body.Close()
+	tail, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if streamResponse.StatusCode != http.StatusOK || postResponse.StatusCode != http.StatusAccepted || !strings.Contains(string(tail), `"tools":[]`) || s.legacySSE.Len() != 0 {
+		t.Fatalf("stream=%d post=%d tail=%s channels=%d", streamResponse.StatusCode, postResponse.StatusCode, tail, s.legacySSE.Len())
 	}
 }
 

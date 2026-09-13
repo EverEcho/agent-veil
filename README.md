@@ -156,12 +156,14 @@ conservatively than discovered traffic.
   while MCP capabilities use stripped headers), including documented
   OpenAI Chat, Responses, and Anthropic api-mode aliases. Runtime `main`, `auto`,
   and legacy custom fallback semantics are expanded before routes are pinned,
-  while unsupported specialized transports and legacy MCP SSE remain
-  fail-closed and explicitly Unprotected. Legacy SSE now has a bounded,
-  exact-capability channel registry for joining GET streams to dynamic Provider
-  POST endpoints and destroying shared Vaults on revocation; endpoint-event
-  rewriting and the dual-request data path must still be connected before this
-  transport can become Protected;
+  while unsupported specialized transports remain fail-closed and explicitly
+  Unprotected. Hermes legacy MCP SSE is handled by a bounded stateful adapter:
+  Core rewrites the Provider `endpoint` event to an opaque, capability-bound
+  loopback POST URL, shares one Vault across the GET stream and its POSTs,
+  preserves the Provider query exactly, rejects cross-origin dynamic endpoints,
+  and destroys channel state on closure, expiry, or revocation. Long-lived GET
+  streams use a separate bounded slot pool so they cannot starve their dynamic
+  POST requests;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;

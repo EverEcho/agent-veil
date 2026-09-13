@@ -45,6 +45,7 @@ func ContentProtectedProtocols() []domain.Protocol {
 		domain.ProtocolGemini,
 		domain.ProtocolMCPHTTP,
 		domain.ProtocolMCPStreamable,
+		domain.ProtocolMCPLegacySSE,
 	}
 }
 
@@ -98,7 +99,7 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 		extractAnthropic(document)
 	case domain.ProtocolGemini:
 		extractGemini(document)
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable, domain.ProtocolMCPLegacySSE:
 		extractMCP(document)
 	}
 	if document.extractionErr != nil {
@@ -138,6 +139,8 @@ func ResolveEndpoint(expected domain.Protocol, endpoint string) (domain.Protocol
 	case "/mcp", "/v1/mcp":
 		if expected == domain.ProtocolMCPStreamable {
 			protocol = domain.ProtocolMCPStreamable
+		} else if expected == domain.ProtocolMCPLegacySSE {
+			protocol = domain.ProtocolMCPLegacySSE
 		} else {
 			protocol = domain.ProtocolMCPHTTP
 		}
@@ -173,7 +176,7 @@ func validRequestEnvelope(protocolType domain.Protocol, root any) bool {
 	case domain.ProtocolGemini:
 		_, ok = object["contents"].([]any)
 		return ok
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable, domain.ProtocolMCPLegacySSE:
 		return validMCPRequestEnvelope(object)
 	default:
 		return false

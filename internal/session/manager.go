@@ -38,10 +38,11 @@ type managedRouteCredential struct {
 }
 
 type Authorization struct {
-	Secret      []byte
-	ExpiresAt   time.Time
-	Context     context.Context
-	Interactive bool
+	Secret       []byte
+	CoreEndpoint string
+	ExpiresAt    time.Time
+	Context      context.Context
+	Interactive  bool
 }
 
 type CreateOptions struct {
@@ -240,7 +241,7 @@ func (m *Manager) AuthorizeRoute(sessionID, routeID, token string) (Authorizatio
 	}
 	for _, route := range entry.routes {
 		if route.routeID == routeID && constantTimeBytesStringEqual(route.token, token) {
-			return Authorization{Secret: entry.session.SessionSecret(), ExpiresAt: entry.session.ExpiresAt, Context: entry.context, Interactive: entry.session.Interactive}, true
+			return Authorization{Secret: entry.session.SessionSecret(), CoreEndpoint: entry.session.CoreEndpoint, ExpiresAt: entry.session.ExpiresAt, Context: entry.context, Interactive: entry.session.Interactive}, true
 		}
 	}
 	return Authorization{}, false

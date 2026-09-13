@@ -174,10 +174,9 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 		}
 		protocolType := domain.ProtocolMCPStreamable
 		if strings.EqualFold(strings.TrimSpace(server.Transport), "sse") {
-			// Legacy MCP SSE uses a GET event stream that advertises a separate,
-			// dynamic POST message endpoint. The Core currently implements the
-			// single-endpoint Streamable HTTP contract only, so legacy SSE must
-			// remain visible but unprotected.
+			// Legacy MCP SSE retains its dual-endpoint transport marker. Protected
+			// launch rewrites only its URL and capability headers; Core handles the
+			// stateful GET stream and dynamically advertised POST endpoint.
 			protocolType = domain.ProtocolMCPLegacySSE
 		}
 		baseURL := strings.TrimSpace(server.URL)

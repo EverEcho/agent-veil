@@ -11,15 +11,15 @@ verify:
 # This target proves only the automated scope; it intentionally does not stand
 # in for real-application or target-platform validation.
 acceptance-evidence:
-	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSECannotBorrowImplementedMCPAdapters|TestContentProtectedProtocolsExcludeUnimplementedTransports)$$' -count=1
-	go test ./internal/integration -run '^(TestResetHermesLaunchRootRemovesBoundedOwnedResidue|TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData)$$' -count=1
+	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSEUsesStrictMCPEnvelopes|TestContentProtectedProtocolsExcludeUnimplementedTransports)$$' -count=1
+	go test ./internal/integration -run '^(TestResetHermesLaunchRootRemovesBoundedOwnedResidue|TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData|TestRewriteHermesLegacySSEPreservesTransportAndPinsCapability|TestHermesLegacyMCPSSEIsBoundToStatefulAdapter)$$' -count=1
 	go test ./internal/planner -run '^TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability$$' -count=1
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
-	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath|TestLegacySSEManagerBindsExactCapabilityAndOwnsVault|TestLegacySSEManagerIsBoundedAndRevocationFailsClosed)$$' -count=1
+	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath|TestLegacySSEManagerBindsExactCapabilityAndOwnsVault|TestLegacySSEManagerIsBoundedAndRevocationFailsClosed|TestLegacySSEManagerGracefulCloseDrainsAcquiredPost|TestLegacyMCPSSEDualEndpointRoundTripProtectsProviderBoundary|TestLegacyMCPSSERejectsCrossOriginAdvertisedEndpoint)$$' -count=1
 	go test ./internal/registry -run '^(TestIntegrationLeaseExpiresAndRejectsStaleGeneration|TestRegistryQueuesRoutesForEveryActiveGenerationInvalidation|TestRegistryRevocationQueueFailsClosedWhenBoundExceeded)$$' -count=1
 	go test ./internal/instance -run '^(TestOperatingSystemReleasesCoreLockAfterCrash|TestCoreStateRoundTripAndPermissions)$$' -count=1
 	go test ./internal/discovery -run '^(TestUnverifiedProtectedAgentsReturnRiskOnlyManifests|TestAutomaticDiscoveryReportsUnknownVersionsWithoutClaimingCompatibility)$$' -count=1
-	go test ./internal/core -run '^TestInspectionPreviewReturnsManifestAndTruthfulCoverage$$' -count=1
+	go test ./internal/core -run '^(TestInspectionPreviewReturnsManifestAndTruthfulCoverage|TestCoreKeepsLegacyMCPSSEStateAcrossPerRequestHandlers)$$' -count=1
 	go test ./cmd/veil -run '^(TestInspectionIncludesManifestAndTruthfulPlan|TestResolveCoreEndpointRejectsStaleIdentityWithoutSendingAdminToken|TestServeClearsCrashedCoreStateBeforeLaterStartupFailure)$$' -count=1
 	go test ./internal/routing -run '^TestContentModifierAfterDLPIsBlocked$$' -count=1
 	go test ./internal/audit ./internal/diagnostic -count=1

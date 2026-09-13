@@ -95,6 +95,35 @@ func TestRewriteHermesConfigExpandsAutoProviderBeforePinningRoute(t *testing.T) 
 	}
 }
 
+func TestRewriteHermesLegacySSEPreservesTransportAndPinsCapability(t *testing.T) {
+	config := []byte("model:\n  provider: openai-codex\n  model: gpt-5\n  base_url: https://chatgpt.com/backend-api/codex\n  api_mode: codex_responses\nmcp_servers:\n  legacy:\n    url: https://mcp.example/sse\n    transport: sse\n")
+	bindings := map[string]HermesRouteBinding{
+		"primary":    {RouteID: "route-primary", Token: strings.Repeat("a", 64)},
+		"mcp-legacy": {RouteID: "route-legacy", Token: strings.Repeat("b", 64)},
+	}
+	discovered, _, err := ParseHermesConfig(config)
+	if err != nil || len(discovered) != 2 || !discovered[0].Rewritable || !discovered[1].Rewritable {
+		t.Fatalf("legacy fixture surfaces=%+v error=%v", discovered, err)
+	}
+	rewritten, err := RewriteHermesConfig(config, "http://127.0.0.1:44123", "session-1234567890abcdef", bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := yaml.Unmarshal(rewritten, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	legacy := decoded["mcp_servers"].(map[string]any)["legacy"].(map[string]any)
+	headers := legacy["headers"].(map[string]any)
+	if legacy["transport"] != "sse" || legacy["url"] != "http://127.0.0.1:44123/route/route-legacy/mcp" || headers["X-Veil-Session"] != "session-1234567890abcdef" || headers["X-Veil-Route-Token"] != bindings["mcp-legacy"].Token {
+		t.Fatalf("legacy SSE rewrite=%+v", legacy)
+	}
+	slots, _, err := ParseHermesConfig(rewritten)
+	if err != nil || len(slots) != 2 || slots[1].Protocol != domain.ProtocolMCPLegacySSE || !slots[1].Rewritable {
+		t.Fatalf("rewritten legacy slot=%+v error=%v", slots, err)
+	}
+}
+
 func TestRewriteHermesConfigFailsClosed(t *testing.T) {
 	valid := []byte("model:\n  provider: custom\n  model: x\n  base_url: https://api.example/v1\n  api_mode: chat_completions\n")
 	binding := map[string]HermesRouteBinding{"primary": {RouteID: "route-primary", Token: strings.Repeat("a", 64)}}

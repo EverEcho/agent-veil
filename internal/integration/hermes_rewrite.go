@@ -325,7 +325,7 @@ func hermesTransport(protocol domain.Protocol) string {
 		return "codex_responses"
 	case domain.ProtocolAnthropic:
 		return "anthropic_messages"
-	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable:
+	case domain.ProtocolMCPHTTP, domain.ProtocolMCPStreamable, domain.ProtocolMCPLegacySSE:
 		return "mcp"
 	default:
 		return ""

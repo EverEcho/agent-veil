@@ -79,6 +79,31 @@ func TestLegacySSEManagerIsBoundedAndRevocationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestLegacySSEManagerGracefulCloseDrainsAcquiredPost(t *testing.T) {
+	manager := NewDefaultLegacySSEManager()
+	vault := testLegacyVault(t)
+	upstream, _ := url.Parse("https://mcp.example/messages")
+	binding, err := manager.Open("session-0123456789abcdef", "route-a", upstream, time.Now().Add(time.Minute), context.Background(), vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, release, ok := manager.Acquire(context.Background(), binding.ID, binding.SessionID, binding.RouteID)
+	if !ok {
+		t.Fatal("POST slot unavailable")
+	}
+	if !manager.Close(binding.ID, binding.SessionID, binding.RouteID) || manager.Len() != 0 {
+		t.Fatal("graceful close did not stop new channel acquisition")
+	}
+	if _, err := vault.Store("pii", "still-in-flight"); err != nil {
+		t.Fatalf("graceful close destroyed an in-flight POST Vault: %v", err)
+	}
+	release()
+	var veilErr *domain.VeilError
+	if _, err := vault.Store("pii", "after-release"); !errors.As(err, &veilErr) || veilErr.Code != domain.ErrVaultDestroyed {
+		t.Fatalf("drained channel retained its Vault: %v", err)
+	}
+}
+
 func TestLegacySSEManagerRejectsInvalidLimitsAndExpiredBindings(t *testing.T) {
 	for _, limits := range []LegacySSELimits{{}, {MaxChannels: MaximumLegacySSEChannels + 1, MaxPostsPerChannel: 1}, {MaxChannels: 1, MaxPostsPerChannel: MaximumLegacySSEPostsPerChannel + 1}} {
 		if _, err := NewLegacySSEManager(limits); err == nil {
