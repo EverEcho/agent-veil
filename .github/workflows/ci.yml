@@ -176,7 +176,8 @@ jobs:
             if [ "${GOOS}" = windows ]; then suffix=".exe"; fi
             GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath -buildvcs=false -o "dist/veil-${GOOS}-${GOARCH}${suffix}" ./cmd/veil
           done
-          sha256sum dist/veil-* > dist/SHA256SUMS
+          dist/veil-linux-amd64 compatibility --offline > dist/COMPATIBILITY.json
+          sha256sum dist/veil-* dist/COMPATIBILITY.json > dist/SHA256SUMS
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           file: dist/veil-linux-amd64
@@ -193,6 +194,7 @@ jobs:
             dist/veil-darwin-arm64
             dist/veil-windows-amd64.exe
             dist/veil-windows-arm64.exe
+            dist/COMPATIBILITY.json
             dist/SHA256SUMS
       - name: Attest Linux SBOM
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1

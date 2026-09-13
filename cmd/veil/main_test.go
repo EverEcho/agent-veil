@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
@@ -541,6 +542,28 @@ func TestWriteCompatibilityReportUsesAuthenticatedVersionedCoreAPI(t *testing.T)
 	}
 	if err := writeCompatibilityReport(nil, server.URL, token); err == nil {
 		t.Fatal("nil compatibility writer was accepted")
+	}
+}
+
+func TestOfflineCompatibilityReportUsesTheValidatedBuildMatrix(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeOfflineCompatibilityReport(&output); err != nil {
+		t.Fatal(err)
+	}
+	var records []compatibility.Record
+	if err := json.Unmarshal(output.Bytes(), &records); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != len(compatibility.Current()) || len(records) == 0 {
+		t.Fatalf("records=%d current=%d", len(records), len(compatibility.Current()))
+	}
+	for _, record := range records {
+		if record.Coverage == domain.CoverageProtected && (record.Surface == domain.SurfaceUnknown || record.Protocol == domain.ProtocolUnknown || record.Verification != compatibility.VerificationLaunchSmoke) {
+			t.Fatalf("offline release report overstated coverage: %+v", record)
+		}
+	}
+	if err := writeOfflineCompatibilityReport(nil); err == nil {
+		t.Fatal("nil offline compatibility writer was accepted")
 	}
 }
 

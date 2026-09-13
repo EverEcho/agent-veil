@@ -213,6 +213,7 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 ```bash
 go run ./cmd/veil status
 go run ./cmd/veil compatibility
+go run ./cmd/veil compatibility --offline
 go run ./cmd/veil diagnostics
 go run ./cmd/veil discover
 go run ./cmd/veil inspect codex
@@ -228,6 +229,10 @@ go run ./cmd/veil run codex --interactive -- exec "review this change"
 go run ./cmd/veil run hermes -- --help
 go run ./cmd/veil nested codex -- exec "review delegated work"
 ```
+
+The offline compatibility form reads the same validated matrix compiled into
+the binary and needs neither a running Core nor a management token. Tagged CI
+builds include that exact `COMPATIBILITY.json` in checksums and provenance.
 
 `veil nested` is intended for a process already launched inside an AgentVeil
 Route context. It uses only the inherited `VEIL_CORE_ENDPOINT`,

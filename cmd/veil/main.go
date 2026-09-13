@@ -77,8 +77,11 @@ func run(args []string) error {
 		}
 		return status()
 	case "compatibility":
+		if len(args) == 2 && args[1] == "--offline" {
+			return writeOfflineCompatibilityReport(os.Stdout)
+		}
 		if len(args) != 1 {
-			return errors.New("usage: veil compatibility")
+			return errors.New("usage: veil compatibility [--offline]")
 		}
 		return compatibilityReport()
 	case "diagnostics":
@@ -1032,6 +1035,15 @@ func writeCompatibilityReport(writer io.Writer, endpoint, token string) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(records)
+}
+
+func writeOfflineCompatibilityReport(writer io.Writer) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "write offline compatibility report", "writer is required")
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(compatibility.Current())
 }
 
 func diagnostics() error {
