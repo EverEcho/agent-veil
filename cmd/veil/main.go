@@ -25,6 +25,7 @@ import (
 	"github.com/agentveil/agentveil/internal/audit"
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/core"
+	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/feedback"
@@ -49,6 +50,8 @@ const maxManagementResponseBytes = 4 << 20
 const maxManagementErrorBytes = 4 << 10
 const maxHermesLaunchConfigBytes = 1 << 20
 const nestedSessionMaxTTL = 24 * time.Hour
+const maxModelManifestPayloadBytes = 6 << 10
+const modelManagementTimeout = 16 * time.Minute
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -67,7 +70,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|nested|rules|run|serve|status>")
+		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|models|nested|rules|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
@@ -92,6 +95,8 @@ func run(args []string) error {
 		return diagnostics()
 	case "rules":
 		return rulesCommand(args[1:], os.Stdout)
+	case "models":
+		return modelsCommand(args[1:], os.Stdout)
 	case "discover":
 		if len(args) != 1 {
 			return errors.New("usage: veil discover")
@@ -658,6 +663,13 @@ func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []st
 }
 
 func managementJSON(ctx context.Context, method, target, token string, input, output any) error {
+	return managementJSONWithTimeout(ctx, method, target, token, input, output, 10*time.Second)
+}
+
+func managementJSONWithTimeout(ctx context.Context, method, target, token string, input, output any, timeout time.Duration) error {
+	if ctx == nil || timeout <= 0 {
+		return domain.NewError(domain.ErrInvalidContract, "call management API", "context and positive timeout are required")
+	}
 	var body io.Reader
 	if input != nil {
 		payload, err := json.Marshal(input)
@@ -676,7 +688,11 @@ func managementJSON(ctx context.Context, method, target, token string, input, ou
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	client := &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}
@@ -1097,6 +1113,130 @@ func rulesCommand(args []string, writer io.Writer) error {
 	return executeRulesCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
 }
 
+func modelsCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), modelManagementTimeout)
+	defer cancel()
+	return executeModelsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executeModelsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "run models command", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	usage := errors.New("usage: veil models <list|install MANIFEST ARTIFACT|activate VERSION|deactivate|remove VERSION>")
+	if len(args) == 0 {
+		return usage
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return usage
+		}
+		var inventory struct {
+			Active   string                `json:"active,omitempty"`
+			Versions []modelstore.Manifest `json:"versions"`
+			Runtime  struct {
+				Connected     bool                            `json:"connected"`
+				Required      bool                            `json:"required"`
+				Active        bool                            `json:"active"`
+				ArtifactBytes int64                           `json:"artifact_bytes,omitempty"`
+				ResourceState string                          `json:"resource_state"`
+				Resources     *detector.SemanticResourceUsage `json:"resources,omitempty"`
+			} `json:"runtime"`
+		}
+		if err := managementJSONWithTimeout(ctx, http.MethodGet, endpoint+"/v1/models", token, nil, &inventory, modelManagementTimeout); err != nil {
+			return err
+		}
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(inventory)
+	case "install":
+		if len(args) != 3 {
+			return usage
+		}
+		manifestPayload, err := readCLIFile(args[1], maxModelManifestPayloadBytes)
+		if err != nil {
+			return fmt.Errorf("read model manifest: %w", err)
+		}
+		var manifest modelstore.Manifest
+		if err := decodeStrictJSON(manifestPayload, &manifest); err != nil {
+			return fmt.Errorf("decode model manifest: %w", err)
+		}
+		artifact, artifactInfo, err := openCLIFile(args[2], modelstore.MaxArtifactBytes)
+		if err != nil {
+			return fmt.Errorf("open model artifact: %w", err)
+		}
+		defer artifact.Close()
+		if manifest.Size != artifactInfo.Size() {
+			return errors.New("model artifact size does not match its signed manifest")
+		}
+		return uploadModel(ctx, endpoint, token, manifestPayload, manifest, artifact)
+	case "activate":
+		if len(args) != 2 {
+			return usage
+		}
+		return managementJSONWithTimeout(ctx, http.MethodPut, endpoint+"/v1/models/active", token, map[string]string{"version": args[1]}, nil, modelManagementTimeout)
+	case "deactivate":
+		if len(args) != 1 {
+			return usage
+		}
+		return managementJSONWithTimeout(ctx, http.MethodDelete, endpoint+"/v1/models/active", token, nil, nil, modelManagementTimeout)
+	case "remove":
+		if len(args) != 2 {
+			return usage
+		}
+		return managementJSONWithTimeout(ctx, http.MethodDelete, endpoint+"/v1/models/"+url.PathEscape(args[1]), token, nil, nil, modelManagementTimeout)
+	default:
+		return usage
+	}
+}
+
+func uploadModel(ctx context.Context, endpoint, token string, manifestPayload []byte, manifest modelstore.Manifest, artifact *os.File) error {
+	if ctx == nil || artifact == nil {
+		return domain.NewError(domain.ErrInvalidContract, "upload model", "context and artifact are required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/v1/models", artifact)
+	if err != nil {
+		return err
+	}
+	request.ContentLength = manifest.Size
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept-Encoding", "identity")
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set(core.APIVersionHeader, core.APIVersion)
+	request.Header.Set(core.ModelManifestHeader, base64.StdEncoding.EncodeToString(manifestPayload))
+	client := &http.Client{
+		Timeout:       modelManagementTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if err := validateManagementAPIVersion(response); err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return managementResponseError(response)
+	}
+	var installed modelstore.Manifest
+	if err := decodeManagementResponse(response, &installed); err != nil {
+		return err
+	}
+	if installed != manifest {
+		return errors.New("Core returned a different installed model manifest")
+	}
+	return nil
+}
+
 func executeRulesCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
 	if ctx == nil || writer == nil {
 		return domain.NewError(domain.ErrInvalidContract, "run rules command", "context and writer are required")
@@ -1168,30 +1308,39 @@ func executeRulesCommand(ctx context.Context, writer io.Writer, endpoint, token 
 }
 
 func readCLIFile(path string, maximum int64) ([]byte, error) {
-	if path == "" || maximum <= 0 {
-		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "path and size limit are required")
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maximum {
-		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file type or size is invalid")
-	}
-	file, err := os.Open(path)
+	file, _, err := openCLIFile(path, maximum)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file changed during validation")
-	}
 	payload, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil || len(payload) == 0 || int64(len(payload)) > maximum {
 		return nil, domain.NewError(domain.ErrInvalidContract, "read CLI file", "file is empty or oversized")
 	}
 	return payload, nil
+}
+
+func openCLIFile(path string, maximum int64) (*os.File, os.FileInfo, error) {
+	if path == "" || maximum <= 0 {
+		return nil, nil, domain.NewError(domain.ErrInvalidContract, "open CLI file", "path and size limit are required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maximum {
+		return nil, nil, domain.NewError(domain.ErrInvalidContract, "open CLI file", "file type or size is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return nil, nil, domain.NewError(domain.ErrInvalidContract, "open CLI file", "file changed during validation")
+	}
+	return file, opened, nil
 }
 
 func decodeStrictJSON(payload []byte, output any) error {

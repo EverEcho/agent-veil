@@ -21,6 +21,7 @@ import (
 	"github.com/agentveil/agentveil/internal/core"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/instance"
+	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/registry"
 	"github.com/agentveil/agentveil/internal/rulestore"
 	"github.com/agentveil/agentveil/internal/session"
@@ -646,6 +647,107 @@ func TestRulesCommandRejectsUnsafeFilesAndArguments(t *testing.T) {
 	var manifest rulestore.Manifest
 	if err := decodeStrictJSON([]byte(`{"schema_version":"v1","version":"one","version":"two"}`), &manifest); err == nil {
 		t.Fatal("ambiguous manifest JSON was accepted")
+	}
+}
+
+func TestModelsCommandStreamsAuthenticatedVersionedManagementAPI(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	type requestRecord struct{ method, path string }
+	var requests []requestRecord
+	artifactPayload := []byte("model-bytes")
+	manifest := modelstore.Manifest{SchemaVersion: "v1", Version: "2.0.0", Size: int64(len(artifactPayload)), SHA256: strings.Repeat("0", 64), Signature: "AA=="}
+	manifestPayload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		requests = append(requests, requestRecord{request.Method, request.URL.EscapedPath()})
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		switch {
+		case request.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"versions":[],"runtime":{"connected":false,"required":false,"active":false,"resource_state":"inactive"}}`)
+		case request.Method == http.MethodPost:
+			decodedManifest, decodeErr := base64.StdEncoding.DecodeString(request.Header.Get(core.ModelManifestHeader))
+			body, readErr := io.ReadAll(request.Body)
+			if request.Header.Get("Content-Type") != "application/octet-stream" || request.ContentLength != manifest.Size || decodeErr != nil || !bytes.Equal(decodedManifest, manifestPayload) || readErr != nil || !bytes.Equal(body, artifactPayload) {
+				t.Fatalf("model upload content_type=%q length=%d manifest=%s body=%q decode_err=%v read_err=%v", request.Header.Get("Content-Type"), request.ContentLength, decodedManifest, body, decodeErr, readErr)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(manifestPayload)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "manifest.json")
+	artifactPath := filepath.Join(directory, "model.bin")
+	if err := os.WriteFile(manifestPath, manifestPayload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, artifactPayload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	for _, args := range [][]string{{"list"}, {"install", manifestPath, artifactPath}, {"activate", "2.0.0"}, {"deactivate"}, {"remove", "2.0.0"}} {
+		if err := executeModelsCommand(context.Background(), &output, server.URL, token, args); err != nil {
+			t.Fatalf("args=%v err=%v", args, err)
+		}
+	}
+	if !strings.Contains(output.String(), `"resource_state": "inactive"`) {
+		t.Fatalf("list output=%s", output.String())
+	}
+	want := []requestRecord{{http.MethodGet, "/v1/models"}, {http.MethodPost, "/v1/models"}, {http.MethodPut, "/v1/models/active"}, {http.MethodDelete, "/v1/models/active"}, {http.MethodDelete, "/v1/models/2.0.0"}}
+	if !slices.Equal(requests, want) {
+		t.Fatalf("requests=%+v want=%+v", requests, want)
+	}
+}
+
+func TestModelsCommandRejectsUnsafeInputs(t *testing.T) {
+	if err := executeModelsCommand(context.Background(), io.Discard, "https://example.com", "token", []string{"list"}); err == nil {
+		t.Fatal("non-loopback model management endpoint was accepted")
+	}
+	if err := managementJSONWithTimeout(nil, http.MethodGet, "http://127.0.0.1:1/v1/models", "token", nil, nil, time.Second); err == nil {
+		t.Fatal("nil management context was accepted")
+	}
+	if err := managementJSONWithTimeout(context.Background(), http.MethodGet, "http://127.0.0.1:1/v1/models", "token", nil, nil, 0); err == nil {
+		t.Fatal("zero management timeout was accepted")
+	}
+	redirectFollowed := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectFollowed = true }))
+	defer destination.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		http.Redirect(w, &http.Request{}, destination.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	if err := executeModelsCommand(context.Background(), io.Discard, redirect.URL, "token", []string{"list"}); err == nil {
+		t.Fatal("redirecting model management response was accepted")
+	}
+	if redirectFollowed {
+		t.Fatal("management client followed a redirect")
+	}
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "manifest.json")
+	artifactPath := filepath.Join(directory, "model.bin")
+	manifest := modelstore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: 2, SHA256: strings.Repeat("0", 64), Signature: "AA=="}
+	manifestPayload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, manifestPayload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("oversized"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeModelsCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", []string{"install", manifestPath, artifactPath}); err == nil || !strings.Contains(err.Error(), "size does not match") {
+		t.Fatalf("mismatched model size error=%v", err)
 	}
 }
 
