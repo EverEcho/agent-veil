@@ -187,6 +187,7 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
 go run ./cmd/veil status
+go run ./cmd/veil compatibility
 go run ./cmd/veil diagnostics
 go run ./cmd/veil discover
 go run ./cmd/veil inspect codex

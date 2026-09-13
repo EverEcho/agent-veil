@@ -521,6 +521,29 @@ func TestManagementJSONRequestsIdentityEncoding(t *testing.T) {
 	}
 }
 
+func TestWriteCompatibilityReportUsesAuthenticatedVersionedCoreAPI(t *testing.T) {
+	token := "01234567890123456789012345678901"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/compatibility" || request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion {
+			t.Fatalf("request path=%q headers=%v", request.URL.Path, request.Header)
+		}
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"agent":"codex","version":"0.153.4","platform":"linux","mode":"launch","surface":"model_primary","protocol":"openai_responses","auth":"passthrough","coverage":"protected","verification":"launch_smoke","notes":"verified"}]`)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := writeCompatibilityReport(&output, server.URL, token); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"surface": "model_primary"`) || !strings.Contains(output.String(), `"verification": "launch_smoke"`) {
+		t.Fatalf("compatibility output=%s", output.String())
+	}
+	if err := writeCompatibilityReport(nil, server.URL, token); err == nil {
+		t.Fatal("nil compatibility writer was accepted")
+	}
+}
+
 func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(core.APIVersionHeader, core.APIVersion)

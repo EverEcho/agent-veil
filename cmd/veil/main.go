@@ -65,13 +65,21 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <diagnostics|discover|inspect|nested|run|serve|status>")
+		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|nested|run|serve|status>")
 	}
 	switch args[0] {
 	case "serve":
 		return serve()
 	case "status":
+		if len(args) != 1 {
+			return errors.New("usage: veil status")
+		}
 		return status()
+	case "compatibility":
+		if len(args) != 1 {
+			return errors.New("usage: veil compatibility")
+		}
+		return compatibilityReport()
 	case "diagnostics":
 		if len(args) != 1 {
 			return errors.New("usage: veil diagnostics")
@@ -986,6 +994,32 @@ func status() error {
 	}
 	fmt.Printf("AgentVeil Core: %s (API %s)\n", health["status"], health["api_version"])
 	return nil
+}
+
+func compatibilityReport() error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	return writeCompatibilityReport(os.Stdout, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"))
+}
+
+func writeCompatibilityReport(writer io.Writer, endpoint, token string) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "write compatibility report", "writer is required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	var records []compatibility.Record
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/compatibility", token, nil, &records); err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(records)
 }
 
 func diagnostics() error {
