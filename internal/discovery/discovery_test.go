@@ -122,8 +122,8 @@ func TestHermesDiscoveryUsesVersionedConfigSurfaceEnumeration(t *testing.T) {
 	if len(manifest.Surfaces) != 4 {
 		t.Fatalf("surfaces=%+v", manifest.Surfaces)
 	}
-	if manifest.Surfaces[0].ID != "primary" || manifest.Surfaces[0].Rewritable {
-		t.Fatalf("primary coverage overstated: %+v", manifest.Surfaces[0])
+	if manifest.Surfaces[0].ID != "primary" || !manifest.Surfaces[0].Rewritable {
+		t.Fatalf("verified primary route was not marked rewritable: %+v", manifest.Surfaces[0])
 	}
 	for _, surface := range manifest.Surfaces {
 		if strings.Contains(surface.Name, "secret") || strings.Contains(surface.ConfigSource, "secret") {

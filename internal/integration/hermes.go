@@ -95,8 +95,9 @@ type hermesConfig struct {
 }
 
 // ParseHermesConfig enumerates every configured model and MCP route without
-// retaining credential values. The v0.20.6 integration is discovery-only, so
-// network slots are deliberately not marked rewritable.
+// retaining credential values. Resolved routes using protocols supported by
+// the Hermes launch adapter are marked rewritable; Inspector suppresses that
+// claim for versions outside the verified compatibility matrix.
 func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 	if len(content) == 0 || len(content) > maxHermesConfigBytes {
 		return nil, nil, domain.NewError(domain.ErrInvalidContract, "parse hermes config", "configuration is empty or too large")
@@ -179,7 +180,7 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 		if strings.Contains(baseURL, "${") {
 			baseURL, protocolType = "", domain.ProtocolUnknown
 		}
-		slots = append(slots, Slot{ID: "mcp-" + strings.ReplaceAll(name, "_", "-"), Name: "Remote MCP " + name, Type: domain.SurfaceMCPHTTP, Protocol: protocolType, BaseURL: baseURL, Auth: hermesAuth(), Rewritable: false})
+		slots = append(slots, Slot{ID: "mcp-" + strings.ReplaceAll(name, "_", "-"), Name: "Remote MCP " + name, Type: domain.SurfaceMCPHTTP, Protocol: protocolType, BaseURL: baseURL, Auth: hermesAuth(), Rewritable: baseURL != "" && hermesTransport(protocolType) != ""})
 	}
 	return slots, localMCP, nil
 }
@@ -314,7 +315,7 @@ func hermesSlot(id, name string, surfaceType domain.SurfaceType, route resolvedH
 	if len(metadata) == 0 {
 		metadata = nil
 	}
-	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Metadata: metadata, Rewritable: false, Required: required}
+	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Metadata: metadata, Rewritable: route.baseURL != "" && hermesTransport(protocolType) != "", Required: required}
 }
 
 func hermesAuth() domain.AuthStrategy {

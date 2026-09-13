@@ -63,6 +63,48 @@ func TestProtectedRunInteractionFlagIsExplicitAndDoesNotConsumeChildFlag(t *test
 	}
 }
 
+func TestHermesManifestConfigPathRequiresOneAbsoluteConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	manifest := domain.AgentManifest{Surfaces: []domain.EgressSurface{{ID: "primary", ConfigSource: path}, {ID: "mcp-local", ConfigSource: path}}}
+	if actual, err := hermesManifestConfigPath(manifest); err != nil || actual != path {
+		t.Fatalf("path=%q err=%v", actual, err)
+	}
+	manifest.Surfaces[1].ConfigSource = filepath.Join(t.TempDir(), "config.yaml")
+	if _, err := hermesManifestConfigPath(manifest); err == nil {
+		t.Fatal("ambiguous Hermes configuration sources were accepted")
+	}
+	manifest.Surfaces = []domain.EgressSurface{{ID: "primary", ConfigSource: "relative/config.yaml"}}
+	if _, err := hermesManifestConfigPath(manifest); err == nil {
+		t.Fatal("relative Hermes configuration source was accepted")
+	}
+}
+
+func TestReadProtectedHermesConfigRejectsLinksAndBoundsContent(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	content := []byte("model: safe\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := readProtectedHermesConfig(path); err != nil || string(actual) != string(content) {
+		t.Fatalf("content=%q err=%v", actual, err)
+	}
+	link := filepath.Join(directory, "linked.yaml")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readProtectedHermesConfig(link); err == nil {
+		t.Fatal("symlinked Hermes configuration was accepted")
+	}
+	empty := filepath.Join(directory, "empty.yaml")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readProtectedHermesConfig(empty); err == nil {
+		t.Fatal("empty Hermes configuration was accepted")
+	}
+}
+
 func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing.T) {
 	environment := overlayEnvironment([]string{"PATH=/bin", "ANTHROPIC_API_KEY=real-provider-key", "anthropic_api_key=case-variant"}, map[string]string{"ANTHROPIC_API_KEY": "veil-v1:session:route", "VEIL_SESSION_ID": "session"})
 	joined := strings.Join(environment, "\n")

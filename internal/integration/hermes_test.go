@@ -69,8 +69,8 @@ func TestHermesConfigEnumeratesEveryIndependentSurface(t *testing.T) {
 			t.Fatalf("duplicate slot id %q", slot.ID)
 		}
 		byID[slot.ID] = slot
-		if slot.Rewritable {
-			t.Fatalf("discovery-only slot claimed rewritable coverage: %+v", slot)
+		if !slot.Rewritable {
+			t.Fatalf("resolved supported slot omitted rewrite coverage: %+v", slot)
 		}
 	}
 	if byID["primary"].Protocol != domain.ProtocolOpenAIChat || byID["primary"].BaseURL != "https://primary.example/gateway/v1" || !byID["primary"].Required {

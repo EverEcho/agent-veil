@@ -42,6 +42,7 @@ const protectedLaunchLease = 30 * time.Second
 const protectedLaunchHeartbeat = 10 * time.Second
 const maxManagementResponseBytes = 4 << 20
 const maxManagementErrorBytes = 4 << 10
+const maxHermesLaunchConfigBytes = 1 << 20
 
 type protectedEgressBinding struct {
 	SessionID  string
@@ -103,7 +104,7 @@ func run(args []string) error {
 
 func parseProtectedRun(args []string) (string, []string, bool, error) {
 	if len(args) == 0 {
-		return "", nil, false, errors.New("usage: veil run <codex|claude> [--interactive] [-- agent arguments]")
+		return "", nil, false, errors.New("usage: veil run <codex|claude|hermes> [--interactive] [-- agent arguments]")
 	}
 	name := args[0]
 	childArgs := append([]string(nil), args[1:]...)
@@ -119,7 +120,7 @@ func parseProtectedRun(args []string) (string, []string, bool, error) {
 }
 
 func runProtected(ctx context.Context, name string, childArgs []string, interactive bool) (resultErr error) {
-	if name != "codex" && name != "claude" {
+	if name != "codex" && name != "claude" && name != "hermes" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
 	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
@@ -153,11 +154,14 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if err != nil {
 		return err
 	}
-	if len(protectedRoutes) != 1 {
+	if name != "hermes" && len(protectedRoutes) != 1 {
 		return errors.New("agent-specific multi-route launch injection is not verified")
 	}
 	protectedRoute := protectedRoutes[0]
-	routeIDs := []string{protectedRoute.ID}
+	routeIDs := make([]string, len(protectedRoutes))
+	for index, route := range protectedRoutes {
+		routeIDs[index] = route.ID
+	}
 	var created session.Created
 	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": routeIDs, "ttl_seconds": 86400, "interactive": interactive}, &created); err != nil {
 		return err
@@ -170,7 +174,28 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return err
 	}
 	routeToken := credentials[protectedRoute.ID]
-	launch, err := integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
+	var launch integration.LaunchPlan
+	if name == "hermes" {
+		configPath, pathErr := hermesManifestConfigPath(manifest)
+		if pathErr != nil {
+			return pathErr
+		}
+		configContent, readErr := readProtectedHermesConfig(configPath)
+		if readErr != nil {
+			return readErr
+		}
+		bindings := make(map[string]integration.HermesRouteBinding, len(protectedRoutes))
+		for _, route := range protectedRoutes {
+			bindings[route.SurfaceID] = integration.HermesRouteBinding{RouteID: route.ID, Token: credentials[route.ID]}
+		}
+		rewritten, rewriteErr := integration.RewriteHermesConfig(configContent, endpoint, created.Session.ID, bindings)
+		if rewriteErr != nil {
+			return rewriteErr
+		}
+		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), rewritten)
+	} else {
+		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
+	}
 	if err != nil {
 		return err
 	}
@@ -182,7 +207,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	localBypass := localNoProxy(os.Getenv("NO_PROXY"), os.Getenv("no_proxy"))
 	launch.Environment["NO_PROXY"] = localBypass
 	launch.Environment["no_proxy"] = localBypass
-	args := childArgs
+	args := launch.Args
 	if name == "codex" {
 		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
 	} else {
@@ -220,6 +245,49 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return egressErr
 	}
 	return runErr
+}
+
+func hermesManifestConfigPath(manifest domain.AgentManifest) (string, error) {
+	var path string
+	for _, surface := range manifest.Surfaces {
+		if surface.ConfigSource == "" || !filepath.IsAbs(surface.ConfigSource) || strings.ContainsRune(surface.ConfigSource, 0) {
+			return "", errors.New("Hermes manifest contains an invalid configuration source")
+		}
+		if path == "" {
+			path = surface.ConfigSource
+		} else if path != surface.ConfigSource {
+			return "", errors.New("Hermes manifest contains ambiguous configuration sources")
+		}
+	}
+	if path == "" || filepath.Base(path) != "config.yaml" {
+		return "", errors.New("Hermes manifest does not identify config.yaml")
+	}
+	return path, nil
+}
+
+func readProtectedHermesConfig(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maxHermesLaunchConfigBytes {
+		return nil, errors.New("Hermes configuration type or size is unsafe")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("Hermes configuration could not be opened")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Size() != info.Size() {
+		return nil, errors.New("Hermes configuration changed before protected launch")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxHermesLaunchConfigBytes+1))
+	if err != nil || len(content) == 0 || len(content) > maxHermesLaunchConfigBytes {
+		return nil, errors.New("Hermes configuration could not be read safely")
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(opened, after) || after.Size() != int64(len(content)) || !after.ModTime().Equal(opened.ModTime()) {
+		return nil, errors.New("Hermes configuration changed while protected launch was prepared")
+	}
+	return content, nil
 }
 
 func maintainIntegrationLease(ctx context.Context, cancel context.CancelFunc, endpoint, adminToken, agentID string, generation uint64, interval, leaseTTL time.Duration, result chan<- error) {
