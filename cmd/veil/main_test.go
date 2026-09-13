@@ -812,6 +812,57 @@ func TestPolicyCommandRejectsInvalidDocumentsBeforeUpload(t *testing.T) {
 	}
 }
 
+func TestApprovalsCommandListsMetadataAndResolvesOnce(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	const approvalID = "0123456789abcdef0123456789abcdef"
+	approval := policy.Approval{ID: approvalID, Finding: domain.Finding{RuleID: "pii.email", Category: "pii.email", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: "/input", Start: 4, End: 8}, Confidence: 0.99, Detector: "regex", SuggestedAction: domain.ActionRedact}}
+	var resolved domain.Action
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		if request.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode([]policy.Approval{approval}); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.EscapedPath() != "/v1/approvals/"+approvalID {
+			t.Fatalf("request=%s %s", request.Method, request.URL.EscapedPath())
+		}
+		var body map[string]domain.Action
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		resolved = body["action"]
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := executeApprovalsCommand(context.Background(), &output, server.URL, token, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeApprovalsCommand(context.Background(), io.Discard, server.URL, token, []string{"resolve", approvalID, "redact"}); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != domain.ActionRedact || !strings.Contains(output.String(), `"category": "pii.email"`) || strings.Contains(output.String(), "original") {
+		t.Fatalf("resolved=%q output=%s", resolved, output.String())
+	}
+}
+
+func TestApprovalsCommandRejectsUntrustedIdentifiersAndActions(t *testing.T) {
+	for _, args := range [][]string{{"resolve", "../policy", "allow"}, {"resolve", "0123456789abcdef0123456789abcdef", "ask"}, {"resolve", "0123456789ABCDEF0123456789ABCDEF", "block"}} {
+		if err := executeApprovalsCommand(context.Background(), io.Discard, "http://127.0.0.1:1", "token", args); err == nil || !strings.Contains(err.Error(), "usage:") {
+			t.Fatalf("args=%v error=%v", args, err)
+		}
+	}
+	if validApprovalID("0123456789abcdef0123456789abcdeg") {
+		t.Fatal("non-hex approval identifier was accepted")
+	}
+}
+
 func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(core.APIVersionHeader, core.APIVersion)

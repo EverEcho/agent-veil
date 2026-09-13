@@ -71,9 +71,11 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
+		return errors.New("usage: veil <approvals|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
 	}
 	switch args[0] {
+	case "approvals":
+		return approvalsCommand(args[1:], os.Stdout)
 	case "serve":
 		return serve()
 	case "status":
@@ -1134,6 +1136,72 @@ func policyCommand(args []string, writer io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return executePolicyCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func approvalsCommand(args []string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return executeApprovalsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func executeApprovalsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "run approvals command", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	usage := errors.New("usage: veil approvals <list|resolve ID allow|redact|block>")
+	if len(args) == 0 {
+		return usage
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return usage
+		}
+		var approvals []policy.Approval
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/approvals", token, nil, &approvals); err != nil {
+			return err
+		}
+		for _, approval := range approvals {
+			if !validApprovalID(approval.ID) || approval.Finding.Validate(approval.Finding.Location.End) != nil {
+				return errors.New("Core returned an invalid approval")
+			}
+		}
+		encoder := json.NewEncoder(writer)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(approvals)
+	case "resolve":
+		if len(args) != 3 || !validApprovalID(args[1]) {
+			return usage
+		}
+		action := domain.Action(args[2])
+		if action != domain.ActionAllow && action != domain.ActionRedact && action != domain.ActionBlock {
+			return usage
+		}
+		return managementJSON(ctx, http.MethodPost, endpoint+"/v1/approvals/"+args[1], token, map[string]domain.Action{"action": action}, nil)
+	default:
+		return usage
+	}
+}
+
+func validApprovalID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			if character < 'a' || character > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func executePolicyCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {

@@ -216,6 +216,8 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
 go run ./cmd/veil status
+go run ./cmd/veil approvals list
+go run ./cmd/veil approvals resolve 0123456789abcdef0123456789abcdef redact
 go run ./cmd/veil compatibility
 go run ./cmd/veil compatibility --offline
 go run ./cmd/veil diagnostics
@@ -258,6 +260,9 @@ manifest, and leaves signature and digest verification to Core.
 Policy commands retrieve or atomically apply the same document used by the
 Dashboard. Apply rejects symlinks, oversized or ambiguous JSON, unknown fields,
 invalid actions, malformed scopes, and duplicate scopes before contacting Core.
+Interactive launches can be approved from either the Dashboard or
+`veil approvals`: the CLI lists metadata-only Findings and accepts one-time
+`allow`, `redact`, or `block` decisions. Non-interactive `ASK` remains fail-closed.
 
 `veil nested` is intended for a process already launched inside an AgentVeil
 Route context. It uses only the inherited `VEIL_CORE_ENDPOINT`,
