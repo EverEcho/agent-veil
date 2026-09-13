@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -28,6 +29,7 @@ const maxAgentVersionBytes = 64 << 10
 const agentVersionTimeout = 3 * time.Second
 const agentVersionWaitDelay = 250 * time.Millisecond
 const maxConcurrentVersionProbes = 4
+const maxAgentConfigPathBytes = 4096
 
 var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
 
@@ -214,7 +216,11 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "agent version format is unknown")
 	}
 	config := integration.Config{AgentID: name + "-local", Kind: name, Version: version, Executable: executable, Mode: domain.ModeLaunch}
-	home, _ := d.System.HomeDir()
+	homeValue, homeErr := d.System.HomeDir()
+	home, homeOK := safeAgentConfigPath(homeValue)
+	if homeErr != nil || !homeOK {
+		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "user configuration directory is unavailable or unsafe")
+	}
 	switch name {
 	case "codex":
 		config.ConfigSource = filepath.Join(home, ".codex", "config.toml")
@@ -254,9 +260,10 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolAnthropic, BaseURL: baseURL, Auth: auth, Network: environmentProxyRoute(d.System), Rewritable: rewritable, Required: true}}
 	case "hermes":
 		hermesHome := filepath.Join(home, ".hermes")
-		if configuredHome, ok := d.System.LookupEnv("HERMES_HOME"); ok && strings.TrimSpace(configuredHome) != "" {
-			hermesHome = strings.TrimSpace(configuredHome)
-			if !filepath.IsAbs(hermesHome) || strings.ContainsRune(hermesHome, 0) {
+		if configuredHome, ok := d.System.LookupEnv("HERMES_HOME"); ok && configuredHome != "" {
+			var valid bool
+			hermesHome, valid = safeAgentConfigPath(configuredHome)
+			if !valid {
 				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover hermes", "HERMES_HOME must be an absolute safe path")
 			}
 		}
@@ -284,8 +291,10 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		}
 	case "opencode":
 		config.ConfigSource = filepath.Join(home, ".config", "opencode", "opencode.json")
-		if value, ok := d.System.LookupEnv("OPENCODE_CONFIG"); ok && strings.TrimSpace(value) != "" {
-			config.ConfigSource = strings.TrimSpace(value)
+		if value, ok := d.System.LookupEnv("OPENCODE_CONFIG"); ok && value != "" {
+			if config.ConfigSource, ok = safeAgentConfigPath(value); !ok {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover opencode", "OPENCODE_CONFIG must be an absolute safe path")
+			}
 		}
 		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
 			config.Observed, config.LocalMCP, err = integration.ParseOpenCodeConfig(content)
@@ -301,8 +310,12 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		config.Observed = append(config.Observed, openCodeUnknownSlot("workspace-config-overrides", "project and managed configuration precedence is not resolved"))
 	case "zed":
 		config.ConfigSource = filepath.Join(home, ".config", "zed", "settings.json")
-		if value, ok := d.System.LookupEnv("XDG_CONFIG_HOME"); ok && strings.TrimSpace(value) != "" {
-			config.ConfigSource = filepath.Join(strings.TrimSpace(value), "zed", "settings.json")
+		if value, ok := d.System.LookupEnv("XDG_CONFIG_HOME"); ok && value != "" {
+			root, valid := safeAgentConfigPath(value)
+			if !valid {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover zed", "XDG_CONFIG_HOME must be an absolute safe path")
+			}
+			config.ConfigSource = filepath.Join(root, "zed", "settings.json")
 		}
 		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
 			config.Observed, config.LocalMCP, err = integration.ParseZedConfig(content)
@@ -316,16 +329,22 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		config.Observed = append(config.Observed, zedUnknownSlot("workspace-config-overrides", "project .zed/settings.json configuration is not resolved"))
 	case "cline":
 		dataDir := filepath.Join(home, ".cline", "data")
-		if value, ok := d.System.LookupEnv("CLINE_DATA_DIR"); ok && strings.TrimSpace(value) != "" {
-			dataDir = strings.TrimSpace(value)
+		if value, ok := d.System.LookupEnv("CLINE_DATA_DIR"); ok && value != "" {
+			if dataDir, ok = safeAgentConfigPath(value); !ok {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover cline", "CLINE_DATA_DIR must be an absolute safe path")
+			}
 		}
 		providerPath := filepath.Join(dataDir, "settings", "providers.json")
-		if value, ok := d.System.LookupEnv("CLINE_PROVIDER_SETTINGS_PATH"); ok && strings.TrimSpace(value) != "" {
-			providerPath = strings.TrimSpace(value)
+		if value, ok := d.System.LookupEnv("CLINE_PROVIDER_SETTINGS_PATH"); ok && value != "" {
+			if providerPath, ok = safeAgentConfigPath(value); !ok {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover cline", "CLINE_PROVIDER_SETTINGS_PATH must be an absolute safe path")
+			}
 		}
 		mcpPath := filepath.Join(dataDir, "settings", "cline_mcp_settings.json")
-		if value, ok := d.System.LookupEnv("CLINE_MCP_SETTINGS_PATH"); ok && strings.TrimSpace(value) != "" {
-			mcpPath = strings.TrimSpace(value)
+		if value, ok := d.System.LookupEnv("CLINE_MCP_SETTINGS_PATH"); ok && value != "" {
+			if mcpPath, ok = safeAgentConfigPath(value); !ok {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover cline", "CLINE_MCP_SETTINGS_PATH must be an absolute safe path")
+			}
 		}
 		config.ConfigSource = dataDir
 		if content, readErr := d.System.ReadFile(providerPath); readErr == nil {
@@ -394,4 +413,16 @@ func environmentProxyRoute(system System) *domain.NetworkRoute {
 
 func containsTOMLKey(content []byte, key string) bool {
 	return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=`).Match(content)
+}
+
+func safeAgentConfigPath(value string) (string, bool) {
+	if value == "" || len(value) > maxAgentConfigPathBytes || strings.TrimSpace(value) != value || !filepath.IsAbs(value) {
+		return "", false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return "", false
+		}
+	}
+	return filepath.Clean(value), true
 }

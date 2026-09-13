@@ -19,6 +19,8 @@ type fakeSystem struct {
 	environment     map[string]string
 	files           map[string]string
 	readErrors      map[string]error
+	home            string
+	homeErr         error
 }
 
 type inventorySystem struct {
@@ -85,7 +87,12 @@ func (f fakeSystem) LookupEnv(key string) (string, bool) {
 	value, ok := f.environment[key]
 	return value, ok
 }
-func (f fakeSystem) HomeDir() (string, error) { return "/home/test", nil }
+func (f fakeSystem) HomeDir() (string, error) {
+	if f.home != "" || f.homeErr != nil {
+		return f.home, f.homeErr
+	}
+	return "/home/test", nil
+}
 
 func TestCodexDiscoveryAndCustomProviderFailClosed(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4"}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
@@ -99,6 +106,41 @@ func TestCodexDiscoveryAndCustomProviderFailClosed(t *testing.T) {
 	d.System = fakeSystem{version: "codex-cli 0.153.4", config: "model_provider = \"custom\""}
 	if _, err := d.Inspect(context.Background(), "codex"); err == nil {
 		t.Fatal("custom provider was guessed")
+	}
+}
+
+func TestInspectionFailsClosedWithoutSafeHomeDirectory(t *testing.T) {
+	for _, system := range []fakeSystem{
+		{version: "codex-cli 0.153.4", homeErr: errors.New("home unavailable")},
+		{version: "codex-cli 0.153.4", home: "relative/home"},
+		{version: "codex-cli 0.153.4", home: "/home/test\nother"},
+	} {
+		d := Discoverer{System: system, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+		if _, err := d.Inspect(context.Background(), "codex"); err == nil {
+			t.Fatalf("unsafe home directory was accepted: home=%q error=%v", system.home, system.homeErr)
+		}
+	}
+}
+
+func TestInspectionRejectsUnsafeConfigurationPathOverrides(t *testing.T) {
+	for _, test := range []struct {
+		agent string
+		key   string
+	}{
+		{agent: "opencode", key: "OPENCODE_CONFIG"},
+		{agent: "zed", key: "XDG_CONFIG_HOME"},
+		{agent: "cline", key: "CLINE_DATA_DIR"},
+		{agent: "cline", key: "CLINE_PROVIDER_SETTINGS_PATH"},
+		{agent: "cline", key: "CLINE_MCP_SETTINGS_PATH"},
+	} {
+		t.Run(test.agent+"/"+test.key, func(t *testing.T) {
+			for _, value := range []string{"relative/config", " /absolute/config", "/absolute/config\nother"} {
+				d := Discoverer{System: fakeSystem{version: test.agent + " 1.2.3", environment: map[string]string{test.key: value}}}
+				if _, err := d.Inspect(context.Background(), test.agent); err == nil {
+					t.Fatalf("unsafe %s=%q was accepted", test.key, value)
+				}
+			}
+		})
 	}
 }
 

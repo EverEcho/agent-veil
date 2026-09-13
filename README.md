@@ -130,7 +130,10 @@ conservatively than discovered traffic.
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage; the compatibility inventory
   records verified mode, platform, Surface type, protocol, authentication, and
-  coverage independently and rejects Protected records with unknown dimensions;
+  coverage independently and rejects Protected records with unknown dimensions.
+  Inspection also fails closed when the user configuration directory is
+  unavailable or when supported environment overrides contain relative,
+  whitespace-ambiguous, oversized, or control-character paths;
 - Hermes 0.20.6 enumeration and protected launch for same-runtime
   `openai-codex` primary, fallback, auxiliary, delegation, and remote MCP
   Streamable HTTP surfaces without
