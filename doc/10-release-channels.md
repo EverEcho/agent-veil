@@ -41,7 +41,20 @@ and macOS Apple Silicon, plus compatibility metadata, channel metadata, and
 SHA-256 checksums. Each Tauri desktop bundle contains its matching Core
 executable as a private application resource.
 
-The development and beta macOS apps are ad-hoc signed. A main release still
-requires Apple Developer ID signing, notarization, and platform acceptance
-evidence. Windows arm64 desktop packaging remains pending; the Windows arm64
-Core is included in the cross-platform Core bundle.
+Development and beta macOS apps fall back to ad-hoc signing when Apple secrets
+are absent. To produce a Gatekeeper-trusted and notarized download, configure:
+
+- `APPLE_CERTIFICATE`: base64-encoded Developer ID Application `.p12` file;
+- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12`;
+- `APPLE_ID`: Apple account email;
+- `APPLE_PASSWORD`: Apple app-specific password;
+- `APPLE_TEAM_ID`: Apple Developer team ID;
+- optionally `APPLE_SIGNING_IDENTITY` when the `.p12` contains multiple signing
+  identities.
+
+When the certificate is present, the workflow rejects incomplete notarization
+credentials, imports the certificate into a temporary keychain, signs and
+notarizes through Tauri, verifies the stapled ticket, and removes the keychain.
+Main releases fail closed if the certificate is absent. Windows arm64 desktop
+packaging remains pending; the Windows arm64 Core is included in the
+cross-platform Core bundle.

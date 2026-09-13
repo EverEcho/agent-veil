@@ -20,6 +20,9 @@
       "icons/icon.ico"
     ],
     "category": "Utility",
-    "shortDescription": "Local privacy control plane for AI agents"
+    "shortDescription": "Local privacy control plane for AI agents",
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
