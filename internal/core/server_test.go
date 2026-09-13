@@ -191,6 +191,11 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
 	}
+	for _, required := range []string{"revoke-session", "Revoke session", "撤销会话", "confirm.session", "revokeSession", "method:'DELETE'", "Session revocation failed"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard session lifecycle control is missing %q", required)
+		}
+	}
 	for _, required := range []string{"body:source", `body='{"manifest":'+manifestSource`, "new TextEncoder().encode(manifestSource)", "manifestBytes.length>6144"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard does not preserve strict JSON input: missing %q", required)

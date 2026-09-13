@@ -43,7 +43,9 @@ conservatively than discovered traffic.
   policy editing, local rule tests with rule ID/detector/confidence explanations
   and per-Finding layered policy previews, and
   audit. `ASK` cards offer one-time allow/redact decisions, an original-free
-  redaction preview, and an explicit cancel-and-block action. Protection risks expose their source
+  redaction preview, and an explicit cancel-and-block action. The nested call
+  tree also offers a localized, user-confirmed Session revocation control.
+  Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
   metadata also drives local-day summaries and a seven-day risk trend, with
   per-response nonce CSP and no inline event handlers. The control surface has
