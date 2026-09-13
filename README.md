@@ -112,7 +112,8 @@ export VEIL_MODEL_STORE_PATH='/absolute/path/to/agentveil/models'
 The authenticated `/v1/models` management API can install, list, activate,
 deactivate, and remove verified model artifacts. Activation currently selects
 the verified artifact for a future runtime; it does not claim semantic inference
-is active until a local model runtime is connected.
+is active until a local model runtime is connected. The same local workflow is
+available in the Dashboard without loading the full model into JavaScript memory.
 
 Other commands discover the active random loopback endpoint from a 0600 local
 state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
