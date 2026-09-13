@@ -11,7 +11,8 @@ verify:
 # This target proves only the automated scope; it intentionally does not stand
 # in for real-application or target-platform validation.
 acceptance-evidence:
-	go test ./internal/protocol -run '^TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip$$' -count=1
+	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSECannotBorrowImplementedMCPAdapters)$$' -count=1
+	go test ./internal/planner -run '^TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability$$' -count=1
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
 	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath)$$' -count=1
 	go test ./internal/registry -run '^(TestIntegrationLeaseExpiresAndRejectsStaleGeneration|TestRegistryQueuesRoutesForEveryActiveGenerationInvalidation|TestRegistryRevocationQueueFailsClosedWhenBoundExceeded)$$' -count=1

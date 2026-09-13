@@ -102,7 +102,7 @@ func TestHermesLegacyMCPSSEIsVisibleButNotClaimedProtected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(slots) != 2 || slots[1].ID != "mcp-legacy" || slots[1].Protocol != domain.ProtocolUnknown || slots[1].BaseURL != "https://mcp.example/sse" || slots[1].Rewritable {
+	if len(slots) != 2 || slots[1].ID != "mcp-legacy" || slots[1].Protocol != domain.ProtocolMCPLegacySSE || slots[1].BaseURL != "https://mcp.example/sse" || slots[1].Rewritable {
 		t.Fatalf("legacy SSE coverage was overstated or hidden: %+v", slots)
 	}
 }

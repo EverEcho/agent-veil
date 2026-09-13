@@ -19,6 +19,15 @@ func TestManifestExpressesAllRequiredSurfaceTypes(t *testing.T) {
 	}
 }
 
+func TestDomainRecognizesEveryDocumentedProtocolState(t *testing.T) {
+	protocols := []Protocol{ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic, ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable, ProtocolMCPLegacySSE, ProtocolLocalStdio, ProtocolUnknown}
+	for _, protocolType := range protocols {
+		if !protocolType.Valid() {
+			t.Fatalf("documented protocol %q is invalid", protocolType)
+		}
+	}
+}
+
 func TestManifestRejectsDuplicateSurfaceID(t *testing.T) {
 	surface := EgressSurface{ID: "primary", Name: "Primary", Type: SurfaceModelPrimary,
 		Protocol: ProtocolOpenAIResponses, Upstream: &Upstream{Scheme: "https", Host: "api.openai.com", Port: 443},

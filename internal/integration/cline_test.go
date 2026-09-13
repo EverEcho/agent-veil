@@ -58,7 +58,7 @@ func TestParseClineMCPHandlesStreamableLegacyAndLocal(t *testing.T) {
 	for _, slot := range slots {
 		protocols[slot.Protocol]++
 	}
-	if protocols[domain.ProtocolMCPStreamable] != 1 || protocols[domain.ProtocolMCPHTTP] != 1 {
+	if protocols[domain.ProtocolMCPStreamable] != 1 || protocols[domain.ProtocolMCPLegacySSE] != 1 {
 		t.Fatalf("protocols=%+v", protocols)
 	}
 	encoded, _ := json.Marshal(slots)

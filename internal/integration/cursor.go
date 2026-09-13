@@ -91,7 +91,7 @@ func cursorMCPProtocol(value string) domain.Protocol {
 	case "streamablehttp", "streamable-http", "http":
 		return domain.ProtocolMCPStreamable
 	case "sse":
-		return domain.ProtocolMCPHTTP
+		return domain.ProtocolMCPLegacySSE
 	default:
 		return domain.ProtocolUnknown
 	}

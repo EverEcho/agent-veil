@@ -31,7 +31,10 @@ func TestParseCursorMCPEnumeratesStaticRoutesWithoutCredentials(t *testing.T) {
 			t.Fatalf("Cursor discovery slot overstated: %+v", slot)
 		}
 	}
-	if protocols[domain.ProtocolMCPStreamable] != 1 || protocols[domain.ProtocolMCPHTTP] != 1 || protocols[domain.ProtocolUnknown] != 1 {
+	if slots[0].Protocol != domain.ProtocolMCPLegacySSE || slots[1].Protocol != domain.ProtocolMCPStreamable {
+		t.Fatalf("remote MCP transports=%+v", slots)
+	}
+	if protocols[domain.ProtocolMCPStreamable] != 1 || protocols[domain.ProtocolMCPLegacySSE] != 1 || protocols[domain.ProtocolUnknown] != 1 {
 		t.Fatalf("protocols=%+v", protocols)
 	}
 	encoded, _ := json.Marshal(slots)

@@ -38,6 +38,17 @@ func TestBuildNeverMarksIncompleteCapabilityProtected(t *testing.T) {
 	}
 }
 
+func TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability(t *testing.T) {
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "agent", Kind: "custom"}, Surfaces: []domain.EgressSurface{{ID: "legacy", Name: "Legacy MCP", Type: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPLegacySSE, Upstream: &domain.Upstream{Scheme: "https", Host: "mcp.example", Port: 443, Path: "/sse"}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "fixture", Required: true}}}
+	plan, err := Build(manifest, Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Coverage) != 1 || plan.Coverage[0].Status != domain.CoverageUnprotected || plan.Summary.Unprotected != 1 || len(plan.Routes) != 0 || len(plan.Risks) != 1 || plan.Risks[0].Code != domain.RiskUnsupportedCapability {
+		t.Fatalf("legacy SSE protection was overstated: %+v", plan)
+	}
+}
+
 func TestBuildBlocksContentModifierAfterDLPWithoutDroppingRisk(t *testing.T) {
 	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "a", Kind: "custom"},
 		Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary,

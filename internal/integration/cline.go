@@ -128,7 +128,7 @@ func ParseClineMCP(content []byte) ([]Slot, []string, error) {
 		case "streamablehttp":
 			protocolType = domain.ProtocolMCPStreamable
 		case "", "sse":
-			protocolType = domain.ProtocolMCPHTTP
+			protocolType = domain.ProtocolMCPLegacySSE
 		default:
 			return nil, nil, clineConfigError("MCP transport type is unsupported")
 		}

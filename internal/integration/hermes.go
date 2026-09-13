@@ -178,7 +178,7 @@ func ParseHermesConfig(content []byte) ([]Slot, []string, error) {
 			// dynamic POST message endpoint. The Core currently implements the
 			// single-endpoint Streamable HTTP contract only, so legacy SSE must
 			// remain visible but unprotected.
-			protocolType = domain.ProtocolUnknown
+			protocolType = domain.ProtocolMCPLegacySSE
 		}
 		baseURL := strings.TrimSpace(server.URL)
 		if strings.Contains(baseURL, "${") {

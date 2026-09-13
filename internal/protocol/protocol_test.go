@@ -144,6 +144,28 @@ func TestUnknownProtocolAndCompressionFailClosed(t *testing.T) {
 	}
 }
 
+func TestLegacyMCPSSECannotBorrowImplementedMCPAdapters(t *testing.T) {
+	for _, operation := range []func() error{
+		func() error {
+			_, err := ParseExpected(domain.ProtocolMCPLegacySSE, "/mcp", "application/json", "", []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+			return err
+		},
+		func() error {
+			_, err := ParseResponse(domain.ProtocolMCPLegacySSE, "application/json", []byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+			return err
+		},
+		func() error {
+			_, err := ParseStreamEvent(domain.ProtocolMCPLegacySSE, []byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+			return err
+		},
+	} {
+		var veilErr *domain.VeilError
+		if err := operation(); !errors.As(err, &veilErr) || veilErr.Code != domain.ErrUnknownProtocol {
+			t.Fatalf("legacy SSE borrowed an implemented adapter: %v", err)
+		}
+	}
+}
+
 func TestMediaTypeRequiresExactValidRepresentation(t *testing.T) {
 	for _, value := range []string{"application/json", "APPLICATION/JSON", "application/json; charset=utf-8"} {
 		if !MediaTypeIs(value, "application/json") {

@@ -40,6 +40,7 @@ const (
 	ProtocolGemini          Protocol = "gemini"
 	ProtocolMCPHTTP         Protocol = "mcp_http"
 	ProtocolMCPStreamable   Protocol = "mcp_streamable_http"
+	ProtocolMCPLegacySSE    Protocol = "mcp_legacy_sse"
 	ProtocolLocalStdio      Protocol = "local_stdio"
 	ProtocolUnknown         Protocol = "unknown"
 )
@@ -47,7 +48,7 @@ const (
 func (v Protocol) Valid() bool {
 	switch v {
 	case ProtocolOpenAIChat, ProtocolOpenAIResponses, ProtocolAnthropic,
-		ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable,
+		ProtocolGemini, ProtocolMCPHTTP, ProtocolMCPStreamable, ProtocolMCPLegacySSE,
 		ProtocolLocalStdio, ProtocolUnknown:
 		return true
 	default:
