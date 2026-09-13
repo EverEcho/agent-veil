@@ -78,6 +78,10 @@ conservatively than discovered traffic.
   performs health heartbeats, reports every renewed expiry, removes its exact
   generation on shutdown, and fails closed instead of fighting a superseding
   controller through unsafe automatic re-registration;
+- a declarative Tool Surface Adapter SDK in `sdk/tooladapter` that enumerates
+  Remote MCP and local stdio, forces Browser/OAuth/file/WebSocket/Tool HTTP
+  interactions to remain unknown and non-rewritable until Core has a verified
+  protocol, and never moves DLP logic into a Native plugin;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
