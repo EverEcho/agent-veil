@@ -752,9 +752,12 @@ type modelInventory struct {
 	Active   string                `json:"active,omitempty"`
 	Versions []modelstore.Manifest `json:"versions"`
 	Runtime  struct {
-		Connected bool `json:"connected"`
-		Required  bool `json:"required"`
-		Active    bool `json:"active"`
+		Connected     bool                            `json:"connected"`
+		Required      bool                            `json:"required"`
+		Active        bool                            `json:"active"`
+		ArtifactBytes int64                           `json:"artifact_bytes,omitempty"`
+		ResourceState string                          `json:"resource_state"`
+		Resources     *detector.SemanticResourceUsage `json:"resources,omitempty"`
 	} `json:"runtime"`
 }
 
@@ -778,6 +781,7 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 		inventory.Active = active.Version
+		inventory.Runtime.ArtifactBytes = active.Size
 	} else if !errors.Is(err, os.ErrNotExist) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ACTIVE_MODEL_INVALID"})
 		return
@@ -785,7 +789,37 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 	inventory.Runtime.Connected = s.semanticLoader != nil
 	inventory.Runtime.Required = s.semanticRequired
 	inventory.Runtime.Active = inventory.Active != "" && inventory.Active == s.semanticVersion && s.semantic != nil
+	inventory.Runtime.ResourceState = "inactive"
+	if inventory.Runtime.Active {
+		inventory.Runtime.ResourceState = "unreported"
+		if reporter, ok := s.semantic.(detector.SemanticResourceReporter); ok {
+			usage, usageErr := readSemanticResourceUsage(reporter)
+			if usageErr != nil {
+				inventory.Runtime.ResourceState = "unavailable"
+			} else {
+				inventory.Runtime.ResourceState = "reported"
+				inventory.Runtime.Resources = &usage
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, inventory)
+}
+
+func readSemanticResourceUsage(reporter detector.SemanticResourceReporter) (usage detector.SemanticResourceUsage, err error) {
+	defer func() {
+		if recover() != nil {
+			usage = detector.SemanticResourceUsage{}
+			err = domain.NewError(domain.ErrDetectorFailure, "read semantic resource usage", "semantic runtime panicked")
+		}
+	}()
+	usage, err = reporter.SemanticResourceUsage()
+	if err != nil {
+		return detector.SemanticResourceUsage{}, domain.NewError(domain.ErrDetectorFailure, "read semantic resource usage", "semantic runtime metrics are unavailable")
+	}
+	if err := usage.Validate(); err != nil {
+		return detector.SemanticResourceUsage{}, err
+	}
+	return usage, nil
 }
 
 func (s *Server) installModel(w http.ResponseWriter, r *http.Request) {
@@ -1147,13 +1181,14 @@ function renderRoutes(rows){return rows.map(entry=>{const routes=Object.fromEntr
 function renderCalls(tree,parent,depth){return(tree[parent]||[]).map(node=>'<div class="card call depth-'+Math.min(depth,8)+'"><div class="muted">Session '+e(node.session_id)+' · '+(node.interactive?'interactive':'non-interactive')+' · expires '+e(node.expires_at)+'</div>'+node.surfaces.map(surface=>'<div><span class="status '+e(surface.coverage)+'">'+e(surface.coverage)+'</span> · '+e(surface.agent_id||'unregistered')+' / '+e(surface.surface_id||'unknown surface')+'<br><span class="muted">Route '+e(surface.route_id)+' · '+e(surface.protocol||'unknown protocol')+' · policy '+e(surface.policy_id||'unavailable')+'</span></div>').join('')+(node.audit?'<p class="muted">Audit '+Number(node.audit.event_count||0)+' events · '+Number(node.audit.finding_count||0)+' findings · last '+e(node.audit.last_action||'none')+' at '+e(node.audit.last_at||'unknown')+'</p>':'<p class="muted">No retained audit events</p>')+'</div>'+renderCalls(tree,node.session_id,depth+1)).join('')}
 async function loadPolicy(){const response=await fetch('/v1/policy',{headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('policy unavailable');if(document.activeElement!==document.querySelector('#policy'))document.querySelector('#policy').value=JSON.stringify(await response.json(),null,2)}
 async function savePolicy(){const result=document.querySelector('#policy-result');try{const documentValue=JSON.parse(document.querySelector('#policy').value),response=await fetch('/v1/policy',{method:'PUT',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify(documentValue)});if(!response.ok)throw Error('invalid policy');result.className='active';result.textContent='Policy saved atomically'}catch(err){result.className='error';result.textContent='Policy rejected; check JSON, actions, and scoped identifiers'}}
+function byteSize(value){value=Number(value||0);if(value<1024)return value+' B';if(value<1048576)return(value/1024).toFixed(1)+' KiB';if(value<1073741824)return(value/1048576).toFixed(1)+' MiB';return(value/1073741824).toFixed(1)+' GiB'}
 async function loadRulePacks(){const output=document.querySelector('#rule-packs'),response=await fetch('/v1/rules',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed rule storage is not configured.</p>';return}if(!response.ok)throw Error('rule inventory unavailable');const inventory=await response.json(),active=inventory.active||'';output.innerHTML='<section class="card"><p><span class="status '+(active?'active':'local')+'">'+(active?'verified '+e(active):'built-in')+'</span></p><div class="controls"><button id="use-built-in" '+(active?'':'disabled')+'>Use built-in rules</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status active">active</span>':'<button class="activate-rule" data-version="'+e(version.version)+'">Activate</button> <button class="remove-rule" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
 async function activateRulePack(version){const response=await fetch('/v1/rules/active',{method:'PUT',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({version})});if(!response.ok)throw Error('activation failed');await loadRulePacks()}
 async function deactivateRulePack(){const response=await fetch('/v1/rules/active',{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('deactivation failed');await loadRulePacks()}
 async function removeRulePack(version){if(!window.confirm('Remove inactive rule pack '+version+'?'))return;const response=await fetch('/v1/rules/'+encodeURIComponent(version),{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('removal failed');await loadRulePacks()}
 function encodeBase64(bytes){let binary='';for(let offset=0;offset<bytes.length;offset+=32768)binary+=String.fromCharCode(...bytes.subarray(offset,offset+32768));return btoa(binary)}
 async function installRulePack(){const result=document.querySelector('#rule-install-result'),manifestInput=document.querySelector('#rule-manifest'),fileInput=document.querySelector('#rule-artifact');try{const file=fileInput.files[0];if(!file||file.size<1||file.size>1048576)throw Error('invalid artifact size');const manifest=JSON.parse(manifestInput.value),artifact_base64=encodeBase64(new Uint8Array(await file.arrayBuffer())),response=await fetch('/v1/rules',{method:'POST',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({manifest,artifact_base64})});fileInput.value='';if(!response.ok)throw Error('installation failed');manifestInput.value='';result.className='active';result.textContent='Signed rule pack installed but not activated';await loadRulePacks()}catch(err){fileInput.value='';result.className='error';result.textContent='Installation rejected; verify manifest, signature, and file size'}}
-async function loadModels(){const output=document.querySelector('#models'),response=await fetch('/v1/models',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed semantic-model storage is not configured.</p>';return}if(!response.ok)throw Error('model inventory unavailable');const inventory=await response.json(),active=inventory.active||'',runtime=inventory.runtime||{},runtimeText=runtime.active?'Semantic inference is active for the selected model':runtime.connected?(runtime.required?'Semantic inference is required; requests fail closed until a compatible model is active':'Local semantic runtime connected; no model is active'):'A selected artifact is verified storage state; semantic inference remains unavailable until the local runtime is connected';output.innerHTML='<section class="card"><p><span class="status '+(runtime.active?'active':active?'partial':'observed')+'">'+(active?'selected '+e(active):'no model selected')+'</span></p><p class="muted">'+e(runtimeText)+'</p><div class="controls"><button id="deactivate-model" '+(active?'':'disabled')+'>Deactivate model</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status '+(runtime.active?'active':'partial')+'">selected</span>':'<button class="activate-model" data-version="'+e(version.version)+'">Select</button> <button class="remove-model" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
+async function loadModels(){const output=document.querySelector('#models'),response=await fetch('/v1/models',{headers:{Authorization:'Bearer '+token()}});if(response.status===503){output.innerHTML='<p class="muted">Signed semantic-model storage is not configured.</p>';return}if(!response.ok)throw Error('model inventory unavailable');const inventory=await response.json(),active=inventory.active||'',runtime=inventory.runtime||{},resources=runtime.resources||{},runtimeText=runtime.active?'Semantic inference is active for the selected model':runtime.connected?(runtime.required?'Semantic inference is required; requests fail closed until a compatible model is active':'Local semantic runtime connected; no model is active'):'A selected artifact is verified storage state; semantic inference remains unavailable until the local runtime is connected',resourceText=runtime.resource_state==='reported'?'Runtime resources: '+byteSize(resources.resident_bytes)+' resident · '+Number(resources.worker_count)+' workers · '+e(resources.accelerator)+' · '+Number(resources.inference_count)+' inferences':runtime.resource_state==='unavailable'?'Runtime resource metrics are temporarily unavailable':runtime.resource_state==='unreported'?'Active runtime does not report resource metrics':'Runtime resources are inactive',artifactText=runtime.artifact_bytes?' · selected artifact '+byteSize(runtime.artifact_bytes):'';output.innerHTML='<section class="card"><p><span class="status '+(runtime.active?'active':active?'partial':'observed')+'">'+(active?'selected '+e(active):'no model selected')+'</span></p><p class="muted">'+e(runtimeText)+'</p><p class="muted">'+resourceText+e(artifactText)+'</p><div class="controls"><button id="deactivate-model" '+(active?'':'disabled')+'>Deactivate model</button></div>'+inventory.versions.map(version=>'<p>'+e(version.version)+' · '+Number(version.size)+' bytes '+(version.version===active?'<span class="status '+(runtime.active?'active':'partial')+'">selected</span>':'<button class="activate-model" data-version="'+e(version.version)+'">Select</button> <button class="remove-model" data-version="'+e(version.version)+'">Remove</button>')+'</p>').join('')+'</section>'}
 async function activateModel(version){const response=await fetch('/v1/models/active',{method:'PUT',headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},body:JSON.stringify({version})});if(!response.ok)throw Error('model selection failed');await loadModels()}
 async function deactivateModel(){const response=await fetch('/v1/models/active',{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('model deactivation failed');await loadModels()}
 async function removeModel(version){if(!window.confirm('Remove inactive semantic model '+version+'?'))return;const response=await fetch('/v1/models/'+encodeURIComponent(version),{method:'DELETE',headers:{Authorization:'Bearer '+token()}});if(!response.ok)throw Error('model removal failed');await loadModels()}

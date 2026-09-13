@@ -91,3 +91,20 @@ func TestLocalSemanticWindowsLongTextWithOverlap(t *testing.T) {
 		}
 	}
 }
+
+func TestSemanticResourceUsageValidation(t *testing.T) {
+	valid := SemanticResourceUsage{ResidentBytes: 64 << 20, WorkerCount: 4, Accelerator: "cuda", InferenceCount: 12}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []SemanticResourceUsage{
+		{ResidentBytes: 1<<50 + 1, Accelerator: "cpu"},
+		{WorkerCount: 4097, Accelerator: "cpu"},
+		{Accelerator: "GPU 0"},
+		{},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("invalid resource usage accepted: %+v", invalid)
+		}
+	}
+}

@@ -19,6 +19,24 @@ type SemanticModel interface {
 	Predict([]SemanticToken) ([]map[string]float64, error)
 }
 
+type SemanticResourceUsage struct {
+	ResidentBytes  uint64 `json:"resident_bytes"`
+	WorkerCount    uint32 `json:"worker_count"`
+	Accelerator    string `json:"accelerator"`
+	InferenceCount uint64 `json:"inference_count"`
+}
+
+func (u SemanticResourceUsage) Validate() error {
+	if u.ResidentBytes > 1<<50 || u.WorkerCount > 4096 || !validEntityName(u.Accelerator) {
+		return domain.NewError(domain.ErrInvalidContract, "validate semantic resource usage", "resource metrics are invalid")
+	}
+	return nil
+}
+
+type SemanticResourceReporter interface {
+	SemanticResourceUsage() (SemanticResourceUsage, error)
+}
+
 type SemanticEntity struct {
 	Category string
 	Severity domain.Severity

@@ -63,6 +63,20 @@ func (value literalSemantic) Detect(path, text string) ([]domain.Finding, error)
 	return []domain.Finding{{RuleID: "semantic.name", Category: "pii.name", Severity: domain.SeverityHigh, Location: domain.ContentLocation{Path: path, Start: start, End: start + len(value)}, Confidence: 0.9, Detector: "semantic", SuggestedAction: domain.ActionRedact}}, nil
 }
 
+type resourceSemantic struct {
+	literalSemantic
+	usage detector.SemanticResourceUsage
+	err   error
+	panic bool
+}
+
+func (runtime resourceSemantic) SemanticResourceUsage() (detector.SemanticResourceUsage, error) {
+	if runtime.panic {
+		panic("runtime metrics failure")
+	}
+	return runtime.usage, runtime.err
+}
+
 type failingAuditor struct{}
 
 func (failingAuditor) Append(domain.AuditEvent) error { return errors.New("disk unavailable") }
@@ -169,7 +183,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
 		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
 	}
-	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ASK is shown as an interactive preview", "input cleared", "/v1/feedback/false-positives", "reportFalsePositive", "Mark false positive", "metadata only", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
+	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "byteSize", "Runtime resources", "resource_state", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ASK is shown as an interactive preview", "input cleared", "/v1/feedback/false-positives", "reportFalsePositive", "Mark false positive", "metadata only", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
@@ -1106,7 +1120,7 @@ func TestSemanticRuntimeLoadsActiveModelAndPreservesScannerOnFailedSwitch(t *tes
 		if manifest.Version == "2.0.0" {
 			return nil, errors.New("runtime rejected model")
 		}
-		return literalSemantic("Alice"), nil
+		return resourceSemantic{literalSemantic: literalSemantic("Alice"), usage: detector.SemanticResourceUsage{ResidentBytes: 64 << 20, WorkerCount: 2, Accelerator: "cpu", InferenceCount: 7}}, nil
 	})
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	if err := s.WithModelStore(store); err != nil {
@@ -1122,7 +1136,7 @@ func TestSemanticRuntimeLoadsActiveModelAndPreservesScannerOnFailedSwitch(t *tes
 	inventoryRecorder := httptest.NewRecorder()
 	s.listModels(inventoryRecorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
 	var inventory modelInventory
-	if inventoryRecorder.Code != http.StatusOK || json.Unmarshal(inventoryRecorder.Body.Bytes(), &inventory) != nil || !inventory.Runtime.Connected || !inventory.Runtime.Required || !inventory.Runtime.Active {
+	if inventoryRecorder.Code != http.StatusOK || json.Unmarshal(inventoryRecorder.Body.Bytes(), &inventory) != nil || !inventory.Runtime.Connected || !inventory.Runtime.Required || !inventory.Runtime.Active || inventory.Runtime.ResourceState != "reported" || inventory.Runtime.Resources == nil || inventory.Runtime.Resources.ResidentBytes != 64<<20 || inventory.Runtime.Resources.WorkerCount != 2 || inventory.Runtime.Resources.Accelerator != "cpu" || inventory.Runtime.Resources.InferenceCount != 7 || inventory.Runtime.ArtifactBytes != int64(len("onnx-1.0.0")) {
 		t.Fatalf("inventory status=%d value=%+v body=%s", inventoryRecorder.Code, inventory, inventoryRecorder.Body.String())
 	}
 
@@ -1144,6 +1158,20 @@ func TestSemanticRuntimeLoadsActiveModelAndPreservesScannerOnFailedSwitch(t *tes
 	matches, err = s.currentScanner().ScanChecked("/input", "hello Alice")
 	if err != nil || len(matches) != 1 || matches[0].Finding.Detector != "semantic" {
 		t.Fatalf("failed switch replaced scanner: matches=%+v error=%v", matches, err)
+	}
+}
+
+func TestSemanticResourceUsageFailuresRemainExplicitAndBounded(t *testing.T) {
+	for name, reporter := range map[string]detector.SemanticResourceReporter{
+		"invalid": resourceSemantic{usage: detector.SemanticResourceUsage{Accelerator: "GPU 0"}},
+		"error":   resourceSemantic{usage: detector.SemanticResourceUsage{Accelerator: "cpu"}, err: errors.New("private runtime path")},
+		"panic":   resourceSemantic{panic: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if usage, err := readSemanticResourceUsage(reporter); err == nil || usage != (detector.SemanticResourceUsage{}) || strings.Contains(err.Error(), "private runtime path") {
+				t.Fatalf("usage=%+v err=%v", usage, err)
+			}
+		})
 	}
 }
 

@@ -186,7 +186,11 @@ inference is active. Required semantic detection fails closed while no compatibl
 active model is loaded. The same local workflow is available in the Dashboard
 without loading the full model into JavaScript memory. Core health reports
 `required_unavailable` and a degraded status whenever mandatory semantic
-inference cannot run.
+inference cannot run. Active runtimes may implement the bounded
+`detector.SemanticResourceReporter` contract so `/v1/models` and the Dashboard
+show resident bytes, worker count, accelerator, and inference count; unsupported
+or failed reporting is shown explicitly instead of estimating model memory from
+artifact size.
 
 Rule-test false-positive feedback is retained locally as bounded, validated
 metadata in the private AgentVeil configuration directory. It never stores the
