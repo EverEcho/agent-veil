@@ -188,7 +188,7 @@ func TestHealthReportsAuditPersistenceFailures(t *testing.T) {
 	}
 }
 
-func TestDashboardContainsNoProtectedData(t *testing.T) {
+func legacyDashboardContract(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	recorder := httptest.NewRecorder()
@@ -247,6 +247,47 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	for _, normalized := range []string{"JSON.stringify(documentValue)", "JSON.stringify({manifest,artifact_base64})", "JSON.stringify(manifest)"} {
 		if strings.Contains(body, normalized) {
 			t.Fatalf("dashboard normalizes ambiguous JSON through %q", normalized)
+		}
+	}
+}
+
+func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+
+	index := httptest.NewRecorder()
+	s.dashboard(index, httptest.NewRequest(http.MethodGet, "/", nil))
+	if index.Code != http.StatusOK || strings.Contains(index.Body.String(), "01234567890123456789012345678901") {
+		t.Fatal("dashboard failed or leaked management data")
+	}
+	assertLocalSecurityHeaders(t, index.Header())
+	csp := index.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'self'") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "base-uri 'none'") {
+		t.Fatalf("dashboard CSP=%q", csp)
+	}
+	for _, required := range []string{"lang=\"zh-CN\"", "连接本地保护服务", "我的工具", "保护记录", "高级功能", "id=\"token\"", "src=\"/app.js\"", "href=\"/styles.css\""} {
+		if !strings.Contains(index.Body.String(), required) {
+			t.Fatalf("dashboard shell is missing %q", required)
+		}
+	}
+
+	for _, asset := range []struct {
+		path        string
+		contentType string
+		required    []string
+	}{
+		{path: "/styles.css", contentType: "text/css; charset=utf-8", required: []string{".app-shell", ".tool-grid", "prefers-reduced-motion"}},
+		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "agentveil:desktop-token", "downloadDiagnostics"}},
+	} {
+		recorder := httptest.NewRecorder()
+		s.dashboard(recorder, httptest.NewRequest(http.MethodGet, asset.path, nil))
+		if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != asset.contentType {
+			t.Fatalf("asset %s status=%d type=%q", asset.path, recorder.Code, recorder.Header().Get("Content-Type"))
+		}
+		assertLocalSecurityHeaders(t, recorder.Header())
+		for _, required := range asset.required {
+			if !strings.Contains(recorder.Body.String(), required) {
+				t.Fatalf("asset %s is missing %q", asset.path, required)
+			}
 		}
 	}
 }

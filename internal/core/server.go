@@ -1057,23 +1057,24 @@ func (s *Server) resolveApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	secureCoreResponseHeaders(w.Header())
+	switch r.URL.Path {
+	case "/styles.css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = io.WriteString(w, dashboardStyles)
+		return
+	case "/app.js":
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = io.WriteString(w, dashboardScript)
+		return
+	case "/":
+	default:
 		http.NotFound(w, r)
 		return
 	}
-	nonceBytes := make([]byte, 16)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DASHBOARD_NONCE_FAILED"})
-		return
-	}
-	nonce := base64.RawStdEncoding.EncodeToString(nonceBytes)
-	page := strings.Replace(dashboardHTML, "<style>", `<style nonce="`+nonce+`">`, 1)
-	page = strings.Replace(page, "<script>", `<script nonce="`+nonce+`">`, 1)
-	page = strings.Replace(page, dashboardAPIVersionPlaceholder, APIVersion, 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	secureCoreResponseHeaders(w.Header())
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+nonce+"'; script-src 'nonce-"+nonce+"'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-	_, _ = io.WriteString(w, page)
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	_, _ = io.WriteString(w, dashboardShellHTML)
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, _ *http.Request) {

@@ -203,7 +203,7 @@ fn inject_desktop(window: &WebviewWindow, token: &str) {
     let encoded = serde_json::to_string(token).unwrap_or_else(|_| "\"\"".into());
     let channel = serde_json::to_string(RELEASE_CHANNEL).unwrap_or_else(|_| "\"dev\"".into());
     let script = format!(
-        r#"(()=>{{let n=0;const ready=()=>{{const input=document.querySelector('#token'),load=document.querySelector('#load');if(input&&load){{input.value={encoded};input.parentElement.style.display='none';document.documentElement.dataset.agentveilDesktop='true';const badge=document.createElement('span');badge.textContent={channel}.toUpperCase();badge.style.cssText='position:fixed;right:22px;bottom:18px;z-index:9999;padding:6px 10px;border:1px solid #485575;border-radius:999px;background:#111827e8;color:#aebcff;font:700 11px system-ui;letter-spacing:.12em;box-shadow:0 8px 24px #0006';document.body.appendChild(badge);load.click();return}}if(n++<100)setTimeout(ready,50)}};ready()}})()"#
+        r#"(()=>{{window.__AGENTVEIL_DESKTOP_TOKEN={encoded};document.documentElement.dataset.agentveilDesktop='true';let attempts=0;const apply=()=>{{const input=document.querySelector('#token'),badge=document.querySelector('#channel-badge');if(input)input.value={encoded};if(badge)badge.textContent={channel}.toUpperCase();if(typeof window.agentveilDesktopStart==='function'){{window.agentveilDesktopStart({encoded});return}}if(attempts++<100)setTimeout(apply,50)}};apply()}})()"#
     );
     let _ = window.eval(&script);
 }
@@ -296,10 +296,23 @@ fn start_core(app: AppHandle, runtime: SharedRuntime) {
             value.sessions = sessions;
             value.child = child;
         }
+        let dashboard_url = Url::parse(&format!("{endpoint}/")).map_err(|e| e.to_string())?;
         window
-            .navigate(Url::parse(&format!("{endpoint}/")).map_err(|e| e.to_string())?)
+            .navigate(dashboard_url.clone())
             .map_err(|e| e.to_string())?;
-        thread::sleep(Duration::from_millis(350));
+        let navigation_deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < navigation_deadline {
+            if window.url().is_ok_and(|current| {
+                current.scheme() == dashboard_url.scheme()
+                    && current.host_str() == dashboard_url.host_str()
+                    && current.port_or_known_default() == dashboard_url.port_or_known_default()
+            }) {
+                // URL changes before the external module has necessarily run.
+                thread::sleep(Duration::from_millis(200));
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
         inject_desktop(&window, &token);
         Ok(())
     })();
@@ -431,6 +444,8 @@ fn main() {
                 })
                 .build(app)?;
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
                 let close_window = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
