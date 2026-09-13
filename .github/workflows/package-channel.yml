@@ -296,6 +296,7 @@ jobs:
             prerelease="--prerelease"
           fi
           gh release create "${tag}" release-artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "AgentVeil ${VERSION} (${CHANNEL})" \
             --generate-notes \
