@@ -382,6 +382,9 @@ func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
 	f.Add([]byte(`{"input":"hello"}`))
 	f.Add([]byte(`{"input":"hello"}{"second":true}`))
 	f.Fuzz(func(t *testing.T, body []byte) {
+		if len(body) > 64<<10 {
+			return
+		}
 		document, err := Parse("/v1/responses", "application/json", "", body)
 		if err == nil {
 			result, replaceErr := document.Replace(nil)

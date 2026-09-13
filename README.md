@@ -60,8 +60,8 @@ conservatively than discovered traffic.
   reject linked, writable, or identity-changing source directories;
 - pinned CI actions with race and static analysis, six-target Linux/macOS/Windows
   cross-builds, byte-for-byte reproducible Linux release-build verification,
-  reachable-vulnerability and dependency review gates, and SPDX JSON SBOM
-  generation;
+  time-bounded protocol/SSE fuzzing, reachable-vulnerability and dependency
+  review gates, and SPDX JSON SBOM generation;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
