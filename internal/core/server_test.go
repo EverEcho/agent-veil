@@ -1042,6 +1042,12 @@ func TestRequiredSemanticRuntimeFailsClosedWithoutActiveModel(t *testing.T) {
 	if _, err := s.currentScanner().ScanChecked("/input", "ordinary text"); err == nil {
 		t.Fatal("required semantic runtime silently allowed content without an active model")
 	}
+	recorder := httptest.NewRecorder()
+	s.health(recorder, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	var health map[string]string
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &health) != nil || health["status"] != "degraded" || health["semantic"] != "required_unavailable" {
+		t.Fatalf("health=%+v status=%d body=%s", health, recorder.Code, recorder.Body.String())
+	}
 }
 
 func TestCoreServesRegisteredProtectedRoute(t *testing.T) {

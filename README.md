@@ -116,7 +116,9 @@ the verified artifact and hot-swaps an injected local semantic runtime only
 after loading succeeds; without a configured runtime it does not claim semantic
 inference is active. Required semantic detection fails closed while no compatible
 active model is loaded. The same local workflow is available in the Dashboard
-without loading the full model into JavaScript memory.
+without loading the full model into JavaScript memory. Core health reports
+`required_unavailable` and a degraded status whenever mandatory semantic
+inference cannot run.
 
 Other commands discover the active random loopback endpoint from a 0600 local
 state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:

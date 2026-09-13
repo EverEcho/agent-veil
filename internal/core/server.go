@@ -373,6 +373,9 @@ func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {
 	if s.auditMonitor != nil && s.auditMonitor.failures.Load() > 0 {
 		status = "degraded"
 	}
+	if _, degraded := s.semanticRuntimeStatus(); degraded {
+		status = "degraded"
+	}
 	agents := make([]diagnostic.Agent, 0)
 	if s.registry != nil {
 		entries := s.registry.List()
@@ -1107,6 +1110,11 @@ func managementBearer(values []string) (string, bool) {
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	result := map[string]string{"status": "ok", "api_version": APIVersion, "audit": "disabled"}
+	semantic, semanticDegraded := s.semanticRuntimeStatus()
+	result["semantic"] = semantic
+	if semanticDegraded {
+		result["status"] = "degraded"
+	}
 	if s.auditMonitor != nil {
 		result["audit"] = "ok"
 		if failures := s.auditMonitor.failures.Load(); failures > 0 {
@@ -1116,6 +1124,21 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) semanticRuntimeStatus() (string, bool) {
+	s.scannerMu.RLock()
+	defer s.scannerMu.RUnlock()
+	if s.semantic != nil && s.semanticVersion != "" {
+		return "active", false
+	}
+	if s.semanticRequired {
+		return "required_unavailable", true
+	}
+	if s.semanticLoader != nil {
+		return "ready", false
+	}
+	return "disabled", false
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
