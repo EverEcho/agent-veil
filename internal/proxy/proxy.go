@@ -34,6 +34,8 @@ const (
 	MaxProxyBodyBytes      = 64 << 20
 	maxResponseHeaders     = 256
 	maxResponseHeaderBytes = 64 << 10
+	maxRequestHeaders      = 256
+	maxRequestHeaderBytes  = 64 << 10
 )
 
 var routeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -214,6 +216,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
 		return
 	}
+	if err := validateRequestHeaderBounds(r.Header); err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrInvalidContract
+		fail(w, http.StatusRequestHeaderFieldsTooLarge, string(domain.ErrInvalidContract))
+		return
+	}
 	if !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
@@ -287,8 +295,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			mcpVersionMismatch = err != nil
 		}
 	}
-	applyAuditResult(&auditEvent, processed)
 	if err != nil {
+		applyAuditResult(&auditEvent, processed)
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		status := http.StatusForbidden
@@ -316,6 +324,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authStrategy := route.Auth
 	if authStrategy.Type == "" {
 		authStrategy.Type = domain.AuthPassthrough
+	}
+	headerResult, err := processRequestHeaders(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.Header, h.scanner, route.Policy, vault)
+	processed.Findings = append(processed.Findings, headerResult.Findings...)
+	processed.Actions = append(processed.Actions, headerResult.Actions...)
+	applyAuditResult(&auditEvent, processed)
+	if err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = errorCodeValue(err)
+		fail(w, http.StatusForbidden, errorCode(err))
+		return
 	}
 	if err := route.AuthApplier.Apply(upstreamRequest, authStrategy); err != nil {
 		auditEvent.Action = domain.ActionBlock
@@ -598,6 +616,53 @@ func copyHeaders(destination, source http.Header) {
 			destination[key] = append([]string(nil), values...)
 		}
 	}
+}
+
+func validateRequestHeaderBounds(headers http.Header) error {
+	valueCount := 0
+	totalBytes := 0
+	for key, values := range headers {
+		valueCount += len(values)
+		totalBytes += len(key)
+		if valueCount > maxRequestHeaders {
+			return domain.NewError(domain.ErrInvalidContract, "scan request headers", "request has too many headers")
+		}
+		for _, value := range values {
+			totalBytes += len(value)
+			if totalBytes > maxRequestHeaderBytes {
+				return domain.NewError(domain.ErrInvalidContract, "scan request headers", "request headers exceed their size limit")
+			}
+		}
+	}
+	return nil
+}
+
+func processRequestHeaders(ctx pipeline.Context, headers http.Header, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
+	var aggregate pipeline.TextResult
+	for key, values := range headers {
+		if isProviderCredentialHeader(key) {
+			continue
+		}
+		canonicalKey := http.CanonicalHeaderKey(key)
+		for index, value := range values {
+			processed, err := pipeline.ProcessText(ctx, "/request/headers/"+canonicalKey, value, scanner, engine, vault)
+			aggregate.Findings = append(aggregate.Findings, processed.Findings...)
+			aggregate.Actions = append(aggregate.Actions, processed.Actions...)
+			if err != nil {
+				return aggregate, err
+			}
+			headers[key][index] = processed.Text
+		}
+	}
+	return aggregate, nil
+}
+
+func isProviderCredentialHeader(key string) bool {
+	switch http.CanonicalHeaderKey(key) {
+	case "Authorization", "X-Api-Key", "X-Goog-Api-Key", "X-Amz-Security-Token", "X-Amz-Date", "X-Amz-Content-Sha256":
+		return true
+	}
+	return false
 }
 
 func validateResponseHeaders(headers http.Header, scanner detector.ContentScanner) error {

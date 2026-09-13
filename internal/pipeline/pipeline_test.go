@@ -27,6 +27,22 @@ func TestRequestIsRedactedAndRecoverable(t *testing.T) {
 	}
 }
 
+func TestTextIsRedactedWithoutRemovingHeaderSemantics(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	original := "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJlMTIzNDU2"
+	result, err := ProcessText(Context{}, "/request/headers/X-Debug", original, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(result.Text, "Bearer [[VEIL_") || strings.Contains(result.Text, "eyJhbGci") || len(result.Findings) == 0 || len(result.Actions) != len(result.Findings) {
+		t.Fatalf("header semantics or metadata lost: %+v", result)
+	}
+	restored, err := vault.Restore(result.Text)
+	if err != nil || restored != original {
+		t.Fatalf("restored=%q err=%v", restored, err)
+	}
+}
+
 type redactApprover struct{}
 
 func (redactApprover) Request(context.Context, domain.Finding) (domain.Action, error) {

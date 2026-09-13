@@ -72,6 +72,108 @@ func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	}
 }
 
+func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
+	var providerHeader string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerHeader = r.Header.Get("X-Request-Context")
+		response, _ := json.Marshal(map[string]any{"output_text": providerHeader})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(response)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-Context", "contact dev@example.com")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(providerHeader, "dev@example.com") || !strings.Contains(providerHeader, "[[VEIL_PII_EMAIL_") || !strings.Contains(recorder.Body.String(), "dev@example.com") {
+		t.Fatalf("status=%d provider header=%q body=%s", recorder.Code, providerHeader, recorder.Body.String())
+	}
+	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact {
+		t.Fatalf("audit=%+v", auditor.events)
+	}
+}
+
+func TestBlockedRequestHeaderNeverReachesProvider(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionBlock}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-Context", "contact dev@example.com")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrPolicyBlocked {
+		t.Fatalf("status=%d calls=%d audit=%+v body=%s", recorder.Code, providerCalls, auditor.events, recorder.Body.String())
+	}
+}
+
+func TestPassthroughProviderCredentialHeaderIsNotRedacted(t *testing.T) {
+	const credential = "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJlMTIzNDU2"
+	var providerAuthorization string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", credential)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerAuthorization != credential {
+		t.Fatalf("status=%d authorization=%q", recorder.Code, providerAuthorization)
+	}
+}
+
+func TestRequestHeaderBoundsFailBeforeProvider(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Oversized", strings.Repeat("a", maxRequestHeaderBytes+1))
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusRequestHeaderFieldsTooLarge || providerCalls != 0 || !strings.Contains(recorder.Body.String(), string(domain.ErrInvalidContract)) {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+	}
+}
+
 func TestProxyChunkedScannerFindsEntityAcrossLongContextBoundary(t *testing.T) {
 	var providerBody string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
