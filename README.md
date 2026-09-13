@@ -90,7 +90,9 @@ conservatively than discovered traffic.
   attestations, bind the Linux binary to its SPDX SBOM, and retain the complete
   evidence bundle as an immutable workflow artifact;
 - risk-only inspection for unverified Agent versions, which cannot publish a
-  rewritable surface or claim protected coverage;
+  rewritable surface or claim protected coverage; the compatibility inventory
+  records verified mode, platform, Surface type, protocol, authentication, and
+  coverage independently and rejects Protected records with unknown dimensions;
 - Hermes 0.20.6 enumeration and protected launch for same-runtime
   `openai-codex` primary, fallback, auxiliary, delegation, and remote MCP
   Streamable HTTP surfaces without
