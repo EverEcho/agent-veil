@@ -75,6 +75,92 @@ func TestEndToEndProviderOnlyReceivesRedactedContent(t *testing.T) {
 	}
 }
 
+func TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider(t *testing.T) {
+	tests := []struct {
+		name     string
+		protocol domain.Protocol
+		endpoint string
+		request  string
+		response func(string) any
+		mcp      bool
+	}{
+		{"openai-chat", domain.ProtocolOpenAIChat, "/v1/chat/completions", `{"messages":[{"role":"user","content":"email dev@example.com"}]}`, func(value string) any {
+			return map[string]any{"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": value}}}}
+		}, false},
+		{"openai-responses", domain.ProtocolOpenAIResponses, "/v1/responses", `{"input":"email dev@example.com"}`, func(value string) any {
+			return map[string]any{"output_text": value}
+		}, false},
+		{"anthropic", domain.ProtocolAnthropic, "/v1/messages", `{"messages":[{"role":"user","content":"email dev@example.com"}]}`, func(value string) any {
+			return map[string]any{"content": []any{map[string]any{"type": "text", "text": value}}}
+		}, false},
+		{"gemini", domain.ProtocolGemini, "/v1beta/models/gemini-2.5-pro:generateContent", `{"contents":[{"role":"user","parts":[{"text":"email dev@example.com"}]}]}`, func(value string) any {
+			return map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": []any{map[string]any{"text": value}}}}}}
+		}, false},
+		{"mcp-http", domain.ProtocolMCPHTTP, "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"email":"dev@example.com"}}}`, func(value string) any {
+			return map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"content": []any{map[string]any{"type": "text", "text": value}}}}
+		}, false},
+		{"mcp-streamable", domain.ProtocolMCPStreamable, "/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"email":"dev@example.com"}}}`, func(value string) any {
+			return map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"content": []any{map[string]any{"type": "text", "text": value}}}}
+		}, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var providerBody string
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				payload, _ := io.ReadAll(request.Body)
+				providerBody = string(payload)
+				placeholder := firstVeilPlaceholder(providerBody)
+				if placeholder == "" || strings.Contains(providerBody, "dev@example.com") {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				response, _ := json.Marshal(test.response("provider echo " + placeholder))
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(response)
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: test.protocol, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxyServer := httptest.NewServer(handler)
+			defer proxyServer.Close()
+			request, _ := http.NewRequest(http.MethodPost, proxyServer.URL+"/route/primary"+test.endpoint, strings.NewReader(test.request))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			if test.mcp {
+				request.Header.Set("Accept", "application/json, text/event-stream")
+				request.Header.Set("MCP-Protocol-Version", "2025-03-26")
+			}
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK || providerBody == "" || strings.Contains(providerBody, "dev@example.com") || firstVeilPlaceholder(providerBody) == "" || !strings.Contains(string(result), "provider echo dev@example.com") || firstVeilPlaceholder(string(result)) != "" {
+				t.Fatalf("protocol=%s status=%d provider=%s client=%s", test.protocol, response.StatusCode, providerBody, result)
+			}
+		})
+	}
+}
+
+func firstVeilPlaceholder(value string) string {
+	start := strings.Index(value, "[[VEIL_")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(value[start:], "]]")
+	if end < 0 {
+		return ""
+	}
+	return value[start : start+end+2]
+}
+
 func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
 	var providerHeader string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
