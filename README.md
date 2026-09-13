@@ -51,8 +51,10 @@ conservatively than discovered traffic.
   motion handling, labelled inputs, and polite assistive status announcements.
   Its live Core status distinguishes healthy/degraded API, audit failure counts,
   and required semantic availability. A browser-language-aware English/Simplified
-  Chinese localization layer covers static controls and dynamically inserted
-  actions while persisting only the locale preference. A plain-language safety
+  Chinese localization layer covers static controls, dynamically inserted
+  actions, and parameterized runtime summaries for health, coverage, risks,
+  trends, call trees, rule tests, and model resources while persisting only the
+  locale preference. A plain-language safety
   guide explains every coverage class, request-scoped sensitive-data lifetime,
   metadata-only retention, and the limits of detection and compliance claims;
 - an authenticated, bounded diagnostics export that omits routes and paths,
