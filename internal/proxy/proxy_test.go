@@ -135,6 +135,12 @@ type fixedCredentials map[string]string
 
 func (c fixedCredentials) Resolve(source string) (string, error) { return c[source], nil }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
 func TestProxyRejectsUnboundedRoutesAndBodies(t *testing.T) {
 	manager := session.NewManager()
 	upstream, _ := url.Parse("https://api.example")
@@ -166,6 +172,70 @@ func TestCopyHeadersRemovesConnectionNominatedFields(t *testing.T) {
 	copyHeaders(destination, source)
 	if destination.Get("Connection") != "" || destination.Get("X-Hop") != "" || destination.Get("Keep-Alive") != "" || destination.Get("X-End") != "safe" {
 		t.Fatalf("copied headers=%v", destination)
+	}
+}
+
+func TestProxyRejectsRequestProtocolUpgradesBeforeCallingProvider(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"unsafe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Connection", "keep-alive, Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || providerCalls != 0 {
+		t.Fatalf("status=%d provider calls=%d body=%s", recorder.Code, providerCalls, recorder.Body.String())
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrUnknownProtocol {
+		t.Fatalf("audit=%+v", auditor.events)
+	}
+}
+
+func TestProxyRejectsProviderProtocolUpgradesBeforeForwarding(t *testing.T) {
+	upstream, _ := url.Parse("https://api.example")
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusSwitchingProtocols,
+			Status:     "101 Switching Protocols",
+			Header:     http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}},
+			Body:       io.NopCloser(strings.NewReader("provider-upgrade-bytes")),
+			Request:    request,
+		}, nil
+	})}
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || strings.Contains(recorder.Body.String(), "provider-upgrade-bytes") || recorder.Header().Get("Upgrade") != "" {
+		t.Fatalf("status=%d headers=%v body=%s", recorder.Code, recorder.Header(), recorder.Body.String())
+	}
+	if len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrUnknownProtocol {
+		t.Fatalf("audit=%+v", auditor.events)
 	}
 }
 

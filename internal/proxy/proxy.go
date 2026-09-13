@@ -198,6 +198,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer vault.Destroy()
+	if requestsProtocolUpgrade(r.Header) {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+		return
+	}
 	if !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
@@ -327,6 +333,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusSwitchingProtocols {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrUnknownProtocol
+		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
+		return
+	}
 	if err := validateResponseHeaders(response.Header, h.scanner); err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
@@ -541,6 +553,19 @@ func readLimited(reader io.Reader, limit int64) ([]byte, error) {
 		return nil, domain.NewError(domain.ErrInvalidContract, "read body", "body limit exceeded")
 	}
 	return value, nil
+}
+func requestsProtocolUpgrade(header http.Header) bool {
+	if len(header.Values("Upgrade")) != 0 {
+		return true
+	}
+	for _, value := range header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
 func copyHeaders(destination, source http.Header) {
 	dynamicHopHeaders := make(map[string]struct{})
