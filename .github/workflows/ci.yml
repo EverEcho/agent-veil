@@ -96,6 +96,8 @@ jobs:
         run: go test ./internal/stream -run=^$ -fuzz=FuzzSSEDecoderChunkingInvariant -fuzztime=20s
       - name: Fuzz Session and Route capabilities
         run: go test ./internal/session -run=^$ -fuzz=FuzzRouteCapabilityRequiresExactTuple -fuzztime=20s
+      - name: Fuzz Upstream origin allowlisting
+        run: go test ./internal/security -run=^$ -fuzz=FuzzUpstreamAllowlistRejectsOriginConfusion -fuzztime=20s
 
   vulnerability-scan:
     runs-on: ubuntu-latest
