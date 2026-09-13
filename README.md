@@ -70,7 +70,8 @@ conservatively than discovered traffic.
   surfaces without retaining credentials, including its documented OpenAI Chat,
   Responses, and Anthropic api-mode aliases while leaving specialized transports
   unknown; auxiliary slots that name the exact primary Provider inherit its
-  resolved route unless they explicitly override it;
+  resolved route unless they explicitly override it, while runtime-fixed and
+  model-dependent Provider protocol precedence is mirrored conservatively;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;

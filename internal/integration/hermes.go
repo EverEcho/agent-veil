@@ -205,7 +205,9 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 		}
 		return result
 	}
-	if inherited != nil && inherited.explicitRoute && providerName != "" && providerName == inherited.provider && !hermesModelSpecificProvider(providerName) && strings.TrimSpace(route.BaseURL) == "" && strings.TrimSpace(route.APIMode) == "" {
+	_, userDefinedProvider := providers[providerName]
+	stableBuiltin := !userDefinedProvider && hermesStableBuiltinProvider(providerName)
+	if inherited != nil && (inherited.explicitRoute || stableBuiltin) && providerName != "" && providerName == inherited.provider && !hermesModelSpecificProvider(providerName) && strings.TrimSpace(route.BaseURL) == "" && strings.TrimSpace(route.APIMode) == "" {
 		result := *inherited
 		if model != "" {
 			result.model = model
@@ -214,7 +216,9 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 	}
 	baseURL := strings.TrimSpace(route.BaseURL)
 	mode := strings.TrimSpace(route.APIMode)
+	customProvider := false
 	if provider, ok := providers[providerName]; ok {
+		customProvider = true
 		if baseURL == "" {
 			baseURL = strings.TrimSpace(provider.API)
 			if baseURL == "" {
@@ -226,6 +230,9 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 		}
 	}
 	protocolType := hermesProtocol(mode)
+	if !customProvider {
+		protocolType = hermesRuntimeProtocol(providerName, model, mode, protocolType)
+	}
 	if protocolType == domain.ProtocolUnknown && baseURL != "" && mode == "" {
 		protocolType = domain.ProtocolOpenAIChat
 	}
@@ -235,9 +242,45 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 	return resolvedHermesRoute{baseURL: baseURL, protocol: protocolType, model: model, provider: providerName, explicitRoute: strings.TrimSpace(route.BaseURL) != "" && strings.TrimSpace(route.APIMode) != ""}
 }
 
+func hermesStableBuiltinProvider(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "openai-codex", "xai", "xai-oauth", "anthropic", "minimax-oauth":
+		return true
+	default:
+		return false
+	}
+}
+
+func hermesRuntimeProtocol(provider, model, mode string, configured domain.Protocol) domain.Protocol {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	switch normalized {
+	case "openai-codex", "xai", "xai-oauth":
+		return domain.ProtocolOpenAIResponses
+	case "anthropic", "minimax-oauth":
+		return domain.ProtocolAnthropic
+	case "nous", "nous-portal", "nousresearch":
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "anthropic/") {
+			return domain.ProtocolAnthropic
+		}
+		return domain.ProtocolOpenAIChat
+	}
+	if strings.HasPrefix(normalized, "opencode-zen") || strings.HasPrefix(normalized, "opencode-go") || strings.HasPrefix(normalized, "opencode-free") || normalized == "azure-foundry" || normalized == "copilot" || normalized == "github-copilot" {
+		return domain.ProtocolUnknown
+	}
+	if strings.TrimSpace(mode) == "" {
+		switch normalized {
+		case "openai-api", "actual":
+			return domain.ProtocolOpenAIResponses
+		case "minimax", "minimax-cn":
+			return domain.ProtocolAnthropic
+		}
+	}
+	return configured
+}
+
 func hermesModelSpecificProvider(value string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "nous" || normalized == "nous-portal" || normalized == "nousresearch" {
+	if normalized == "nous" || normalized == "nous-portal" || normalized == "nousresearch" || normalized == "azure-foundry" || normalized == "copilot" || normalized == "github-copilot" {
 		return true
 	}
 	return strings.HasPrefix(normalized, "opencode-zen") || strings.HasPrefix(normalized, "opencode-go") || strings.HasPrefix(normalized, "opencode-free")

@@ -182,7 +182,7 @@ model:
   provider: openai-codex
   model: primary
   base_url: https://chatgpt.com/backend-api/codex
-  api_mode: codex_responses
+  api_mode: chat_completions
 auxiliary:
   approval:
     provider: openai-codex
@@ -208,15 +208,92 @@ auxiliary:
 	}
 }
 
-func TestHermesModelSpecificProvidersDoNotInheritPrimaryProtocol(t *testing.T) {
-	for _, provider := range []string{"nous", "nous-portal", "nousresearch", "opencode-zen", "opencode-go-bridge", "opencode-free"} {
-		content := fmt.Sprintf("model:\n  provider: %s\n  model: primary\n  base_url: https://provider.example/v1\n  api_mode: chat_completions\nauxiliary:\n  review:\n    provider: %s\n    model: alternate\n", provider, provider)
+func TestHermesRuntimeProviderProtocolPrecedence(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		mode     string
+		want     domain.Protocol
+	}{
+		{provider: "openai-codex", mode: "chat_completions", want: domain.ProtocolOpenAIResponses},
+		{provider: "xai", mode: "chat_completions", want: domain.ProtocolOpenAIResponses},
+		{provider: "anthropic", mode: "chat_completions", want: domain.ProtocolAnthropic},
+		{provider: "minimax-oauth", mode: "chat_completions", want: domain.ProtocolAnthropic},
+		{provider: "openai-api", want: domain.ProtocolOpenAIResponses},
+		{provider: "minimax-cn", want: domain.ProtocolAnthropic},
+		{provider: "nous", model: "anthropic/claude", want: domain.ProtocolAnthropic},
+		{provider: "nous", model: "deepseek/model", want: domain.ProtocolOpenAIChat},
+		{provider: "opencode-go", model: "gpt-5", mode: "chat_completions", want: domain.ProtocolUnknown},
+		{provider: "azure-foundry", model: "gpt-5", mode: "chat_completions", want: domain.ProtocolUnknown},
+	}
+	for _, test := range tests {
+		configured := hermesProtocol(test.mode)
+		if actual := hermesRuntimeProtocol(test.provider, test.model, test.mode, configured); actual != test.want {
+			t.Fatalf("provider=%q model=%q mode=%q mapped to %q, want %q", test.provider, test.model, test.mode, actual, test.want)
+		}
+	}
+}
+
+func TestHermesUserProviderOverridesBuiltinName(t *testing.T) {
+	slots, _, err := ParseHermesConfig([]byte(`
+providers:
+  anthropic:
+    api: https://custom.example/v1
+    transport: openai_chat
+model:
+  provider: anthropic
+  model: custom-model
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 1 || slots[0].Protocol != domain.ProtocolOpenAIChat || slots[0].BaseURL != "https://custom.example/v1" {
+		t.Fatalf("user provider was replaced by builtin semantics: %+v", slots)
+	}
+}
+
+func TestHermesFixedBuiltinProviderCanInheritURLWithoutExplicitMode(t *testing.T) {
+	slots, _, err := ParseHermesConfig([]byte(`
+model:
+  provider: openai-codex
+  model: primary
+  base_url: https://chatgpt.com/backend-api/codex
+auxiliary:
+  approval:
+    provider: openai-codex
+    model: reviewer
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 2 || slots[1].Protocol != domain.ProtocolOpenAIResponses || slots[1].BaseURL != slots[0].BaseURL {
+		t.Fatalf("fixed builtin route was not inherited: %+v", slots)
+	}
+}
+
+func TestHermesModelSpecificProvidersDoNotInheritPrimaryRoute(t *testing.T) {
+	tests := []struct {
+		provider string
+		protocol domain.Protocol
+	}{
+		{"nous", domain.ProtocolOpenAIChat},
+		{"nous-portal", domain.ProtocolOpenAIChat},
+		{"nousresearch", domain.ProtocolOpenAIChat},
+		{"opencode-zen", domain.ProtocolUnknown},
+		{"opencode-go-bridge", domain.ProtocolUnknown},
+		{"opencode-free", domain.ProtocolUnknown},
+		{"azure-foundry", domain.ProtocolUnknown},
+		{"copilot", domain.ProtocolUnknown},
+		{"github-copilot", domain.ProtocolUnknown},
+	}
+	for _, test := range tests {
+		content := fmt.Sprintf("model:\n  provider: %s\n  model: primary\n  base_url: https://provider.example/v1\n  api_mode: chat_completions\nauxiliary:\n  review:\n    provider: %s\n    model: alternate\n", test.provider, test.provider)
 		slots, _, err := ParseHermesConfig([]byte(content))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(slots) != 2 || slots[1].Protocol != domain.ProtocolUnknown || slots[1].BaseURL != "" {
-			t.Fatalf("model-specific provider %q inherited an ambiguous route: %+v", provider, slots)
+		if len(slots) != 2 || slots[1].Protocol != test.protocol || slots[1].BaseURL != "" {
+			t.Fatalf("model-specific provider %q inherited an ambiguous route: %+v", test.provider, slots)
 		}
 	}
 }
