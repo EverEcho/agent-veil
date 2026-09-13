@@ -59,7 +59,8 @@ conservatively than discovered traffic.
   metadata-only retention, and the limits of detection and compliance claims;
   policy and signed-manifest editors preserve the original JSON representation
   so Core can reject duplicate keys instead of accepting a browser-normalized
-  interpretation;
+  interpretation; every Dashboard request and response is explicitly pinned to
+  the compiled management API version;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans,
   available from both CLI and a user-triggered local Dashboard download;
