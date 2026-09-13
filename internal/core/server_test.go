@@ -168,7 +168,7 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
 		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
 	}
-	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
+	for _, required := range []string{"Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ASK is shown as an interactive preview", "input cleared", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard is missing %q", required)
 		}
@@ -663,12 +663,15 @@ func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
 	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "dev@example.com") {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var findings []domain.Finding
-	if err := json.Unmarshal(recorder.Body.Bytes(), &findings); err != nil {
+	var response detectionTestResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 1 || findings[0].Category != "pii.email" || findings[0].Location.Path != "/test-input" {
-		t.Fatalf("findings=%+v", findings)
+	if len(response.Results) != 1 || response.Results[0].Finding.Category != "pii.email" || response.Results[0].Finding.Location.Path != "/test-input" {
+		t.Fatalf("response=%+v", response)
+	}
+	if decision := response.Results[0].Decision; decision.Action != domain.ActionRedact || decision.Source != "default" || decision.MatchedScope != nil || decision.Reason != "default policy" {
+		t.Fatalf("decision=%+v", decision)
 	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"safe","unexpected":true}`))
@@ -678,6 +681,43 @@ func TestDetectionTestAPIReportsMetadataWithoutEchoingOriginal(t *testing.T) {
 	s.auth(s.testDetection)(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("unknown field status=%d", recorder.Code)
+	}
+}
+
+func TestDetectionTestAPIPreviewsMostSpecificPolicyWithoutEchoingInput(t *testing.T) {
+	engine := policy.Engine{Default: domain.ActionAllow, Rules: []policy.Rule{{
+		Scope:  policy.Scope{AgentID: "agent-a", Provider: "api.example", SurfaceID: "primary", FindingType: "pii.email"},
+		Action: domain.ActionAsk,
+	}}}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	s.WithPolicy(engine)
+	request := httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"contact private@example.com","scope":{"agent_id":"agent-a","provider":"api.example","surface_id":"primary"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder := httptest.NewRecorder()
+	s.auth(s.testDetection)(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "private@example.com") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response detectionTestResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 1 {
+		t.Fatalf("response=%+v", response)
+	}
+	decision := response.Results[0].Decision
+	if decision.Action != domain.ActionAsk || decision.Source != "rule" || decision.Reason != "most specific matching rule" || decision.MatchedScope == nil || decision.MatchedScope.FindingType != "pii.email" {
+		t.Fatalf("decision=%+v", decision)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/detect", strings.NewReader(`{"text":"safe","scope":{"workspace":"/raw/path"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
+	recorder = httptest.NewRecorder()
+	s.auth(s.testDetection)(recorder, request)
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "INVALID_DETECTION_SCOPE") {
+		t.Fatalf("invalid scope status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -709,9 +749,9 @@ func TestRuleStoreActivePackConfiguresCoreDataPlane(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer 01234567890123456789012345678901")
 	recorder := httptest.NewRecorder()
 	s.auth(s.testDetection)(recorder, request)
-	var findings []domain.Finding
-	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &findings) != nil || len(findings) != 1 || findings[0].Detector != "rule_pack" {
-		t.Fatalf("status=%d findings=%+v body=%s", recorder.Code, findings, recorder.Body.String())
+	var response detectionTestResponse
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &response) != nil || len(response.Results) != 1 || response.Results[0].Finding.Detector != "rule_pack" {
+		t.Fatalf("status=%d response=%+v body=%s", recorder.Code, response, recorder.Body.String())
 	}
 }
 

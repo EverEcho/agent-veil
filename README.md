@@ -40,7 +40,8 @@ conservatively than discovered traffic.
   coverage plans, an escaped Routing Graph showing each Surface's protocol,
   policy, fixed Upstream, authentication and network route, nested calls with
   Route/protocol/policy/lifecycle and retained audit summaries, approvals,
-  policy editing, rule tests, and audit. Protection risks expose their source
+  policy editing, local rule tests with per-Finding layered policy previews, and
+  audit. Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
   metadata also drives local-day summaries and a seven-day risk trend, with
   per-response nonce CSP and no inline event handlers;
