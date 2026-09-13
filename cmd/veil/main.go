@@ -251,8 +251,9 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		<-leaseResult
 		return err
 	}
+	processDone := make(chan struct{})
 	egressBinding := protectedEgressBinding{SessionID: created.Session.ID, AgentID: manifest.Agent.ID, Generation: registered.Generation, RouteID: protectedRoute.ID, AdminToken: adminToken}
-	egressResult, err := startProtectedEgressWatch(childContext, cancelChild, command.Process.Pid, endpoint, egressBinding)
+	egressResult, err := startProtectedEgressWatch(childContext, cancelChild, processDone, command.Process.Pid, endpoint, egressBinding)
 	if err != nil {
 		cancelChild()
 		_ = command.Wait()
@@ -260,6 +261,15 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return fmt.Errorf("start process egress observation: %w", err)
 	}
 	runErr := command.Wait()
+	// A CLI can leave background descendants behind after its root exits. On
+	// Unix the protected command's Cancel kills the entire process group even
+	// after Wait has reaped the leader; other platforms safely return
+	// os.ErrProcessDone. Complete this cleanup before telling the observer that
+	// a root-disappearance error is an expected shutdown race.
+	if command.Cancel != nil {
+		_ = command.Cancel()
+	}
+	close(processDone)
 	cancelChild()
 	leaseErr := <-leaseResult
 	egressErr := <-egressResult

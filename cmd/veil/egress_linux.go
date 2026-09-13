@@ -17,8 +17,9 @@ import (
 
 const protectedEgressWatchInterval = 250 * time.Millisecond
 const protectedEgressReportTimeout = 2 * time.Second
+const protectedEgressExitGrace = 100 * time.Millisecond
 
-func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, processID int, endpoint string, binding protectedEgressBinding) (<-chan error, error) {
+func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, processDone <-chan struct{}, processID int, endpoint string, binding protectedEgressBinding) (<-chan error, error) {
 	identity, err := egress.LinuxProcessIdentity("", processID)
 	if err != nil {
 		return nil, fmt.Errorf("bind protected process identity: %w", err)
@@ -59,11 +60,35 @@ func startProtectedEgressWatch(ctx context.Context, cancel context.CancelFunc, p
 	go func() {
 		err := watcher.Run(ctx)
 		if err != nil {
-			cancel()
+			err = reconcileProtectedEgressExit(err, processDone, cancel)
 		}
 		result <- err
 	}()
 	return result, nil
+}
+
+func reconcileProtectedEgressExit(err error, processDone <-chan struct{}, cancel context.CancelFunc) error {
+	var veilErr *domain.VeilError
+	if errors.As(err, &veilErr) && veilErr.Code == domain.ErrUnexpectedEgress {
+		cancel()
+		return err
+	}
+	timer := time.NewTimer(protectedEgressExitGrace)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+	select {
+	case <-processDone:
+		return nil
+	case <-timer.C:
+		cancel()
+		return err
+	}
 }
 
 func protectedCoreLocalEndpoint(endpoint string) (egress.LocalEndpoint, error) {

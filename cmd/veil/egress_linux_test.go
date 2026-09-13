@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -22,6 +23,34 @@ func TestProtectedCoreLocalEndpointRequiresExactLoopbackAuthority(t *testing.T) 
 		if endpoint, err := protectedCoreLocalEndpoint(invalid); err == nil || endpoint != (egress.LocalEndpoint{}) {
 			t.Fatalf("invalid endpoint accepted: endpoint=%+v err=%v", endpoint, err)
 		}
+	}
+}
+
+func TestProtectedEgressObserverErrorIsIgnoredOnlyAfterProcessGroupCleanup(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	observerErr := errors.New("root process exited")
+	if err := reconcileProtectedEgressExit(observerErr, done, cancel); err != nil || ctx.Err() != nil {
+		t.Fatalf("normal completed-process race was not reconciled: err=%v context=%v", err, ctx.Err())
+	}
+
+	active := make(chan struct{})
+	ctx, cancel = context.WithCancel(context.Background())
+	if err := reconcileProtectedEgressExit(observerErr, active, cancel); !errors.Is(err, observerErr) || !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("active-process observer failure did not fail closed: err=%v context=%v", err, ctx.Err())
+	}
+}
+
+func TestUnexpectedEgressIsNeverSuppressedByConcurrentProcessExit(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	unexpected := domain.NewError(domain.ErrUnexpectedEgress, "watch", "observed")
+	if err := reconcileProtectedEgressExit(unexpected, done, cancel); !errors.Is(err, unexpected) || !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("unexpected egress was suppressed: err=%v context=%v", err, ctx.Err())
 	}
 }
 
