@@ -142,7 +142,7 @@ func TestInspectorPreservesSafeUpstreamBasePath(t *testing.T) {
 	if got := manifest.Surfaces[0].Upstream.Path; got != "/gateway/v1/" {
 		t.Fatalf("base path=%q", got)
 	}
-	for _, suffix := range []string{"?token=secret", "#fragment"} {
+	for _, suffix := range []string{"?token=secret", "?", "#fragment", "%2Ftenant"} {
 		invalid := base
 		invalid.Slots = append([]Slot(nil), base.Slots...)
 		invalid.Slots[0].BaseURL += suffix
