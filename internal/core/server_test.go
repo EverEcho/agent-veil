@@ -180,6 +180,9 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 	}
 	nonce := csp[nonceStart : nonceStart+nonceEnd]
 	body := recorder.Body.String()
+	if strings.Contains(body, dashboardAPIVersionPlaceholder) {
+		t.Fatal("dashboard exposes an unresolved management API version")
+	}
 	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
 		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
 	}
