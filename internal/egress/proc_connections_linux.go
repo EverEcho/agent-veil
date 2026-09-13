@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	DefaultMaxConnections  = 4096
 	DefaultMaxTableRecords = 65536
 	maxProcNetLineBytes    = 4096
 )

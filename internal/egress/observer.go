@@ -7,6 +7,8 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 )
 
+const DefaultMaxConnections = 4096
+
 type processSnapshotChangedError struct{}
 
 func (processSnapshotChangedError) Error() string {
