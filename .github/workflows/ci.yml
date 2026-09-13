@@ -142,7 +142,7 @@ jobs:
       - name: Install pinned govulncheck
         env:
           GOBIN: ${{ runner.temp }}/govulncheck-bin
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Scan reachable Go vulnerabilities
         run: ${{ runner.temp }}/govulncheck-bin/govulncheck ./...
 
