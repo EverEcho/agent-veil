@@ -229,11 +229,11 @@ func resolveHermesRoute(route hermesRoute, providers map[string]hermesProvider, 
 
 func hermesProtocol(value string) domain.Protocol {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "chat_completions", "openai_chat":
+	case "chat_completions", "openai_chat", "openai", "openai-chat", "chat-completions", "chatcompletions":
 		return domain.ProtocolOpenAIChat
-	case "codex_responses", "openai_responses":
+	case "codex_responses", "openai_responses", "responses", "openai-responses":
 		return domain.ProtocolOpenAIResponses
-	case "anthropic_messages":
+	case "anthropic_messages", "anthropic", "anthropic-messages", "messages":
 		return domain.ProtocolAnthropic
 	default:
 		return domain.ProtocolUnknown

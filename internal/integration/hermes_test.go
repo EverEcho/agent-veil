@@ -154,3 +154,23 @@ func TestHermesConfigAcceptsCurrentScalarPrimaryModel(t *testing.T) {
 		t.Fatalf("scalar primary model was guessed or lost: %+v", slots)
 	}
 }
+
+func TestHermesProtocolMirrors0206ConfigAliases(t *testing.T) {
+	tests := map[domain.Protocol][]string{
+		domain.ProtocolOpenAIChat:      {"chat_completions", "openai_chat", "openai", "openai-chat", "chat-completions", "chatcompletions"},
+		domain.ProtocolOpenAIResponses: {"codex_responses", "openai_responses", "responses", "openai-responses"},
+		domain.ProtocolAnthropic:       {"anthropic_messages", "anthropic", "anthropic-messages", "messages"},
+	}
+	for expected, aliases := range tests {
+		for _, alias := range aliases {
+			if actual := hermesProtocol(alias); actual != expected {
+				t.Fatalf("alias %q mapped to %q, want %q", alias, actual, expected)
+			}
+		}
+	}
+	for _, unsupported := range []string{"gemini", "bedrock_converse", "codex_app_server", ""} {
+		if actual := hermesProtocol(unsupported); actual != domain.ProtocolUnknown {
+			t.Fatalf("unsupported Hermes transport %q mapped to %q", unsupported, actual)
+		}
+	}
+}

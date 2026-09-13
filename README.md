@@ -67,7 +67,9 @@ conservatively than discovered traffic.
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP
-  surfaces without retaining credentials;
+  surfaces without retaining credentials, including its documented OpenAI Chat,
+  Responses, and Anthropic api-mode aliases while leaving specialized transports
+  unknown;
 - conservative OpenClaw JSON5 enumeration of model, MCP, ACP, configured Browser,
   and Web Tool surfaces; no OpenClaw release is yet marked as verified or
   protected;
