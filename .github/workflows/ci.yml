@@ -92,6 +92,8 @@ jobs:
           cache: true
       - name: Fuzz protocol parsing
         run: go test ./internal/protocol -run=^$ -fuzz=FuzzParseNeverAcceptsMalformedTrailingData -fuzztime=20s
+      - name: Fuzz protocol endpoint traversal
+        run: go test ./internal/protocol -run=^$ -fuzz=FuzzExpectedProtocolEndpointCannotTraverse -fuzztime=20s
       - name: Fuzz SSE chunk boundaries
         run: go test ./internal/stream -run=^$ -fuzz=FuzzSSEDecoderChunkingInvariant -fuzztime=20s
       - name: Fuzz Session and Route capabilities
