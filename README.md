@@ -45,7 +45,8 @@ conservatively than discovered traffic.
   metadata also drives local-day summaries and a seven-day risk trend, with
   per-response nonce CSP and no inline event handlers;
 - an authenticated, bounded diagnostics export that omits routes and paths,
-  hashes runtime identities, and applies field-level plus final-payload scans;
+  hashes runtime identities, and applies field-level plus final-payload scans,
+  available from both CLI and a user-triggered local Dashboard download;
 - capability-based coverage planning that cannot label incomplete inspection as
   `Protected`;
 - atomic Native/Managed registry reconciliation plus revision-aware monitoring
