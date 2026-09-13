@@ -115,6 +115,17 @@ export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
 go run ./cmd/veil serve
 ```
 
+To have Core own and continuously reconcile one Managed/Native integration,
+point it at a private, absolute JSON `AgentManifest` file. The initial manifest
+must declare `agent.mode` as `managed`; unsafe or invalid initial state prevents
+startup, and later invalid revisions immediately block the previous routes until
+the file is repaired:
+
+```bash
+export VEIL_MANAGED_MANIFEST_PATH='/absolute/path/to/managed-agent.json'
+go run ./cmd/veil serve
+```
+
 To load an installed signed rule pack, configure its trusted Ed25519 public key
 in canonical base64. The store defaults to the private AgentVeil configuration
 directory and may be overridden with an absolute path:

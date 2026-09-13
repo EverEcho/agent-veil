@@ -74,6 +74,55 @@ func TestWriteLaunchProtectionPlanRejectsUnknownSurface(t *testing.T) {
 	}
 }
 
+func TestConfigureManagedManifestMonitorRegistersBlocksAndRecovers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "managed.json")
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "managed", Kind: "native", Mode: domain.ModeManaged}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "first.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "managed-file", Rewritable: true, Required: true}}}
+	writeJSONFile := func(value any) {
+		content, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeJSONFile(manifest)
+	integrationRegistry := registry.New(runtimeOptions())
+	monitor, err := configureManagedManifestMonitor(context.Background(), integrationRegistry, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := integrationRegistry.Get("managed")
+	if !ok || entry.State != registry.StateActive || entry.Generation != 1 {
+		t.Fatalf("initial managed entry=%+v exists=%v", entry, ok)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version":"v1","schema_version":"broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, changed, err := monitor.Check(context.Background())
+	if err == nil || !changed || entry.State != registry.StateBlocked || entry.Generation != 2 {
+		t.Fatalf("broken managed config did not block: entry=%+v changed=%v err=%v", entry, changed, err)
+	}
+	manifest.Surfaces[0].Upstream.Host = "second.example"
+	writeJSONFile(manifest)
+	entry, changed, err = monitor.Check(context.Background())
+	if err != nil || !changed || entry.State != registry.StateActive || entry.Generation != 3 {
+		t.Fatalf("repaired managed config did not recover: entry=%+v changed=%v err=%v", entry, changed, err)
+	}
+}
+
+func TestConfigureManagedManifestMonitorRequiresManagedMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "launch.json")
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "launch", Kind: "native", Mode: domain.ModeLaunch}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "managed-file", Rewritable: true, Required: true}}}
+	content, _ := json.Marshal(manifest)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := configureManagedManifestMonitor(context.Background(), registry.New(runtimeOptions()), path); err == nil {
+		t.Fatal("launch manifest was accepted as a managed source")
+	}
+}
+
 func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 	args := protectedCodexArgs("http://127.0.0.1:1234/route/primary/v1", []string{"exec", "hello"}, true)
 	joined := strings.Join(args, " ")

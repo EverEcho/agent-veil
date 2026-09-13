@@ -40,6 +40,7 @@ import (
 
 const protectedLaunchLease = 30 * time.Second
 const protectedLaunchHeartbeat = 10 * time.Second
+const managedManifestInterval = time.Second
 const maxManagementResponseBytes = 4 << 20
 const maxManagementErrorBytes = 4 << 10
 const maxHermesLaunchConfigBytes = 1 << 20
@@ -674,7 +675,15 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("VEIL_ADMIN_TOKEN must be set to a random value of at least 32 characters: %w", err)
 	}
-	server.WithRegistry(registry.New(runtimeOptions()))
+	integrationRegistry := registry.New(runtimeOptions())
+	server.WithRegistry(integrationRegistry)
+	var managedMonitor *registry.Monitor
+	if managedPath := os.Getenv("VEIL_MANAGED_MANIFEST_PATH"); managedPath != "" {
+		managedMonitor, err = configureManagedManifestMonitor(context.Background(), integrationRegistry, managedPath)
+		if err != nil {
+			return fmt.Errorf("configure managed manifest: %w", err)
+		}
+	}
 	policyPath := os.Getenv("VEIL_POLICY_PATH")
 	if policyPath == "" {
 		policyPath = filepath.Join(configDir, "policy.json")
@@ -720,10 +729,42 @@ func serve() error {
 	fmt.Println(server.Endpoint())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if managedMonitor != nil {
+		go managedMonitor.Run(ctx)
+	}
 	<-ctx.Done()
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return server.Close(shutdown)
+}
+
+func configureManagedManifestMonitor(ctx context.Context, integrationRegistry *registry.Registry, path string) (*registry.Monitor, error) {
+	if ctx == nil || integrationRegistry == nil {
+		return nil, domain.NewError(domain.ErrInvalidContract, "configure managed manifest", "context and registry are required")
+	}
+	source, err := registry.NewFileSnapshotSource(path)
+	if err != nil {
+		return nil, err
+	}
+	_, manifest, err := source.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if manifest.Agent.Mode != domain.ModeManaged {
+		return nil, domain.NewError(domain.ErrInvalidContract, "configure managed manifest", "manifest agent mode must be managed")
+	}
+	monitor, err := registry.NewMonitor(integrationRegistry, source, manifest.Agent.ID, managedManifestInterval)
+	if err != nil {
+		return nil, err
+	}
+	entry, changed, err := monitor.Check(ctx)
+	if err != nil || !changed || entry.State != registry.StateActive {
+		if err != nil {
+			return nil, err
+		}
+		return nil, domain.NewError(domain.ErrPolicyBlocked, "configure managed manifest", "initial managed protection plan is not active")
+	}
+	return monitor, nil
 }
 
 func configureRuleStore(server *core.Server, configDir, encodedKey, configuredPath string) error {
