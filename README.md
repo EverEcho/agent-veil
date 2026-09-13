@@ -151,12 +151,14 @@ go run ./cmd/veil inspect zed
 go run ./cmd/veil inspect cline
 go run ./cmd/veil inspect cursor
 go run ./cmd/veil run codex -- --help
+go run ./cmd/veil run codex --interactive -- exec "review this change"
 ```
 
 Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
 Claude and Hermes protected launch remain unverified and fail closed. CLI
-protected launches create non-interactive Sessions, so an `ASK` policy blocks
-instead of waiting indefinitely for a Dashboard decision.
+protected launches create non-interactive Sessions by default, so an `ASK`
+policy blocks instead of waiting indefinitely. Pass `--interactive` before the
+argument separator to opt into one-time decisions through the Dashboard.
 
 ## Verification
 

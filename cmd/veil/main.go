@@ -89,22 +89,36 @@ func run(args []string) error {
 		}
 		return writeInspection(os.Stdout, manifest)
 	case "run":
-		if len(args) < 2 {
-			return errors.New("usage: veil run <codex|claude> [-- agent arguments]")
-		}
-		childArgs := args[2:]
-		if len(childArgs) > 0 && childArgs[0] == "--" {
-			childArgs = childArgs[1:]
+		name, childArgs, interactive, err := parseProtectedRun(args[1:])
+		if err != nil {
+			return err
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return runProtected(ctx, args[1], childArgs)
+		return runProtected(ctx, name, childArgs, interactive)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
-func runProtected(ctx context.Context, name string, childArgs []string) (resultErr error) {
+func parseProtectedRun(args []string) (string, []string, bool, error) {
+	if len(args) == 0 {
+		return "", nil, false, errors.New("usage: veil run <codex|claude> [--interactive] [-- agent arguments]")
+	}
+	name := args[0]
+	childArgs := append([]string(nil), args[1:]...)
+	interactive := false
+	if len(childArgs) > 0 && childArgs[0] == "--interactive" {
+		interactive = true
+		childArgs = childArgs[1:]
+	}
+	if len(childArgs) > 0 && childArgs[0] == "--" {
+		childArgs = childArgs[1:]
+	}
+	return name, childArgs, interactive, nil
+}
+
+func runProtected(ctx context.Context, name string, childArgs []string, interactive bool) (resultErr error) {
 	if name != "codex" && name != "claude" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
@@ -145,7 +159,7 @@ func runProtected(ctx context.Context, name string, childArgs []string) (resultE
 	protectedRoute := protectedRoutes[0]
 	routeIDs := []string{protectedRoute.ID}
 	var created session.Created
-	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": routeIDs, "ttl_seconds": 86400}, &created); err != nil {
+	if err := managementJSON(ctx, http.MethodPost, endpoint+"/v1/sessions", adminToken, map[string]any{"route_ids": routeIDs, "ttl_seconds": 86400, "interactive": interactive}, &created); err != nil {
 		return err
 	}
 	defer func() {

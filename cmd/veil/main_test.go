@@ -49,6 +49,20 @@ func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 	}
 }
 
+func TestProtectedRunInteractionFlagIsExplicitAndDoesNotConsumeChildFlag(t *testing.T) {
+	name, child, interactive, err := parseProtectedRun([]string{"codex", "--interactive", "--", "exec", "task"})
+	if err != nil || name != "codex" || !interactive || strings.Join(child, " ") != "exec task" {
+		t.Fatalf("name=%q child=%v interactive=%t err=%v", name, child, interactive, err)
+	}
+	name, child, interactive, err = parseProtectedRun([]string{"codex", "--", "--interactive"})
+	if err != nil || name != "codex" || interactive || len(child) != 1 || child[0] != "--interactive" {
+		t.Fatalf("child flag was consumed: name=%q child=%v interactive=%t err=%v", name, child, interactive, err)
+	}
+	if _, _, _, err := parseProtectedRun(nil); err == nil {
+		t.Fatal("missing protected run target was accepted")
+	}
+}
+
 func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing.T) {
 	environment := overlayEnvironment([]string{"PATH=/bin", "ANTHROPIC_API_KEY=real-provider-key", "anthropic_api_key=case-variant"}, map[string]string{"ANTHROPIC_API_KEY": "veil-v1:session:route", "VEIL_SESSION_ID": "session"})
 	joined := strings.Join(environment, "\n")
