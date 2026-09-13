@@ -559,7 +559,8 @@ func TestSessionAPIRejectsUnboundedTTLAndRouteCounts(t *testing.T) {
 
 func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	reg := registry.New(planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}})
-	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	manager := session.NewManager()
+	s, _ := New(manager, "01234567890123456789012345678901")
 	s.WithRegistry(reg)
 	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native", Mode: domain.ModeNative}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
 	payload, _ := json.Marshal(map[string]any{"manifest": manifest, "ttl_seconds": 60})
@@ -573,6 +574,14 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	var entry registry.Entry
 	if err := json.Unmarshal(recorder.Body.Bytes(), &entry); err != nil || entry.Generation != 1 || entry.ExpiresAt.IsZero() {
 		t.Fatalf("leased entry=%+v err=%v", entry, err)
+	}
+	created, err := manager.Create("", "local", []string{entry.Plan.Routes[0].ID}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorization, ok := manager.AuthorizeRoute(created.Session.ID, entry.Plan.Routes[0].ID, created.Routes[0].Token)
+	if !ok {
+		t.Fatal("registered Route Session was not authorized")
 	}
 	heartbeat, _ := json.Marshal(map[string]any{"generation": entry.Generation, "ttl_seconds": 120})
 	request = httptest.NewRequest(http.MethodPost, "/v1/agents/native/heartbeat", bytes.NewReader(heartbeat))
@@ -604,6 +613,22 @@ func TestNativeIntegrationLeaseRegistrationAndHeartbeatAPI(t *testing.T) {
 	s.deleteAgent(recorder, request)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("current delete status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(manager.List()) != 0 {
+		t.Fatal("removed Integration left a Route Session active")
+	}
+	select {
+	case <-authorization.Context.Done():
+	default:
+		t.Fatal("removed Integration did not cancel an in-flight Route authorization")
+	}
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/v1/agents/leases", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	s.registerLeasedAgent(recorder, request)
+	var replacement registry.Entry
+	if recorder.Code != http.StatusCreated || json.Unmarshal(recorder.Body.Bytes(), &replacement) != nil || replacement.Generation != 2 {
+		t.Fatalf("reincarnated entry=%+v status=%d body=%s", replacement, recorder.Code, recorder.Body.String())
 	}
 }
 

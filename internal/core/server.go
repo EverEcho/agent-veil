@@ -1150,18 +1150,26 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	generationValue := r.URL.Query().Get("generation")
+	entry, exists := s.registry.Get(r.PathValue("id"))
 	if generationValue != "" {
 		generation, err := strconv.ParseUint(generationValue, 10, 64)
 		if err != nil || generation == 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_INTEGRATION_GENERATION"})
 			return
 		}
-		if !s.registry.RemoveGeneration(r.PathValue("id"), generation) {
+		if !exists || entry.Generation != generation || !s.registry.RemoveGeneration(r.PathValue("id"), generation) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "STALE_INTEGRATION_GENERATION"})
 			return
 		}
 	} else {
 		s.registry.Remove(r.PathValue("id"))
+	}
+	if exists {
+		routeIDs := make([]string, 0, len(entry.Plan.Routes))
+		for _, route := range entry.Plan.Routes {
+			routeIDs = append(routeIDs, route.ID)
+		}
+		s.manager.DeleteRoutes(routeIDs)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

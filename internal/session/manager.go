@@ -281,6 +281,41 @@ func (m *Manager) Delete(id string) bool {
 	return true
 }
 
+// DeleteRoutes revokes every Session using any selected Route and cascades to
+// descendants. It is used when an Integration generation is removed so an
+// already authorized in-flight request is cancelled instead of outliving its
+// registered protection route.
+func (m *Manager) DeleteRoutes(routeIDs []string) int {
+	if len(routeIDs) == 0 {
+		return 0
+	}
+	targets := make(map[string]struct{}, len(routeIDs))
+	for _, routeID := range routeIDs {
+		if routeIDPattern.MatchString(routeID) {
+			targets[routeID] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before := len(m.sessions)
+	selected := make([]string, 0)
+	for sessionID, entry := range m.sessions {
+		for _, routeID := range entry.session.RouteIDs {
+			if _, ok := targets[routeID]; ok {
+				selected = append(selected, sessionID)
+				break
+			}
+		}
+	}
+	for _, sessionID := range selected {
+		m.deleteCascadeLocked(sessionID)
+	}
+	return before - len(m.sessions)
+}
+
 // DeleteChildAuthorized lets a single-route nested process revoke only its own
 // child Session. Root and multi-route Sessions remain management-plane only.
 func (m *Manager) DeleteChildAuthorized(sessionID, routeID, token string) bool {

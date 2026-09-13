@@ -64,6 +64,37 @@ func TestSessionListIsStableBySessionID(t *testing.T) {
 	}
 }
 
+func TestDeleteRoutesCancelsMatchingSessionTreesOnly(t *testing.T) {
+	m := NewManager()
+	parent, err := m.Create("", "local", []string{"route-a"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := m.Create(parent.Session.ID, "local", []string{"route-a"}, time.Minute-time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated, err := m.Create("", "local", []string{"route-b"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentAuthorization, _ := m.AuthorizeRoute(parent.Session.ID, "route-a", parent.Routes[0].Token)
+	childAuthorization, _ := m.AuthorizeRoute(child.Session.ID, "route-a", child.Routes[0].Token)
+	if removed := m.DeleteRoutes([]string{"route-a", "route-a", "../invalid"}); removed != 2 {
+		t.Fatalf("removed sessions=%d", removed)
+	}
+	for _, authorization := range []Authorization{parentAuthorization, childAuthorization} {
+		select {
+		case <-authorization.Context.Done():
+		default:
+			t.Fatal("matching in-flight route authorization was not cancelled")
+		}
+	}
+	if !m.Authorize(unrelated.Session.ID, "route-b", unrelated.Routes[0].Token) || len(m.List()) != 1 {
+		t.Fatalf("unrelated session was revoked: %+v", m.List())
+	}
+}
+
 func TestManagerEnforcesTTLRouteAndActiveSessionLimits(t *testing.T) {
 	m, err := NewManagerWithLimits(Limits{MaxSessions: 2, MaxRoutes: 2, MaxTTL: time.Minute})
 	if err != nil {

@@ -127,6 +127,26 @@ func TestRegistryListIsStableByAgentID(t *testing.T) {
 	}
 }
 
+func TestRemovedAgentGenerationIsNeverReused(t *testing.T) {
+	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
+	registry := New(options)
+	manifest := domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: "native", Kind: "native"}, Surfaces: []domain.EgressSurface{{ID: "primary", Name: "Primary", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIChat, Upstream: &domain.Upstream{Scheme: "https", Host: "api.example", Port: 443}, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, ConfigSource: "native", Rewritable: true, Required: true}}}
+	first, err := registry.Reconcile(manifest)
+	if err != nil || first.Generation != 1 || !registry.RemoveGeneration("native", first.Generation) {
+		t.Fatalf("initial generation=%+v err=%v", first, err)
+	}
+	second, err := registry.Reconcile(manifest)
+	if err != nil || second.Generation != 2 || second.Plan.Routes[0].ID == first.Plan.Routes[0].ID {
+		t.Fatalf("replacement generation=%+v err=%v", second, err)
+	}
+	if registry.RemoveGeneration("native", first.Generation) {
+		t.Fatal("stale controller removed a reincarnated registration")
+	}
+	if retained, ok := registry.Get("native"); !ok || retained.Generation != second.Generation {
+		t.Fatalf("replacement registration was not retained: %+v ok=%t", retained, ok)
+	}
+}
+
 func TestManagedMonitorBlocksGapsDeduplicatesAndRecovers(t *testing.T) {
 	options := planner.Options{DefaultPolicy: "default", Network: domain.NetworkRoute{Type: domain.NetworkDirect}, Capabilities: map[domain.Protocol]planner.Capability{domain.ProtocolOpenAIChat: {RequestInspection: true, ResponseInspection: true, StreamInspection: true}}}
 	registry := New(options)

@@ -29,6 +29,7 @@ type Entry struct {
 type Registry struct {
 	mu           sync.RWMutex
 	entries      map[string]Entry
+	generations  map[string]uint64
 	capabilities planner.Options
 	now          func() time.Time
 }
@@ -36,7 +37,7 @@ type Registry struct {
 const maxRegistryEntries = 1024
 
 func New(options planner.Options) *Registry {
-	return &Registry{entries: map[string]Entry{}, capabilities: options, now: time.Now}
+	return &Registry{entries: map[string]Entry{}, generations: map[string]uint64{}, capabilities: options, now: time.Now}
 }
 
 func (r *Registry) Preview(manifest domain.AgentManifest) (domain.ProtectionPlan, error) {
@@ -70,7 +71,18 @@ func (r *Registry) reconcile(manifest domain.AgentManifest, ttl time.Duration) (
 	if _, exists := r.entries[manifest.Agent.ID]; !exists && len(r.entries) >= maxRegistryEntries {
 		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "reconcile integration", "registry capacity is exhausted")
 	}
-	generation := previous.Generation + 1
+	if _, tracked := r.generations[manifest.Agent.ID]; !tracked && len(r.generations) >= maxRegistryEntries {
+		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "reconcile integration", "registry identity capacity is exhausted")
+	}
+	lastGeneration := r.generations[manifest.Agent.ID]
+	if previous.Generation > lastGeneration {
+		lastGeneration = previous.Generation
+	}
+	if lastGeneration == ^uint64(0) {
+		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "reconcile integration", "integration generation is exhausted")
+	}
+	generation := lastGeneration + 1
+	r.generations[manifest.Agent.ID] = generation
 	bindPlanGeneration(&plan, generation)
 	if err != nil {
 		blocked := Entry{Manifest: manifest, State: StateBlocked, Generation: generation, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}
@@ -175,12 +187,23 @@ func (r *Registry) Block(agentID string, code domain.ErrorCode) (Entry, error) {
 	if _, exists := r.entries[agentID]; !exists && len(r.entries) >= maxRegistryEntries {
 		return Entry{State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "block integration", "registry capacity is exhausted")
 	}
+	if _, tracked := r.generations[agentID]; !tracked && len(r.generations) >= maxRegistryEntries {
+		return Entry{State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "block integration", "registry identity capacity is exhausted")
+	}
 	previous := r.entries[agentID]
 	manifest := previous.Manifest
 	if manifest.Agent.ID == "" {
 		manifest = domain.AgentManifest{SchemaVersion: "v1", Agent: domain.AgentInstance{ID: agentID, Kind: "managed", Mode: domain.ModeManaged}}
 	}
-	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: previous.Generation + 1, UpdatedAt: now, ErrorCode: code}
+	lastGeneration := r.generations[agentID]
+	if previous.Generation > lastGeneration {
+		lastGeneration = previous.Generation
+	}
+	if lastGeneration == ^uint64(0) {
+		return Entry{Manifest: manifest, State: StateBlocked, UpdatedAt: now, ErrorCode: domain.ErrInvalidContract}, domain.NewError(domain.ErrInvalidContract, "block integration", "integration generation is exhausted")
+	}
+	entry := Entry{Manifest: manifest, State: StateBlocked, Generation: lastGeneration + 1, UpdatedAt: now, ErrorCode: code}
+	r.generations[agentID] = entry.Generation
 	r.entries[agentID] = cloneEntry(entry)
 	return cloneEntry(entry), domain.NewError(code, "monitor integration", "managed integration snapshot is unavailable or invalid")
 }
@@ -228,6 +251,7 @@ func (r *Registry) expireLocked(now time.Time) {
 		entry.State = StateBlocked
 		entry.Plan = domain.ProtectionPlan{}
 		entry.Generation++
+		r.generations[agentID] = entry.Generation
 		entry.UpdatedAt = now
 		entry.ExpiresAt = time.Time{}
 		entry.ErrorCode = domain.ErrIntegrationExpired
