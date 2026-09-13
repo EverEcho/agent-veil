@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ const (
 	maxResponseHeaderBytes = 64 << 10
 	maxRequestHeaders      = 256
 	maxRequestHeaderBytes  = 64 << 10
+	maxRequestQueryValues  = 256
+	maxRequestQueryBytes   = 64 << 10
 )
 
 var routeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -222,6 +225,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusRequestHeaderFieldsTooLarge, string(domain.ErrInvalidContract))
 		return
 	}
+	if err := validateRequestQuery(r.URL.RawQuery); err != nil {
+		auditEvent.Action = domain.ActionBlock
+		auditEvent.ErrorCode = domain.ErrInvalidContract
+		fail(w, http.StatusBadRequest, string(domain.ErrInvalidContract))
+		return
+	}
 	if !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
@@ -328,6 +337,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	headerResult, err := processRequestHeaders(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.Header, h.scanner, route.Policy, vault)
 	processed.Findings = append(processed.Findings, headerResult.Findings...)
 	processed.Actions = append(processed.Actions, headerResult.Actions...)
+	if err == nil {
+		var queryResult pipeline.TextResult
+		queryResult, err = processRequestQuery(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: route.Interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.URL, h.scanner, route.Policy, vault)
+		processed.Findings = append(processed.Findings, queryResult.Findings...)
+		processed.Actions = append(processed.Actions, queryResult.Actions...)
+	}
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
@@ -637,6 +652,24 @@ func validateRequestHeaderBounds(headers http.Header) error {
 	return nil
 }
 
+func validateRequestQuery(rawQuery string) error {
+	if len(rawQuery) > maxRequestQueryBytes {
+		return domain.NewError(domain.ErrInvalidContract, "scan request query", "request query exceeds its size limit")
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "scan request query", "request query is malformed")
+	}
+	valueCount := 0
+	for _, entries := range values {
+		valueCount += len(entries)
+		if valueCount > maxRequestQueryValues {
+			return domain.NewError(domain.ErrInvalidContract, "scan request query", "request query has too many values")
+		}
+	}
+	return nil
+}
+
 func processRequestHeaders(ctx pipeline.Context, headers http.Header, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
 	var aggregate pipeline.TextResult
 	for key, values := range headers {
@@ -654,6 +687,46 @@ func processRequestHeaders(ctx pipeline.Context, headers http.Header, scanner de
 			headers[key][index] = processed.Text
 		}
 	}
+	return aggregate, nil
+}
+
+func processRequestQuery(ctx pipeline.Context, requestURL *url.URL, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
+	var aggregate pipeline.TextResult
+	values, err := url.ParseQuery(requestURL.RawQuery)
+	if err != nil {
+		return aggregate, domain.NewError(domain.ErrInvalidContract, "scan request query", "request query is malformed")
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for keyIndex, key := range keys {
+		if strings.EqualFold(key, "key") {
+			continue
+		}
+		keyResult, err := pipeline.ProcessText(ctx, "/request/query/key/"+strconv.Itoa(keyIndex), key, scanner, engine, vault)
+		aggregate.Findings = append(aggregate.Findings, keyResult.Findings...)
+		aggregate.Actions = append(aggregate.Actions, keyResult.Actions...)
+		if err != nil {
+			return aggregate, err
+		}
+		for _, action := range keyResult.Actions {
+			if action != domain.ActionAllow {
+				return aggregate, domain.NewError(domain.ErrPolicyBlocked, "scan request query", "sensitive query keys cannot be safely rewritten")
+			}
+		}
+		for valueIndex, value := range values[key] {
+			valueResult, err := pipeline.ProcessText(ctx, "/request/query/value/"+strconv.Itoa(keyIndex)+"/"+strconv.Itoa(valueIndex), value, scanner, engine, vault)
+			aggregate.Findings = append(aggregate.Findings, valueResult.Findings...)
+			aggregate.Actions = append(aggregate.Actions, valueResult.Actions...)
+			if err != nil {
+				return aggregate, err
+			}
+			values[key][valueIndex] = valueResult.Text
+		}
+	}
+	requestURL.RawQuery = values.Encode()
 	return aggregate, nil
 }
 
