@@ -188,69 +188,6 @@ func TestHealthReportsAuditPersistenceFailures(t *testing.T) {
 	}
 }
 
-func legacyDashboardContract(t *testing.T) {
-	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	recorder := httptest.NewRecorder()
-	s.dashboard(recorder, request)
-	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "01234567890123456789012345678901") {
-		t.Fatal("dashboard leaked management data")
-	}
-	assertLocalSecurityHeaders(t, recorder.Header())
-	csp := recorder.Header().Get("Content-Security-Policy")
-	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "base-uri 'none'") || !strings.Contains(csp, "form-action 'none'") {
-		t.Fatalf("dashboard CSP=%q", csp)
-	}
-	noncePrefix := "script-src 'nonce-"
-	nonceStart := strings.Index(csp, noncePrefix)
-	if nonceStart < 0 {
-		t.Fatalf("dashboard CSP has no script nonce: %q", csp)
-	}
-	nonceStart += len(noncePrefix)
-	nonceEnd := strings.IndexByte(csp[nonceStart:], '\'')
-	if nonceEnd < 0 {
-		t.Fatalf("dashboard CSP has malformed nonce: %q", csp)
-	}
-	nonce := csp[nonceStart : nonceStart+nonceEnd]
-	body := recorder.Body.String()
-	if strings.Contains(body, dashboardAPIVersionPlaceholder) {
-		t.Fatal("dashboard exposes an unresolved management API version")
-	}
-	if !strings.Contains(body, `<script nonce="`+nonce+`">`) || !strings.Contains(body, `<style nonce="`+nonce+`">`) || strings.Contains(body, " onclick=") || strings.Contains(body, " style=") {
-		t.Fatal("dashboard contains untrusted inline execution or mismatched CSP nonces")
-	}
-	for _, required := range []string{"lang=\"en\"", "Skip to main content", "<main id=\"main\" tabindex=\"-1\">", "focus-visible", "prefers-reduced-motion", "aria-label=\"Management token\"", "aria-describedby=\"rule-test-help\"", "aria-live", "dashboardAPIVersion='v1'", "browserFetch=window.fetch.bind(window)", "headers.set('X-AgentVeil-API-Version'", "response.headers.get('X-AgentVeil-API-Version')", "incompatible Core management API", "translations", "zh-CN", "简体中文", "本地隐私控制平面", "agentveil.locale", "MutationObserver", "translateTree", "localeChoice", "const messages", "function message", "'summary.load'", "已安装 {installed} 个", "message('summary.coverage'", "message('trend.day'", "message('call.session'", "message('test.details'", "message('health'", "message('model.resources'", "'approval.preview':'Safe preview: {preview}'", "'approval.preview':'安全预览：{preview}'", "message('approval.preview'", "document.querySelector('#load').click()", "safetyGuide", "How protection states work", "Partial or Observed is not content protection", "request-scoped memory", "not a guarantee of complete anonymization or compliance", "loadHealth", "/v1/health", "audit_failures", "semantic", "Core health unavailable", "Local diagnostics", "downloadDiagnostics", "Export privacy-safe diagnostics", "final-payload privacy scans", "Today and 7-day risk trend", "renderTrends", "localDay", "Recent metadata trend", "Routing graph", "renderRoutes", "endpointText", "route.policy_id", "route.network", "renderRisks", "riskAction", "Risks and actions", "Impact:", "Action:", "/v1/call-tree", "renderCalls", "Active call tree", "surface.coverage", "/v1/policy", "savePolicy", "/v1/rules", "loadRulePacks", "activateRulePack", "deactivateRulePack", "removeRulePack", "remove-rule", "installRulePack", "Signed rule manifest JSON", "Verify and install", "Use built-in rules", "/v1/models", "loadModels", "byteSize", "Runtime resources", "resource_state", "activateModel", "deactivateModel", "removeModel", "remove-model", "installModel", "Signed model manifest JSON", "Verify and install model", "semantic inference remains unavailable", "/v1/detect", "testRules", "policyScope", "matched_scope", "ruleExplanation", "detector suggests", "% confidence", "ASK is shown as an interactive preview", "input cleared", "/v1/feedback/false-positives", "reportFalsePositive", "Mark false positive", "metadata only", "redactionPreview", "Safe preview:", "Cancel and block", "/v1/discovery", "Installed agents", "Inspection preview", "inspectAgent", "Inspect surfaces", "unknown version"} {
-		if !strings.Contains(body, required) {
-			t.Fatalf("dashboard is missing %q", required)
-		}
-	}
-	for _, required := range []string{"revoke-session", "Revoke session", "撤销会话", "confirm.session", "revokeSession", "method:'DELETE'", "Session revocation failed"} {
-		if !strings.Contains(body, required) {
-			t.Fatalf("dashboard session lifecycle control is missing %q", required)
-		}
-	}
-	for _, required := range []string{"remove-agent", "Stop protection", "停止保护", "confirm.agent", "removeAgent", "Number.isSafeInteger", "?generation=", "Protection stop failed"} {
-		if !strings.Contains(body, required) {
-			t.Fatalf("dashboard generation-bound protection control is missing %q", required)
-		}
-	}
-	for _, required := range []string{"function refreshConfiguration", "if(document.activeElement!==document.querySelector('#policy'))", "if(token())refreshConfiguration()", "},5000)"} {
-		if !strings.Contains(body, required) {
-			t.Fatalf("dashboard configuration refresh is missing %q", required)
-		}
-	}
-	for _, required := range []string{"body:source", `body='{"manifest":'+manifestSource`, "new TextEncoder().encode(manifestSource)", "manifestBytes.length>6144"} {
-		if !strings.Contains(body, required) {
-			t.Fatalf("dashboard does not preserve strict JSON input: missing %q", required)
-		}
-	}
-	for _, normalized := range []string{"JSON.stringify(documentValue)", "JSON.stringify({manifest,artifact_base64})", "JSON.stringify(manifest)"} {
-		if strings.Contains(body, normalized) {
-			t.Fatalf("dashboard normalizes ambiguous JSON through %q", normalized)
-		}
-	}
-}
-
 func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
 
