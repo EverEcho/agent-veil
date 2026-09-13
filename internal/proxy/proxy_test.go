@@ -132,6 +132,27 @@ func TestBlockedRequestHeaderNeverReachesProvider(t *testing.T) {
 	}
 }
 
+func TestSensitiveRequestHeaderNameFailsClosed(t *testing.T) {
+	providerCalls := 0
+	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("4111111111111111", "value")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "pii.bank_card" {
+		t.Fatalf("status=%d calls=%d audit=%+v body=%s", recorder.Code, providerCalls, auditor.events, recorder.Body.String())
+	}
+}
+
 func TestPassthroughProviderCredentialHeaderIsNotRedacted(t *testing.T) {
 	const credential = "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJlMTIzNDU2"
 	var providerAuthorization string

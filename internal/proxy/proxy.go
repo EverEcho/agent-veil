@@ -686,13 +686,30 @@ func validateRequestQuery(rawQuery string) error {
 
 func processRequestHeaders(ctx pipeline.Context, headers http.Header, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
 	var aggregate pipeline.TextResult
-	for key, values := range headers {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for keyIndex, key := range keys {
 		if isProviderCredentialHeader(key) {
 			continue
 		}
 		canonicalKey := http.CanonicalHeaderKey(key)
+		keyResult, err := pipeline.ProcessText(ctx, "/request/headers/key/"+strconv.Itoa(keyIndex), canonicalKey, scanner, engine, vault)
+		aggregate.Findings = append(aggregate.Findings, keyResult.Findings...)
+		aggregate.Actions = append(aggregate.Actions, keyResult.Actions...)
+		if err != nil {
+			return aggregate, err
+		}
+		for _, action := range keyResult.Actions {
+			if action != domain.ActionAllow {
+				return aggregate, domain.NewError(domain.ErrPolicyBlocked, "scan request headers", "sensitive header names cannot be safely rewritten")
+			}
+		}
+		values := headers[key]
 		for index, value := range values {
-			processed, err := pipeline.ProcessText(ctx, "/request/headers/"+canonicalKey, value, scanner, engine, vault)
+			processed, err := pipeline.ProcessText(ctx, "/request/headers/value/"+strconv.Itoa(keyIndex)+"/"+strconv.Itoa(index), value, scanner, engine, vault)
 			aggregate.Findings = append(aggregate.Findings, processed.Findings...)
 			aggregate.Actions = append(aggregate.Actions, processed.Actions...)
 			if err != nil {
