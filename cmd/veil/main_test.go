@@ -121,6 +121,35 @@ func TestConfigureRuleStoreRequiresCanonicalTrustKey(t *testing.T) {
 	}
 }
 
+func TestConfigureModelStoreRequiresCanonicalTrustKey(t *testing.T) {
+	server, _ := core.New(session.NewManager(), "01234567890123456789012345678901")
+	configDirectory := t.TempDir()
+	if err := configureModelStore(server, configDirectory, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureModelStore(server, configDirectory, "invalid", ""); err == nil {
+		t.Fatal("invalid model trust key was accepted")
+	}
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(public)
+	if err := configureModelStore(server, configDirectory, encoded, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(configDirectory, "models"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("unsafe model directory mode=%v", info.Mode())
+	}
+	if err := configureModelStore(server, configDirectory, "", filepath.Join(configDirectory, "custom-models")); err == nil {
+		t.Fatal("model path without trust key was accepted")
+	}
+}
+
 func TestProtectedLaunchUsesCorePublishedGenerationRoute(t *testing.T) {
 	entry := registry.Entry{State: registry.StateActive, Generation: 7, Plan: domain.ProtectionPlan{Routes: []domain.ProtectedRoute{{ID: "route-primary-g7", SurfaceID: "primary"}}, Summary: domain.CoverageSummary{Total: 1, Protected: 1}}}
 	routes, err := fullyProtectedRoutes(entry)

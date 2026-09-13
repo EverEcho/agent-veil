@@ -26,6 +26,7 @@ import (
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/registry"
@@ -831,6 +832,104 @@ func TestRulePackManagementInstallsOnlyCanonicalSignedArtifacts(t *testing.T) {
 			s.installRulePack(recorder, request)
 			if recorder.Code == http.StatusCreated {
 				t.Fatal("unsafe rule artifact was installed")
+			}
+		})
+	}
+}
+
+func TestModelManagementStreamsSignedArtifactsAndManagesLifecycle(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := modelstore.New(filepath.Join(t.TempDir(), "models"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithModelStore(store); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("verified-onnx-model")
+	sum := sha256.Sum256(payload)
+	manifest := modelstore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])}
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, modelstore.SigningPayload(manifest)))
+	manifestJSON, _ := json.Marshal(manifest)
+	upload := httptest.NewRequest(http.MethodPost, "/v1/models", bytes.NewReader(payload))
+	upload.Header.Set("Content-Type", "application/octet-stream")
+	upload.Header.Set(ModelManifestHeader, base64.StdEncoding.EncodeToString(manifestJSON))
+	uploadRecorder := httptest.NewRecorder()
+	s.installModel(uploadRecorder, upload)
+	if uploadRecorder.Code != http.StatusCreated {
+		t.Fatalf("installation status=%d body=%s", uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+
+	inventoryRecorder := httptest.NewRecorder()
+	s.listModels(inventoryRecorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	var inventory modelInventory
+	if inventoryRecorder.Code != http.StatusOK || json.Unmarshal(inventoryRecorder.Body.Bytes(), &inventory) != nil || inventory.Active != "" || len(inventory.Versions) != 1 || inventory.Versions[0].Version != manifest.Version {
+		t.Fatalf("inventory status=%d value=%+v body=%s", inventoryRecorder.Code, inventory, inventoryRecorder.Body.String())
+	}
+
+	activate := httptest.NewRequest(http.MethodPut, "/v1/models/active", strings.NewReader(`{"version":"1.0.0"}`))
+	activate.Header.Set("Content-Type", "application/json")
+	activateRecorder := httptest.NewRecorder()
+	s.activateModel(activateRecorder, activate)
+	if activateRecorder.Code != http.StatusNoContent {
+		t.Fatalf("activation status=%d body=%s", activateRecorder.Code, activateRecorder.Body.String())
+	}
+	activeRemoval := httptest.NewRequest(http.MethodDelete, "/v1/models/1.0.0", nil)
+	activeRemoval.SetPathValue("version", "1.0.0")
+	activeRemovalRecorder := httptest.NewRecorder()
+	s.removeModel(activeRemovalRecorder, activeRemoval)
+	if activeRemovalRecorder.Code != http.StatusConflict {
+		t.Fatalf("active removal status=%d body=%s", activeRemovalRecorder.Code, activeRemovalRecorder.Body.String())
+	}
+
+	deactivateRecorder := httptest.NewRecorder()
+	s.deactivateModel(deactivateRecorder, httptest.NewRequest(http.MethodDelete, "/v1/models/active", nil))
+	if deactivateRecorder.Code != http.StatusNoContent {
+		t.Fatalf("deactivation status=%d body=%s", deactivateRecorder.Code, deactivateRecorder.Body.String())
+	}
+	remove := httptest.NewRequest(http.MethodDelete, "/v1/models/1.0.0", nil)
+	remove.SetPathValue("version", "1.0.0")
+	removeRecorder := httptest.NewRecorder()
+	s.removeModel(removeRecorder, remove)
+	if removeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("removal status=%d body=%s", removeRecorder.Code, removeRecorder.Body.String())
+	}
+	if versions, err := store.List(); err != nil || len(versions) != 0 {
+		t.Fatalf("versions=%+v error=%v", versions, err)
+	}
+}
+
+func TestModelUploadRequiresCanonicalBoundedRepresentation(t *testing.T) {
+	manifest := modelstore.Manifest{SchemaVersion: "v1", Version: "1.0.0", Size: 4, SHA256: strings.Repeat("0", 64), Signature: base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))}
+	manifestJSON, _ := json.Marshal(manifest)
+	encoded := base64.StdEncoding.EncodeToString(manifestJSON)
+	for _, test := range []struct {
+		name          string
+		contentTypes  []string
+		encodings     []string
+		manifests     []string
+		contentLength int64
+	}{
+		{name: "missing manifest", contentTypes: []string{"application/octet-stream"}, contentLength: 4},
+		{name: "duplicate manifest", contentTypes: []string{"application/octet-stream"}, manifests: []string{encoded, encoded}, contentLength: 4},
+		{name: "noncanonical manifest", contentTypes: []string{"application/octet-stream"}, manifests: []string{encoded + "\n"}, contentLength: 4},
+		{name: "compressed", contentTypes: []string{"application/octet-stream"}, encodings: []string{"gzip"}, manifests: []string{encoded}, contentLength: 4},
+		{name: "ambiguous content type", contentTypes: []string{"application/octet-stream", "application/octet-stream"}, manifests: []string{encoded}, contentLength: 4},
+		{name: "unknown body length", contentTypes: []string{"application/octet-stream"}, manifests: []string{encoded}, contentLength: -1},
+		{name: "wrong body length", contentTypes: []string{"application/octet-stream"}, manifests: []string{encoded}, contentLength: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/v1/models", strings.NewReader("onnx"))
+			request.Header["Content-Type"] = test.contentTypes
+			request.Header["Content-Encoding"] = test.encodings
+			request.Header[ModelManifestHeader] = test.manifests
+			request.ContentLength = test.contentLength
+			if _, err := decodeModelUpload(request); err == nil {
+				t.Fatal("unsafe model upload representation was accepted")
 			}
 		})
 	}

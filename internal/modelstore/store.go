@@ -366,13 +366,15 @@ func (s *Store) verifyManifest(manifest Manifest) error {
 		return domain.NewError(domain.ErrInvalidContract, "verify model manifest", "model SHA-256 is invalid")
 	}
 	signature, err := base64.StdEncoding.DecodeString(manifest.Signature)
-	if err != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(s.verifyKey, signingPayload(manifest), signature) {
+	if err != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(s.verifyKey, SigningPayload(manifest), signature) {
 		return domain.NewError(domain.ErrInvalidContract, "verify model manifest", "model signature is invalid")
 	}
 	return nil
 }
 
-func signingPayload(manifest Manifest) []byte {
+// SigningPayload returns the canonical bytes covered by a model manifest's
+// Ed25519 signature.
+func SigningPayload(manifest Manifest) []byte {
 	return []byte(manifest.SchemaVersion + "\n" + manifest.Version + "\n" + strconv.FormatInt(manifest.Size, 10) + "\n" + manifest.SHA256 + "\n")
 }
 

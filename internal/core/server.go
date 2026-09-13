@@ -28,6 +28,7 @@ import (
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/egress"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
+	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/protocol"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
@@ -40,6 +41,8 @@ import (
 
 const maxManagementBody = 64 << 10
 const maxRuleInstallBody = 2 << 20
+const maxModelManifestHeaderBytes = 8 << 10
+const maxModelUploadDuration = 15 * time.Minute
 const defaultMaxConcurrentProxyRequests = 64
 const maxConcurrentProxyRequests = 4096
 const maxIntegrationLeaseSeconds = 3600
@@ -62,6 +65,7 @@ type Server struct {
 	policyMu    sync.RWMutex
 	policyStore *policy.Store
 	ruleStore   *rulestore.Store
+	modelStore  *modelstore.Store
 	scannerMu   sync.RWMutex
 	auditor     interface {
 		Append(domain.AuditEvent) error
@@ -187,6 +191,25 @@ func (s *Server) WithRuleStore(store *rulestore.Store) error {
 	s.scannerMu.Unlock()
 	return nil
 }
+func (s *Server) WithModelStore(store *modelstore.Store) error {
+	if store == nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure models", "model store is required")
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.listener != nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure models", "model store cannot change after the server starts")
+	}
+	file, _, err := store.OpenActive()
+	if err == nil {
+		err = file.Close()
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	s.modelStore = store
+	return nil
+}
 func (s *Server) WithAuditor(value interface{ Append(domain.AuditEvent) error }) *Server {
 	if value == nil {
 		s.auditor = nil
@@ -244,6 +267,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT /v1/rules/active", s.auth(s.activateRulePack))
 	mux.HandleFunc("DELETE /v1/rules/active", s.auth(s.deactivateRulePack))
 	mux.HandleFunc("DELETE /v1/rules/{version}", s.auth(s.removeRulePack))
+	mux.HandleFunc("GET /v1/models", s.auth(s.listModels))
+	mux.HandleFunc("POST /v1/models", s.auth(s.installModel))
+	mux.HandleFunc("PUT /v1/models/active", s.auth(s.activateModel))
+	mux.HandleFunc("DELETE /v1/models/active", s.auth(s.deactivateModel))
+	mux.HandleFunc("DELETE /v1/models/{version}", s.auth(s.removeModel))
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("POST /route/", s.proxyHandler())
 	mux.Handle("GET /route/", s.proxyHandler())
@@ -571,6 +599,102 @@ func (s *Server) removeRulePack(w http.ResponseWriter, r *http.Request) {
 	defer s.scannerMu.RUnlock()
 	if err := s.ruleStore.Remove(r.PathValue("version")); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "RULE_REMOVAL_FAILED"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+const ModelManifestHeader = "X-AgentVeil-Model-Manifest"
+
+type modelInventory struct {
+	Active   string                `json:"active,omitempty"`
+	Versions []modelstore.Manifest `json:"versions"`
+}
+
+func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
+	if s.modelStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
+		return
+	}
+	versions, err := s.modelStore.List()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MODEL_INVENTORY_FAILED"})
+		return
+	}
+	inventory := modelInventory{Versions: versions}
+	file, active, err := s.modelStore.OpenActive()
+	if err == nil {
+		if closeErr := file.Close(); closeErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ACTIVE_MODEL_INVALID"})
+			return
+		}
+		inventory.Active = active.Version
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ACTIVE_MODEL_INVALID"})
+		return
+	}
+	writeJSON(w, http.StatusOK, inventory)
+}
+
+func (s *Server) installModel(w http.ResponseWriter, r *http.Request) {
+	if s.modelStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
+		return
+	}
+	manifest, err := decodeModelUpload(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MODEL"})
+		return
+	}
+	if err := http.NewResponseController(w).SetReadDeadline(time.Now().Add(maxModelUploadDuration)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MODEL_UPLOAD_FAILED"})
+		return
+	}
+	if err := s.modelStore.Install(manifest, r.Body); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_INSTALLATION_FAILED"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, manifest)
+}
+
+func (s *Server) activateModel(w http.ResponseWriter, r *http.Request) {
+	if s.modelStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
+		return
+	}
+	var request struct {
+		Version string `json:"version"`
+	}
+	if err := decodeManagement(r, &request); err != nil || request.Version == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "INVALID_MODEL_VERSION"})
+		return
+	}
+	if err := s.modelStore.Activate(request.Version); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_ACTIVATION_FAILED"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deactivateModel(w http.ResponseWriter, _ *http.Request) {
+	if s.modelStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
+		return
+	}
+	if err := s.modelStore.Deactivate(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MODEL_DEACTIVATION_FAILED"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) removeModel(w http.ResponseWriter, r *http.Request) {
+	if s.modelStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MODEL_STORE_UNAVAILABLE"})
+		return
+	}
+	if err := s.modelStore.Remove(r.PathValue("version")); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "MODEL_REMOVAL_FAILED"})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1043,6 +1167,36 @@ func decodeManagementWithLimit(r *http.Request, destination any, limit int64) er
 		return errors.New("management request contains trailing data")
 	}
 	return nil
+}
+
+func decodeModelUpload(r *http.Request) (modelstore.Manifest, error) {
+	if r == nil || r.Body == nil {
+		return modelstore.Manifest{}, errors.New("model upload is required")
+	}
+	contentTypes := r.Header.Values("Content-Type")
+	encodings := r.Header.Values("Content-Encoding")
+	encodedManifests := r.Header.Values(ModelManifestHeader)
+	if len(contentTypes) != 1 || !protocol.MediaTypeIs(contentTypes[0], "application/octet-stream") || len(encodings) > 1 || len(encodings) == 1 && !strings.EqualFold(strings.TrimSpace(encodings[0]), "identity") || len(encodedManifests) != 1 || len(encodedManifests[0]) > maxModelManifestHeaderBytes {
+		return modelstore.Manifest{}, errors.New("model upload representation is invalid or ambiguous")
+	}
+	payload, err := base64.StdEncoding.DecodeString(encodedManifests[0])
+	if err != nil || base64.StdEncoding.EncodeToString(payload) != encodedManifests[0] || len(payload) > maxModelManifestHeaderBytes || jsonsafe.Validate(payload) != nil {
+		return modelstore.Manifest{}, errors.New("model manifest header is invalid")
+	}
+	var manifest modelstore.Manifest
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return modelstore.Manifest{}, errors.New("model manifest header is invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return modelstore.Manifest{}, errors.New("model manifest header contains trailing data")
+	}
+	if manifest.Size <= 0 || manifest.Size > modelstore.MaxArtifactBytes || r.ContentLength != manifest.Size {
+		return modelstore.Manifest{}, errors.New("model upload length does not match manifest")
+	}
+	return manifest, nil
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {

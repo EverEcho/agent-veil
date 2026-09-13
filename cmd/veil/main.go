@@ -28,6 +28,7 @@ import (
 	"github.com/agentveil/agentveil/internal/instance"
 	"github.com/agentveil/agentveil/internal/integration"
 	"github.com/agentveil/agentveil/internal/jsonsafe"
+	"github.com/agentveil/agentveil/internal/modelstore"
 	"github.com/agentveil/agentveil/internal/planner"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/protocol"
@@ -534,6 +535,9 @@ func serve() error {
 	if err := configureRuleStore(server, configDir, os.Getenv("VEIL_RULE_VERIFY_KEY"), os.Getenv("VEIL_RULE_STORE_PATH")); err != nil {
 		return err
 	}
+	if err := configureModelStore(server, configDir, os.Getenv("VEIL_MODEL_VERIFY_KEY"), os.Getenv("VEIL_MODEL_STORE_PATH")); err != nil {
+		return err
+	}
 	auditPath := os.Getenv("VEIL_AUDIT_PATH")
 	if auditPath == "" {
 		auditPath = filepath.Join(configDir, "audit.jsonl")
@@ -588,6 +592,28 @@ func configureRuleStore(server *core.Server, configDir, encodedKey, configuredPa
 		return err
 	}
 	return server.WithRuleStore(store)
+}
+
+func configureModelStore(server *core.Server, configDir, encodedKey, configuredPath string) error {
+	if encodedKey == "" && configuredPath == "" {
+		return nil
+	}
+	if server == nil || encodedKey == "" {
+		return errors.New("VEIL_MODEL_VERIFY_KEY is required when model storage is configured")
+	}
+	key, err := base64.StdEncoding.DecodeString(encodedKey)
+	if err != nil || len(key) != ed25519.PublicKeySize || base64.StdEncoding.EncodeToString(key) != encodedKey {
+		return errors.New("VEIL_MODEL_VERIFY_KEY must be a canonical base64 Ed25519 public key")
+	}
+	path := configuredPath
+	if path == "" {
+		path = filepath.Join(configDir, "models")
+	}
+	store, err := modelstore.New(path, ed25519.PublicKey(key))
+	if err != nil {
+		return err
+	}
+	return server.WithModelStore(store)
 }
 
 func runtimeOptions() planner.Options {

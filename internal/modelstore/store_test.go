@@ -35,7 +35,7 @@ func signedManifest(t *testing.T, private ed25519.PrivateKey, version string, pa
 	t.Helper()
 	digest := sha256.Sum256(payload)
 	manifest := Manifest{SchemaVersion: "v1", Version: version, Size: int64(len(payload)), SHA256: hex.EncodeToString(digest[:])}
-	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, signingPayload(manifest)))
+	manifest.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, SigningPayload(manifest)))
 	return manifest
 }
 
@@ -98,7 +98,7 @@ func TestStoreRejectsBadSignatureSizeAndTampering(t *testing.T) {
 	}
 	oversized := signedManifest(t, private, "large", payload)
 	oversized.Size = MaxArtifactBytes + 1
-	oversized.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, signingPayload(oversized)))
+	oversized.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(private, SigningPayload(oversized)))
 	if err := store.Install(oversized, bytes.NewReader(payload)); err == nil {
 		t.Fatal("oversized model was accepted")
 	}
