@@ -141,7 +141,8 @@ jobs:
             --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{channel:$channel,version:$version,commit:$commit,quality_statement:$statement,built_at:$built_at}' \
             > dist/meta/CHANNEL.json
-          cp LICENSE README.md dist/
+          cp README.md dist/
+          if [ -f LICENSE ]; then cp LICENSE dist/; fi
           (
             cd dist
             find bin meta -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
