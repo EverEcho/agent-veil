@@ -37,7 +37,8 @@ conservatively than discovered traffic.
   that revoke stale active plans after plugin failure, reconfiguration, or
   disconnect;
 - exact upstream allowlisting with HTTPS-by-default, loopback-only HTTP,
-  redirect revalidation, and preserved custom Gateway base paths;
+  method/path/query-preserving redirect revalidation, and preserved custom
+  Gateway base paths;
 - version-gated Codex and Claude Code discovery/protected launch, plus
   discovery-only Hermes and Cursor compatibility records;
 - risk-only inspection for unverified Agent versions, which cannot publish a

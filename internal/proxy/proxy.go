@@ -309,7 +309,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if route.Protocol == domain.ProtocolMCPStreamable && r.Method == http.MethodGet {
 		client.Timeout = 0
 	}
-	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error { return route.allowlist.ValidateURL(request.URL) }
+	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error {
+		if err := route.allowlist.ValidateURL(request.URL); err != nil {
+			return err
+		}
+		if request.Method != upstreamRequest.Method || request.URL.EscapedPath() != upstreamRequest.URL.EscapedPath() || request.URL.RawQuery != upstreamRequest.URL.RawQuery {
+			return domain.NewError(domain.ErrUpstreamDenied, "validate redirect", "redirect changed the protected endpoint")
+		}
+		return nil
+	}
 	response, err := client.Do(upstreamRequest)
 	if err != nil {
 		auditEvent.ErrorCode = "UPSTREAM_FAILURE"

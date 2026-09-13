@@ -1153,6 +1153,40 @@ func TestRedirectCannotEscapeCurrentRoute(t *testing.T) {
 	}
 }
 
+func TestRedirectCannotChangeProtectedEndpointOnSameOrigin(t *testing.T) {
+	for name, location := range map[string]string{
+		"path":  "/different",
+		"query": "/v1/responses?mode=unsafe",
+	} {
+		t.Run(name, func(t *testing.T) {
+			providerCalls := 0
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				providerCalls++
+				if providerCalls == 1 {
+					http.Redirect(w, r, location, http.StatusTemporaryRedirect)
+				}
+			}))
+			defer provider.Close()
+			upstream, _ := url.Parse(provider.URL)
+			manager := session.NewManager()
+			created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+			handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 1024, MaxResponseBytes: 1024, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(HeaderSession, created.Session.ID)
+			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if providerCalls != 1 || recorder.Code != http.StatusBadGateway {
+				t.Fatalf("redirect changed protected endpoint: calls=%d status=%d body=%s", providerCalls, recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestJoinBasePathAvoidsDuplicateProtocolPrefix(t *testing.T) {
 	for _, test := range []struct {
 		base, endpoint, want string
