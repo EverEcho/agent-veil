@@ -16,12 +16,14 @@ type recordingTrustRunner struct {
 	fail           map[int]error
 	lastExecutable string
 	lastArgs       []string
+	hadDeadline    bool
 }
 
-func (r *recordingTrustRunner) Run(_ context.Context, executable string, args ...string) error {
+func (r *recordingTrustRunner) Run(ctx context.Context, executable string, args ...string) error {
 	r.calls++
 	r.lastExecutable = executable
 	r.lastArgs = append([]string(nil), args...)
+	_, r.hadDeadline = ctx.Deadline()
 	return r.fail[r.calls]
 }
 
@@ -41,7 +43,7 @@ func TestLinuxTrustStoreInstallsRefreshesAndUninstallsExactCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !validFingerprint(receipt.Fingerprint) || filepath.Dir(receipt.CertificatePath) != trustRoot || runner.calls != 1 || runner.lastExecutable != "/usr/sbin/update-ca-certificates" || len(runner.lastArgs) != 1 || runner.lastArgs[0] != "--fresh" {
+	if !validFingerprint(receipt.Fingerprint) || filepath.Dir(receipt.CertificatePath) != trustRoot || runner.calls != 1 || runner.lastExecutable != "/usr/sbin/update-ca-certificates" || len(runner.lastArgs) != 1 || runner.lastArgs[0] != "--fresh" || !runner.hadDeadline {
 		t.Fatalf("receipt=%+v refresh calls=%d", receipt, runner.calls)
 	}
 	info, err := os.Stat(receipt.CertificatePath)

@@ -14,9 +14,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
+
+const trustRefreshTimeout = 30 * time.Second
 
 type TrustReceipt struct {
 	Fingerprint     string
@@ -150,7 +153,9 @@ func (s *LinuxTrustStore) Receipt(ca CA) (TrustReceipt, error) {
 }
 
 func (s *LinuxTrustStore) refresh(ctx context.Context) error {
-	return s.runner.Run(ctx, s.updateExecutable, s.updateArgs...)
+	bounded, cancel := context.WithTimeout(ctx, trustRefreshTimeout)
+	defer cancel()
+	return s.runner.Run(bounded, s.updateExecutable, s.updateArgs...)
 }
 
 func trustedCAPayload(ca CA) ([]byte, string, error) {

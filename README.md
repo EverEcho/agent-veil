@@ -71,7 +71,8 @@ conservatively than discovered traffic.
   explicit unknown risks;
 - scoped transparent-mode CA with private atomic activation, local signing
   revocation, restart-reconciled rotation, and a crash-reconciling,
-  rollback-capable Linux trust-store file adapter; bounded Linux process-tree and TCP/connected-UDP
+  rollback-capable Linux trust-store file adapter with bounded refresh commands;
+  bounded Linux process-tree and TCP/connected-UDP
   egress collection plus fail-closed, serialized process-egress assessment and
   watch primitives. Exact loopback hops are reported as `Local`, never as
   content-protected. Linux protected launches terminate their isolated process
