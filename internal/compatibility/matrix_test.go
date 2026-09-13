@@ -1,26 +1,14 @@
 package compatibility
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
 
 func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
-	seen := map[string]struct{}{}
-	for _, record := range Current() {
-		key := strings.Join([]string{record.Agent, record.Version, record.Platform, string(record.Mode), string(record.Surface), string(record.Protocol), string(record.Auth)}, "|")
-		if record.Agent == "" || record.Version == "" || record.Platform == "" || !record.Mode.Valid() || !record.Surface.Valid() || !record.Protocol.Valid() || record.Auth != "" && !record.Auth.Valid() || !record.Coverage.Valid() || record.Verification == "" || record.Notes == "" {
-			t.Fatalf("incomplete record: %+v", record)
-		}
-		if record.Coverage == domain.CoverageProtected && (record.Surface == domain.SurfaceUnknown || record.Protocol == domain.ProtocolUnknown || !record.Auth.Valid() || record.Verification != VerificationLaunchSmoke) {
-			t.Fatalf("protected compatibility is not backed by an exact verified surface: %+v", record)
-		}
-		if _, exists := seen[key]; exists {
-			t.Fatalf("duplicate compatibility record: %s", key)
-		}
-		seen[key] = struct{}{}
+	if err := Validate(Current()); err != nil {
+		t.Fatal(err)
 	}
 	claude := ForAgent("claude", "2.1.220", "linux")
 	if len(claude) != 2 || claude[0].Coverage != domain.CoverageProtected || claude[1].Coverage != domain.CoverageObserved {
@@ -52,5 +40,32 @@ func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
 		if _, ok := verified[discoveryOnly]; ok {
 			t.Fatalf("discovery-only %s version was allowed to claim rewritable compatibility", discoveryOnly)
 		}
+	}
+}
+
+func TestValidationRejectsUnsupportedProtectedProtocol(t *testing.T) {
+	valid := Record{Agent: "agent", Version: "1.0.0", Platform: "linux", Mode: domain.ModeLaunch, Surface: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPLegacySSE, Auth: domain.AuthPassthrough, Coverage: domain.CoverageUnprotected, Verification: VerificationDiscoveryOnly, Notes: "legacy transport is visible but unsupported"}
+	if err := Validate([]Record{valid}); err != nil {
+		t.Fatalf("truthful legacy record rejected: %v", err)
+	}
+	valid.Coverage = domain.CoverageProtected
+	valid.Verification = VerificationLaunchSmoke
+	if err := Validate([]Record{valid}); err == nil {
+		t.Fatal("legacy MCP SSE was allowed to claim Protected compatibility")
+	}
+}
+
+func TestValidationRejectsMalformedAndDuplicateRecords(t *testing.T) {
+	valid := Record{Agent: "agent", Version: "1.0.0", Platform: "linux", Mode: domain.ModeLaunch, Surface: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, Auth: domain.AuthPassthrough, Coverage: domain.CoverageProtected, Verification: VerificationLaunchSmoke, Notes: "verified"}
+	for name, candidate := range map[string][]Record{
+		"unknown verification": {func() Record { record := valid; record.Verification = "assumed"; return record }()},
+		"missing notes":        {func() Record { record := valid; record.Notes = " "; return record }()},
+		"duplicate":            {valid, valid},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate(candidate); err == nil {
+				t.Fatal("invalid compatibility records were accepted")
+			}
+		})
 	}
 }

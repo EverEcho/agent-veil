@@ -20,7 +20,7 @@
 | 事项 | 状态 | 当前答案与退出条件 |
 |---|---|---|
 | macOS/Linux/Windows 的平台能力差异和统一安全语义 | 部分落地 | 数据面与管理面保持统一 fail-closed 语义，六个 OS/架构目标可交叉构建；只有 Linux 具备受测的进程出口观察与 CA trust-store adapter。macOS/Windows 安装、权限、出口阻断和卸载证据完成前不得宣称平台能力等价。 |
-| 目标 Agent 版本与配置入口 | 部分落地 | 编译进二进制并可离线导出的 Compatibility Matrix 是唯一验证事实源。当前 Protected launch 仅覆盖矩阵中标记为 `launch_smoke` 的 Linux Codex 0.153.4、Claude Code 2.1.220 与 Hermes 0.20.6 Surface；其他发现结果不能提升覆盖级别。新增版本必须先增加 fixture、启动证据和精确矩阵记录。 |
+| 目标 Agent 版本与配置入口 | 部分落地 | 编译进二进制并可离线导出的 Compatibility Matrix 是唯一验证事实源；矩阵在进程初始化时执行生产校验，Protected 记录必须同时命中协议层完整请求/响应/流适配器集合和 `launch_smoke` 证据。当前 Protected launch 仅覆盖 Linux Codex 0.153.4、Claude Code 2.1.220 与 Hermes 0.20.6 Surface；其他发现结果不能提升覆盖级别。新增版本必须先增加 fixture、启动证据和精确矩阵记录。 |
 | Codex API Key 与 ChatGPT 登录链路的凭据边界 | 已落地（当前范围） | API Key 仅通过 Agent 自身环境读取并由受保护路由引用；无 API Key 时使用 Codex 现有登录能力，Core 不迁移、不存储长期凭据。两条路径都只向子进程下发短期 Session/Route capability。新的登录传输出现时重新进入未验证状态。 |
 | `ASK/本次允许` 的一致行为 | 已落地 | 交互 Session 在 Core 内暂停并创建一次性审批，只接受 `allow/redact/block`；Dashboard 与 `veil approvals` 使用同一版本化 API。取消等同阻断，超时阻断，非交互 Session 将 `ASK` 直接按 `BLOCK` 执行。Finding 只暴露位置和分类元数据，不暴露原文。 |
 | 默认 PII 策略与 Action | 已落地（可配置） | 默认 Action 为 `REDACT`，`secret.private_key` 显式为 `BLOCK`。用户可通过同一 Policy Document 在 Dashboard 或 `veil policy` 覆盖；重复 Scope、无效 Action、原始工作区路径和未知字段均拒绝。误报反馈只保留本地有界元数据，不自动弱化策略。 |

@@ -135,7 +135,9 @@ conservatively than discovered traffic.
   rewritable surface or claim protected coverage and includes a required unknown
   Surface whenever the parsed configuration otherwise looks complete; the compatibility inventory
   records verified mode, platform, Surface type, protocol, authentication, and
-  coverage independently and rejects Protected records with unknown dimensions.
+  coverage independently. Its production validator rejects malformed or duplicate
+  records and any Protected claim whose protocol is absent from the same complete
+  request/response/stream adapter registry used to configure the runtime Planner.
   Inspection also fails closed when the user configuration directory is
   unavailable or when supported environment overrides contain relative,
   whitespace-ambiguous, oversized, or control-character paths;

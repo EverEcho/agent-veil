@@ -198,6 +198,21 @@ func TestProtocolEndpointsRejectTraversalAndAmbiguity(t *testing.T) {
 	}
 }
 
+func TestContentProtectedProtocolsExcludeUnimplementedTransports(t *testing.T) {
+	seen := map[domain.Protocol]struct{}{}
+	for _, protocolType := range ContentProtectedProtocols() {
+		if _, duplicate := seen[protocolType]; duplicate || !protocolType.Valid() || !SupportsContentProtection(protocolType) {
+			t.Fatalf("invalid content-protected protocol registry: %q", protocolType)
+		}
+		seen[protocolType] = struct{}{}
+	}
+	for _, unsupported := range []domain.Protocol{domain.ProtocolMCPLegacySSE, domain.ProtocolLocalStdio, domain.ProtocolUnknown} {
+		if SupportsContentProtection(unsupported) {
+			t.Fatalf("unimplemented transport %q claims full content protection", unsupported)
+		}
+	}
+}
+
 func TestProtocolRejectsDuplicateKeysAcrossRequestAndResponse(t *testing.T) {
 	if _, err := Parse("/v1/chat/completions", "application/json", "", []byte(`{"messages":[],"messages":[{"role":"user","content":"hidden"}]}`)); err == nil {
 		t.Fatal("request with duplicate messages was accepted")

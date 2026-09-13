@@ -11,7 +11,7 @@ verify:
 # This target proves only the automated scope; it intentionally does not stand
 # in for real-application or target-platform validation.
 acceptance-evidence:
-	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSECannotBorrowImplementedMCPAdapters)$$' -count=1
+	go test ./internal/protocol -run '^(TestProtocolFixturesExtractOnlyBusinessContentAndRoundTrip|TestLegacyMCPSSECannotBorrowImplementedMCPAdapters|TestContentProtectedProtocolsExcludeUnimplementedTransports)$$' -count=1
 	go test ./internal/planner -run '^TestLegacyMCPSSEIsKnownButUnprotectedWithoutTransportCapability$$' -count=1
 	go test ./internal/pipeline -run '^(TestNonStreamingResponseProtocolMatrixRestoresPlaceholders|TestSSEProtocolMatrixRestoresFragmentedPlaceholders|TestSSEProtocolMatrixBlocksNewCredentials)$$' -count=1
 	go test ./internal/proxy -run '^(TestEndToEndProtocolMatrixOnlySendsRedactedContentToProvider|TestMCPRoutesUseExactConfiguredUpstreamPath)$$' -count=1
@@ -21,7 +21,7 @@ acceptance-evidence:
 	go test ./cmd/veil -run '^TestInspectionIncludesManifestAndTruthfulPlan$$' -count=1
 	go test ./internal/routing -run '^TestContentModifierAfterDLPIsBlocked$$' -count=1
 	go test ./internal/audit ./internal/diagnostic -count=1
-	go test ./internal/compatibility -run '^TestMatrixIsExplicitAndPlatformScoped$$' -count=1
+	go test ./internal/compatibility -run '^(TestMatrixIsExplicitAndPlatformScoped|TestValidationRejectsUnsupportedProtectedProtocol)$$' -count=1
 
 build:
 	go build -trimpath -o veil ./cmd/veil

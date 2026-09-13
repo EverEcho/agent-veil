@@ -33,6 +33,30 @@ const (
 	MaxEndpointBytes    = 4096
 )
 
+// ContentProtectedProtocols returns the protocols whose request, response, and
+// streaming envelopes are all implemented by this package. Keep unsupported or
+// partially implemented transports out of this list: callers use it as the
+// runtime capability boundary for Protected coverage claims.
+func ContentProtectedProtocols() []domain.Protocol {
+	return []domain.Protocol{
+		domain.ProtocolOpenAIChat,
+		domain.ProtocolOpenAIResponses,
+		domain.ProtocolAnthropic,
+		domain.ProtocolGemini,
+		domain.ProtocolMCPHTTP,
+		domain.ProtocolMCPStreamable,
+	}
+}
+
+func SupportsContentProtection(protocolType domain.Protocol) bool {
+	for _, supported := range ContentProtectedProtocols() {
+		if protocolType == supported {
+			return true
+		}
+	}
+	return false
+}
+
 func Parse(endpoint, contentType, contentEncoding string, body []byte) (*Document, error) {
 	return ParseExpected("", endpoint, contentType, contentEncoding, body)
 }
