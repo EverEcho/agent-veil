@@ -44,7 +44,9 @@ conservatively than discovered traffic.
   and per-Finding layered policy previews, and
   audit. `ASK` cards offer one-time allow/redact decisions, an original-free
   redaction preview, and an explicit cancel-and-block action. The nested call
-  tree also offers a localized, user-confirmed Session revocation control.
+  tree also offers a localized, user-confirmed Session revocation control, and
+  the Routing Graph can stop an exact Agent registration generation without a
+  stale page removing a newer controller.
   Protection risks expose their source
   Surface, severity, impact, and a conservative resolution action; retained
   metadata also drives local-day summaries and a seven-day risk trend, with

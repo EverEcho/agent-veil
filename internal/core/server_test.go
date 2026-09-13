@@ -196,6 +196,11 @@ func TestDashboardContainsNoProtectedData(t *testing.T) {
 			t.Fatalf("dashboard session lifecycle control is missing %q", required)
 		}
 	}
+	for _, required := range []string{"remove-agent", "Stop protection", "停止保护", "confirm.agent", "removeAgent", "Number.isSafeInteger", "?generation=", "Protection stop failed"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard generation-bound protection control is missing %q", required)
+		}
+	}
 	for _, required := range []string{"body:source", `body='{"manifest":'+manifestSource`, "new TextEncoder().encode(manifestSource)", "manifestBytes.length>6144"} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard does not preserve strict JSON input: missing %q", required)
