@@ -693,11 +693,7 @@ func managementJSONWithTimeout(ctx context.Context, method, target, token string
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{
-		Timeout:       timeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	response, err := client.Do(request)
+	response, err := managementHTTPClient(timeout).Do(request)
 	if err != nil {
 		return err
 	}
@@ -712,6 +708,13 @@ func managementJSONWithTimeout(ctx context.Context, method, target, token string
 		return decodeManagementResponse(response, output)
 	}
 	return nil
+}
+
+func managementHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 func requireCompatibleCore(ctx context.Context, endpoint, token string) error {
@@ -1007,32 +1010,50 @@ func status() error {
 	if err != nil {
 		return err
 	}
-	token := os.Getenv("VEIL_ADMIN_TOKEN")
+	return writeCoreStatus(os.Stdout, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"))
+}
+
+func writeCoreStatus(writer io.Writer, endpoint, token string) error {
+	if writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "write Core status", "writer is required")
+	}
 	if _, err := core.ListenAddress(endpoint); err != nil {
 		return err
 	}
-	request, _ := http.NewRequest(http.MethodGet, endpoint+"/v1/health", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Accept-Encoding", "identity")
-	request.Header.Set(core.APIVersionHeader, core.APIVersion)
-	client := &http.Client{Timeout: 3 * time.Second}
-	response, err := client.Do(request)
+	var health struct {
+		Status        string `json:"status"`
+		APIVersion    string `json:"api_version"`
+		Audit         string `json:"audit"`
+		AuditFailures string `json:"audit_failures,omitempty"`
+		Semantic      string `json:"semantic"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/health", token, nil, &health); err != nil {
+		return err
+	}
+	if (health.Status != "ok" && health.Status != "degraded") || health.APIVersion != core.APIVersion || (health.Audit != "disabled" && health.Audit != "ok" && health.Audit != "error") || (health.Semantic != "disabled" && health.Semantic != "ready" && health.Semantic != "active" && health.Semantic != "required_unavailable") {
+		return errors.New("Core returned an invalid health state")
+	}
+	if health.Audit == "error" && health.AuditFailures == "" || health.Audit != "error" && health.AuditFailures != "" {
+		return errors.New("Core returned inconsistent audit health")
+	}
+	if health.AuditFailures != "" {
+		if failures, err := strconv.ParseUint(health.AuditFailures, 10, 64); err != nil || failures == 0 {
+			return errors.New("Core returned an invalid audit failure count")
+		}
+	}
+	_, err := fmt.Fprintf(writer, "AgentVeil Core: %s (API %s)\nAudit: %s", health.Status, health.APIVersion, health.Audit)
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
-	if err := validateManagementAPIVersion(response); err != nil {
-		return err
+	if health.AuditFailures != "" {
+		if _, err := fmt.Fprintf(writer, " (%s failures)", health.AuditFailures); err != nil {
+			return err
+		}
 	}
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("core returned %s", response.Status)
-	}
-	var health map[string]string
-	if err := decodeManagementResponse(response, &health); err != nil {
-		return err
-	}
-	fmt.Printf("AgentVeil Core: %s (API %s)\n", health["status"], health["api_version"])
-	return nil
+	_, err = fmt.Fprintf(writer, "\nSemantic: %s\n", health.Semantic)
+	return err
 }
 
 func compatibilityReport() error {
@@ -1085,7 +1106,7 @@ func diagnostics() error {
 	request.Header.Set("Authorization", "Bearer "+os.Getenv("VEIL_ADMIN_TOKEN"))
 	request.Header.Set("Accept-Encoding", "identity")
 	request.Header.Set(core.APIVersionHeader, core.APIVersion)
-	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	response, err := managementHTTPClient(10 * time.Second).Do(request)
 	if err != nil {
 		return err
 	}
@@ -1340,11 +1361,7 @@ func uploadModel(ctx context.Context, endpoint, token string, manifestPayload []
 	request.Header.Set("Content-Type", "application/octet-stream")
 	request.Header.Set(core.APIVersionHeader, core.APIVersion)
 	request.Header.Set(core.ModelManifestHeader, base64.StdEncoding.EncodeToString(manifestPayload))
-	client := &http.Client{
-		Timeout:       modelManagementTimeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	response, err := client.Do(request)
+	response, err := managementHTTPClient(modelManagementTimeout).Do(request)
 	if err != nil {
 		return err
 	}

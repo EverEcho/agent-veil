@@ -248,6 +248,10 @@ go run ./cmd/veil run hermes -- --help
 go run ./cmd/veil nested codex -- exec "review delegated work"
 ```
 
+`veil status` validates and reports Core API, audit persistence, and semantic
+runtime health separately, including retained audit failure counts when Core is
+degraded. CLI management requests never follow redirects.
+
 The offline compatibility form reads the same validated matrix compiled into
 the binary and needs neither a running Core nor a management token. Tagged CI
 builds include that exact `COMPATIBILITY.json` in checksums and provenance.

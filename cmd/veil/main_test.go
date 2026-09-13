@@ -571,6 +571,51 @@ func TestOfflineCompatibilityReportUsesTheValidatedBuildMatrix(t *testing.T) {
 	}
 }
 
+func TestCoreStatusExplainsAuditAndSemanticDegradation(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("headers=%v", request.Header)
+		}
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"degraded","api_version":"v1","audit":"error","audit_failures":"3","semantic":"required_unavailable"}`)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := writeCoreStatus(&output, server.URL, token); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"AgentVeil Core: degraded (API v1)", "Audit: error (3 failures)", "Semantic: required_unavailable"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("status output=%s", output.String())
+		}
+	}
+}
+
+func TestCoreStatusRejectsInvalidOrInconsistentHealth(t *testing.T) {
+	for _, payload := range []string{
+		`{"status":"healthy","api_version":"v1","audit":"ok","semantic":"active"}`,
+		`{"status":"degraded","api_version":"v1","audit":"error","semantic":"disabled"}`,
+		`{"status":"ok","api_version":"v1","audit":"ok","audit_failures":"1","semantic":"disabled"}`,
+		`{"status":"degraded","api_version":"v1","audit":"error","audit_failures":"zero","semantic":"required_unavailable"}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set(core.APIVersionHeader, core.APIVersion)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, payload)
+		}))
+		if err := writeCoreStatus(io.Discard, server.URL, "token"); err == nil {
+			server.Close()
+			t.Fatalf("invalid health accepted: %s", payload)
+		}
+		server.Close()
+	}
+	if err := writeCoreStatus(nil, "http://127.0.0.1:1", "token"); err == nil {
+		t.Fatal("nil status writer was accepted")
+	}
+}
+
 func TestRulesCommandUsesAuthenticatedVersionedManagementAPI(t *testing.T) {
 	const token = "01234567890123456789012345678901"
 	type requestRecord struct{ method, path string }
