@@ -41,7 +41,8 @@ conservatively than discovered traffic.
   Gateway base paths;
 - version-gated Codex and Claude Code discovery/protected launch, plus
   discovery-only Hermes and Cursor compatibility records; protected children
-  receive route capabilities but never inherit the Core management token;
+  receive only fresh Session/parent/route capabilities and never inherit the
+  Core management token;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP

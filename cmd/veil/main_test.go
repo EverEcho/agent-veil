@@ -50,7 +50,7 @@ func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 }
 
 func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing.T) {
-	environment := overlayEnvironment([]string{"PATH=/bin", "ANTHROPIC_API_KEY=real-provider-key"}, map[string]string{"ANTHROPIC_API_KEY": "veil-v1:session:route", "VEIL_SESSION_ID": "session"})
+	environment := overlayEnvironment([]string{"PATH=/bin", "ANTHROPIC_API_KEY=real-provider-key", "anthropic_api_key=case-variant"}, map[string]string{"ANTHROPIC_API_KEY": "veil-v1:session:route", "VEIL_SESSION_ID": "session"})
 	joined := strings.Join(environment, "\n")
 	if strings.Contains(joined, "real-provider-key") || strings.Count(joined, "ANTHROPIC_API_KEY=") != 1 || !strings.Contains(joined, "ANTHROPIC_API_KEY=veil-v1:session:route") {
 		t.Fatalf("environment=%v", environment)
@@ -59,11 +59,11 @@ func TestLaunchEnvironmentReplacesProviderCredentialWithoutDuplicates(t *testing
 
 func TestProtectedChildEnvironmentNeverInheritsCoreAdminToken(t *testing.T) {
 	environment := protectedChildEnvironment(
-		[]string{"PATH=/bin", "VEIL_ADMIN_TOKEN=management-secret", "veil_admin_token=case-variant"},
+		[]string{"PATH=/bin", "VEIL_ADMIN_TOKEN=management-secret", "veil_admin_token=case-variant", "VEIL_PARENT_SESSION=stale-parent", "veil_session_id=stale-session"},
 		map[string]string{"VEIL_SESSION_ID": "session", "VEIL_ADMIN_TOKEN": "override-secret"},
 	)
 	joined := strings.Join(environment, "\n")
-	if strings.Contains(strings.ToLower(joined), "veil_admin_token=") || !strings.Contains(joined, "VEIL_SESSION_ID=session") || !strings.Contains(joined, "PATH=/bin") {
+	if strings.Contains(strings.ToLower(joined), "veil_admin_token=") || strings.Contains(joined, "stale-parent") || strings.Contains(joined, "stale-session") || strings.Count(strings.ToLower(joined), "veil_session_id=") != 1 || !strings.Contains(joined, "VEIL_SESSION_ID=session") || !strings.Contains(joined, "PATH=/bin") {
 		t.Fatalf("protected child environment=%v", environment)
 	}
 }

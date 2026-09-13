@@ -283,10 +283,16 @@ func bindRouteCredentials(routes []domain.ProtectedRoute, created session.Create
 
 func overlayEnvironment(base []string, overrides map[string]string) []string {
 	result := make([]string, 0, len(base)+len(overrides))
+	replacedKeys := make(map[string]struct{}, len(overrides))
+	for key := range overrides {
+		replacedKeys[strings.ToLower(key)] = struct{}{}
+	}
 	for _, entry := range base {
 		key, _, found := strings.Cut(entry, "=")
-		if _, replaced := overrides[key]; found && replaced {
-			continue
+		if found {
+			if _, replaced := replacedKeys[strings.ToLower(key)]; replaced {
+				continue
+			}
 		}
 		result = append(result, entry)
 	}
@@ -300,7 +306,7 @@ func protectedChildEnvironment(base []string, overrides map[string]string) []str
 	filteredBase := make([]string, 0, len(base))
 	for _, entry := range base {
 		key, _, found := strings.Cut(entry, "=")
-		if found && strings.EqualFold(key, "VEIL_ADMIN_TOKEN") {
+		if found && isVeilChildControlVariable(key) {
 			continue
 		}
 		filteredBase = append(filteredBase, entry)
@@ -313,6 +319,15 @@ func protectedChildEnvironment(base []string, overrides map[string]string) []str
 		filteredOverrides[key] = value
 	}
 	return overlayEnvironment(filteredBase, filteredOverrides)
+}
+
+func isVeilChildControlVariable(key string) bool {
+	for _, protected := range []string{"VEIL_ADMIN_TOKEN", "VEIL_SESSION_ID", "VEIL_PROTECTION_TOKEN", "VEIL_CORE_ENDPOINT", "VEIL_PARENT_SESSION"} {
+		if strings.EqualFold(key, protected) {
+			return true
+		}
+	}
+	return false
 }
 
 func localNoProxy(values ...string) string {
