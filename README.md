@@ -222,6 +222,9 @@ state file. `VEIL_CORE_ENDPOINT` remains available as an explicit override:
 
 ```bash
 go run ./cmd/veil status
+go run ./cmd/veil agents
+go run ./cmd/veil sessions
+go run ./cmd/veil calls
 go run ./cmd/veil approvals list
 go run ./cmd/veil approvals resolve 0123456789abcdef0123456789abcdef redact
 go run ./cmd/veil audit
@@ -258,6 +261,10 @@ go run ./cmd/veil nested codex -- exec "review delegated work"
 `veil status` validates and reports Core API, audit persistence, and semantic
 runtime health separately, including retained audit failure counts when Core is
 degraded. CLI management requests never follow redirects.
+`veil agents`, `veil sessions`, and `veil calls` expose the same bounded live
+registration, Session, and nested call-tree facts used by the Dashboard without
+returning management or Route capabilities. Call-tree structure is revalidated
+before it is printed.
 
 The offline compatibility form reads the same validated matrix compiled into
 the binary and needs neither a running Core nor a management token. Tagged CI

@@ -946,6 +946,63 @@ func TestApprovalsCommandRejectsUntrustedIdentifiersAndActions(t *testing.T) {
 	}
 }
 
+func TestLiveStateCommandsUseAuthenticatedVersionedManagementAPI(t *testing.T) {
+	const token = "01234567890123456789012345678901"
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get(core.APIVersionHeader) != core.APIVersion || request.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("request=%s %s headers=%v", request.Method, request.URL.Path, request.Header)
+		}
+		paths = append(paths, request.URL.Path)
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/agents":
+			_, _ = io.WriteString(w, `[{"state":"active","generation":1}]`)
+		case "/v1/sessions":
+			_, _ = io.WriteString(w, `[{"id":"session-parent","core_endpoint":"http://127.0.0.1:1","started_at":"2026-01-02T03:04:05Z","expires_at":"2026-01-02T04:04:05Z","route_ids":["route-primary"]}]`)
+		case "/v1/call-tree":
+			_, _ = io.WriteString(w, `{"parent":[{"session_id":"child","parent_session_id":"parent","interactive":false,"expires_at":"2026-01-02T04:04:05Z","surfaces":[{"route_id":"route-primary","coverage":"protected"}]}],"":[{"session_id":"parent","interactive":true,"expires_at":"2026-01-02T04:04:05Z","surfaces":[{"route_id":"route-primary","coverage":"protected"}]}]}`)
+		default:
+			t.Fatalf("unexpected path %q", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	for _, resource := range []string{"agents", "sessions", "calls"} {
+		if err := writeLiveState(context.Background(), &output, server.URL, token, resource); err != nil {
+			t.Fatalf("resource=%s err=%v", resource, err)
+		}
+	}
+	if !slices.Equal(paths, []string{"/v1/agents", "/v1/sessions", "/v1/call-tree"}) || !strings.Contains(output.String(), `"session_id": "child"`) {
+		t.Fatalf("paths=%v output=%s", paths, output.String())
+	}
+}
+
+func TestLiveStateCommandsRejectInvalidInputsAndCallTrees(t *testing.T) {
+	if err := writeLiveState(nil, io.Discard, "http://127.0.0.1:1", "token", "agents"); err == nil {
+		t.Fatal("nil live state context was accepted")
+	}
+	if err := writeLiveState(context.Background(), nil, "http://127.0.0.1:1", "token", "agents"); err == nil {
+		t.Fatal("nil live state writer was accepted")
+	}
+	if err := writeLiveState(context.Background(), io.Discard, "https://example.com", "token", "agents"); err == nil {
+		t.Fatal("non-loopback live state endpoint was accepted")
+	}
+	if err := writeLiveState(context.Background(), io.Discard, "http://127.0.0.1:1", "token", "unknown"); err == nil {
+		t.Fatal("unknown live state resource was accepted")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(core.APIVersionHeader, core.APIVersion)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"wrong-parent":[{"session_id":"child","parent_session_id":"parent","expires_at":"2026-01-02T04:04:05Z","surfaces":[{"route_id":"route-primary","coverage":"protected"}]}]}`)
+	}))
+	defer server.Close()
+	if err := writeLiveState(context.Background(), io.Discard, server.URL, "token", "calls"); err == nil || !strings.Contains(err.Error(), "invalid call tree") {
+		t.Fatalf("invalid call tree error=%v", err)
+	}
+}
+
 func TestCompatibleCorePreflightRejectsMismatchedHealthVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set(core.APIVersionHeader, core.APIVersion)

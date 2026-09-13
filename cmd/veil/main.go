@@ -71,9 +71,14 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: veil <approvals|audit|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|status>")
+		return errors.New("usage: veil <agents|approvals|audit|calls|compatibility|diagnostics|discover|inspect|models|nested|policy|rules|run|serve|sessions|status>")
 	}
 	switch args[0] {
+	case "agents", "calls", "sessions":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: veil %s", args[0])
+		}
+		return liveStateCommand(args[0], os.Stdout)
 	case "approvals":
 		return approvalsCommand(args[1:], os.Stdout)
 	case "audit":
@@ -1203,6 +1208,72 @@ func approvalsCommand(args []string, writer io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return executeApprovalsCommand(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), args)
+}
+
+func liveStateCommand(resource string, writer io.Writer) error {
+	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return writeLiveState(ctx, writer, endpoint, os.Getenv("VEIL_ADMIN_TOKEN"), resource)
+}
+
+func writeLiveState(ctx context.Context, writer io.Writer, endpoint, token, resource string) error {
+	if ctx == nil || writer == nil {
+		return domain.NewError(domain.ErrInvalidContract, "read live state", "context and writer are required")
+	}
+	if _, err := core.ListenAddress(endpoint); err != nil {
+		return err
+	}
+	var output any
+	switch resource {
+	case "agents":
+		var entries []registry.Entry
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/agents", token, nil, &entries); err != nil {
+			return err
+		}
+		if len(entries) > 1024 {
+			return errors.New("Core returned too many agent registrations")
+		}
+		output = entries
+	case "sessions":
+		var sessions []domain.ProtectionSession
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/sessions", token, nil, &sessions); err != nil {
+			return err
+		}
+		if len(sessions) > session.MaximumSessions {
+			return errors.New("Core returned too many sessions")
+		}
+		output = sessions
+	case "calls":
+		var tree map[string][]registry.CallNode
+		if err := managementJSON(ctx, http.MethodGet, endpoint+"/v1/call-tree", token, nil, &tree); err != nil {
+			return err
+		}
+		nodes := make([]registry.CallNode, 0)
+		for parentID, children := range tree {
+			for _, node := range children {
+				if node.ParentSessionID != parentID {
+					return errors.New("Core returned an invalid call tree")
+				}
+				nodes = append(nodes, node)
+				if len(nodes) > session.MaximumSessions {
+					return errors.New("Core returned too many call nodes")
+				}
+			}
+		}
+		if _, err := registry.CallTree(nodes); err != nil {
+			return errors.New("Core returned an invalid call tree")
+		}
+		output = tree
+	default:
+		return errors.New("live state resource is invalid")
+	}
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(output)
 }
 
 func executeApprovalsCommand(ctx context.Context, writer io.Writer, endpoint, token string, args []string) error {
