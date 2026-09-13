@@ -164,8 +164,75 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
 
+  desktop-macos:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - name: Build self-contained macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(go env GOARCH)" != "${{ matrix.arch }}" ]; then
+            echo "::error::Runner architecture does not match requested package architecture."
+            exit 1
+          fi
+          app="build/AgentVeil.app"
+          mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources" artifacts
+          go build -trimpath -buildvcs=false -ldflags="-s -w" \
+            -o "${app}/Contents/MacOS/veil" ./cmd/veil
+          (
+            cd desktop
+            go mod tidy
+            go build -trimpath -buildvcs=false -ldflags="-s -w" \
+              -o "../${app}/Contents/MacOS/AgentVeil" .
+          )
+          cp desktop/macos/Info.plist "${app}/Contents/Info.plist"
+          cp README.md .github/release-channels.json "${app}/Contents/Resources/"
+          chmod 755 "${app}/Contents/MacOS/AgentVeil" "${app}/Contents/MacOS/veil"
+          codesign --force --deep --sign - "${app}"
+          archive="agentveil-desktop-${VERSION}-${CHANNEL}-macos-${{ matrix.arch }}"
+          tar -C build -czf "artifacts/${archive}.tar.gz" AgentVeil.app
+          ditto -c -k --sequesterRsrc --keepParent "${app}" "artifacts/${archive}.zip"
+          shasum -a 256 artifacts/* > "artifacts/${archive}.SHA256SUMS"
+      - name: Upload macOS desktop package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agentveil-desktop-${{ env.VERSION }}-${{ env.CHANNEL }}-macos-${{ matrix.arch }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: ${{ env.CHANNEL == 'main' && 90 || env.CHANNEL == 'beta' && 30 || 14 }}
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    needs: [package, desktop-macos]
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: release-artifacts
+          merge-multiple: true
       - name: Publish GitHub Release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -176,7 +243,7 @@ jobs:
             tag="v${VERSION}-${CHANNEL}"
             prerelease="--prerelease"
           fi
-          gh release create "${tag}" artifacts/* \
+          gh release create "${tag}" release-artifacts/* \
             --target "${GITHUB_SHA}" \
             --title "AgentVeil ${VERSION} (${CHANNEL})" \
             --generate-notes \

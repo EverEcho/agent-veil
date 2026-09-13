@@ -26,3 +26,8 @@ The first desktop run creates a private `desktop.token` under the AgentVeil user
 configuration directory. It is never placed in the autostart entry or process
 arguments. `VEIL_ADMIN_TOKEN` can explicitly replace this local adapter in
 managed environments.
+
+The release-channel workflow builds self-contained `AgentVeil.app` bundles on
+native Intel and Apple Silicon runners. Each bundle includes the matching
+`veil` Core executable in `Contents/MacOS`. Development artifacts are ad-hoc
+signed; stable distribution requires Developer ID signing and notarization.

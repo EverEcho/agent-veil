@@ -28,10 +28,11 @@ artifact after a push to `dev`. It can also be run manually from GitHub Actions:
 The workflow rejects branch/channel mismatches. Development runs use a short
 compile, vet, and critical-package test gate. Beta runs execute the full test
 suite and acceptance evidence. Main runs additionally use the race detector.
-All channels package six headless Core targets and a Linux amd64 desktop shell,
-plus compatibility metadata, channel metadata, and SHA-256 checksums.
+All channels package six headless Core targets, a Linux amd64 desktop shell,
+and self-contained macOS desktop app bundles for Intel and Apple Silicon, plus
+compatibility metadata, channel metadata, and SHA-256 checksums. Each macOS app
+contains its matching Core executable beside the desktop executable.
 
-Native desktop packages for macOS and Windows require their native build and
-signing environments. Until those pipelines and platform acceptance evidence
-exist, the cross-platform Core binaries do not imply verified native desktop
-support on those platforms.
+The development and beta macOS apps are ad-hoc signed. A main release still
+requires Apple Developer ID signing, notarization, and platform acceptance
+evidence. Native Windows desktop packaging also remains pending.
