@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,33 @@ type fakeSystem struct {
 type inventorySystem struct {
 	installed map[string]string
 }
+
+type concurrentInventorySystem struct {
+	mu                   sync.Mutex
+	current, maxObserved int
+}
+
+func (s *concurrentInventorySystem) LookPath(name string) (string, error) {
+	return "/bin/" + name, nil
+}
+
+func (s *concurrentInventorySystem) Version(_ context.Context, executable string) (string, error) {
+	s.mu.Lock()
+	s.current++
+	if s.current > s.maxObserved {
+		s.maxObserved = s.current
+	}
+	s.mu.Unlock()
+	time.Sleep(100 * time.Millisecond)
+	s.mu.Lock()
+	s.current--
+	s.mu.Unlock()
+	return executable + " 1.2.3", nil
+}
+
+func (*concurrentInventorySystem) ReadFile(string) ([]byte, error) { return nil, os.ErrNotExist }
+func (*concurrentInventorySystem) LookupEnv(string) (string, bool) { return "", false }
+func (*concurrentInventorySystem) HomeDir() (string, error)        { return "/home/test", nil }
 
 func (f inventorySystem) LookPath(name string) (string, error) {
 	if _, ok := f.installed[name]; !ok {
@@ -389,6 +417,26 @@ func TestOSSystemBoundsVersionCommandOutputAndRuntime(t *testing.T) {
 	}
 	if time.Since(started) > time.Second {
 		t.Fatalf("version process exceeded its caller deadline: elapsed=%v", time.Since(started))
+	}
+}
+
+func TestDetectAllBoundsConcurrentVersionProbesAndPreservesOrder(t *testing.T) {
+	system := &concurrentInventorySystem{}
+	started := time.Now()
+	detections := (Discoverer{System: system}).DetectAll(context.Background())
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("bounded concurrent discovery took %v", elapsed)
+	}
+	if system.maxObserved < 2 || system.maxObserved > maxConcurrentVersionProbes {
+		t.Fatalf("maximum concurrent probes=%d", system.maxObserved)
+	}
+	if len(detections) != len(SupportedAgents) {
+		t.Fatalf("detections=%d want=%d", len(detections), len(SupportedAgents))
+	}
+	for index, detection := range detections {
+		if detection.Agent != SupportedAgents[index] || detection.Status != DetectionUnverified {
+			t.Fatalf("detection[%d]=%+v", index, detection)
+		}
 	}
 }
 

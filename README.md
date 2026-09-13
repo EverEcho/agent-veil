@@ -46,7 +46,8 @@ conservatively than discovered traffic.
   receive only fresh Session/parent/route capabilities and never inherit the
   Core management token;
 - bounded Agent configuration inspection restricted to stable regular files,
-  with hard deadlines for version commands and inherited output pipes;
+  with hard deadlines for version commands and inherited output pipes, plus a
+  fixed concurrency ceiling for deterministic discovery;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
 - Hermes 0.20.6 enumeration of primary, fallback, auxiliary, delegation, and MCP

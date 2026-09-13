@@ -27,6 +27,7 @@ const maxAgentConfigBytes = 8 << 20
 const maxAgentVersionBytes = 64 << 10
 const agentVersionTimeout = 3 * time.Second
 const agentVersionWaitDelay = 250 * time.Millisecond
+const maxConcurrentVersionProbes = 4
 
 var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
 
@@ -156,25 +157,44 @@ func Default() Discoverer {
 }
 
 func (d Discoverer) DetectAll(ctx context.Context) []Detection {
-	result := make([]Detection, 0, len(SupportedAgents))
-	for _, name := range SupportedAgents {
+	agents := append([]string(nil), SupportedAgents...)
+	probes := make([]Detection, len(agents))
+	installed := make([]bool, len(agents))
+	semaphore := make(chan struct{}, maxConcurrentVersionProbes)
+	var wait sync.WaitGroup
+	for index, name := range agents {
 		executable, err := d.System.LookPath(name)
 		if err != nil {
 			continue
 		}
-		detection := Detection{Agent: name, Executable: executable, Status: DetectionVersionUnknown}
-		if output, versionErr := d.System.Version(ctx, executable); versionErr == nil {
-			detection.Version = versionPattern.FindString(output)
-		}
-		if detection.Version != "" {
-			detection.Status = DetectionUnverified
-			if versions := d.Verified[name]; versions != nil {
-				if _, ok := versions[detection.Version]; ok {
-					detection.Status = DetectionVerified
+		installed[index] = true
+		probes[index] = Detection{Agent: name, Executable: executable, Status: DetectionVersionUnknown}
+		wait.Add(1)
+		go func(index int, name, executable string) {
+			defer wait.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			detection := probes[index]
+			if output, versionErr := d.System.Version(ctx, executable); versionErr == nil {
+				detection.Version = versionPattern.FindString(output)
+			}
+			if detection.Version != "" {
+				detection.Status = DetectionUnverified
+				if versions := d.Verified[name]; versions != nil {
+					if _, ok := versions[detection.Version]; ok {
+						detection.Status = DetectionVerified
+					}
 				}
 			}
+			probes[index] = detection
+		}(index, name, executable)
+	}
+	wait.Wait()
+	result := make([]Detection, 0, len(probes))
+	for index, detection := range probes {
+		if installed[index] {
+			result = append(result, detection)
 		}
-		result = append(result, detection)
 	}
 	return result
 }
