@@ -30,9 +30,9 @@ func TestResponseRestoresContentButNeverIntegrityFields(t *testing.T) {
 }
 func TestResponseBlocksNewSecret(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
-	_, err := ProcessResponse(domain.ProtocolOpenAIResponses, "application/json", []byte(`{"output_text":"ghp_abcdefghijklmnopqrstuvwxyz"}`), detector.NewDefault(), vault)
-	if err == nil {
-		t.Fatal("new response secret was not blocked")
+	result, err := ProcessResponseDetailed(domain.ProtocolOpenAIResponses, "application/json", []byte(`{"output_text":"ghp_abcdefghijklmnopqrstuvwxyz"}`), detector.NewDefault(), vault)
+	if err == nil || len(result.Findings) != 1 || result.Findings[0].Category != "secret.github_pat" || len(result.Body) != 0 {
+		t.Fatalf("new response secret was not safely reported: result=%+v err=%v", result, err)
 	}
 }
 

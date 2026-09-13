@@ -433,7 +433,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(response.StatusCode)
 		return
 	}
-	restored, err := pipeline.ProcessResponse(processed.Protocol, responseContentType, responseBody, h.scanner, vault)
+	responseResult, err := pipeline.ProcessResponseDetailed(processed.Protocol, responseContentType, responseBody, h.scanner, vault)
+	processed.Findings = append(processed.Findings, responseResult.Findings...)
+	for range responseResult.Findings {
+		processed.Actions = append(processed.Actions, domain.ActionBlock)
+	}
+	applyAuditResult(&auditEvent, processed)
 	if err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
@@ -444,7 +449,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Content-Length")
 	secureResponseHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(restored)
+	_, _ = w.Write(responseResult.Body)
 }
 
 func joinBasePath(basePath, endpoint string) string {

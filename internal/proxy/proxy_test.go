@@ -1335,6 +1335,28 @@ func TestProviderResponseHeaderRejectsUnknownPlaceholder(t *testing.T) {
 	}
 }
 
+func TestProviderResponseBodyFindingIsIncludedInAudit(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"ghp_abcdefghijklmnopqrstuvwxyz"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	auditor := &recordingAuditor{}
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Auditor: auditor, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden || strings.Contains(recorder.Body.String(), "ghp_") || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "secret.github_pat" {
+		t.Fatalf("status=%d audit=%+v body=%s", recorder.Code, auditor.events, recorder.Body.String())
+	}
+}
+
 func TestAmbiguousProviderRepresentationHeadersFailClosed(t *testing.T) {
 	for _, test := range []struct {
 		name, header, first, second string
