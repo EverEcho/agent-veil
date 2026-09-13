@@ -15,12 +15,13 @@ not by itself promote a revision or prove that the statement is true.
 
 ## Packaging
 
-The `Package release channel` workflow automatically creates a development
-artifact after a push to `dev`. It can also be run manually from GitHub Actions:
+The `Package release channel` workflow is run manually from GitHub Actions so
+ordinary development pushes do not start duplicate multi-platform builds:
 
 1. Select **Package release channel** and choose **Run workflow**.
 2. Select the branch matching the requested channel.
-3. Enter a version and select the exact quality statement for that channel.
+3. Enter a numeric SemVer version such as `0.1.1`, without a leading `v` or
+   channel suffix, and select the exact quality statement for that channel.
 4. Leave **publish_release** off to create only a downloadable workflow
    artifact, or enable it to create a GitHub Release. Development and beta
    GitHub Releases are marked as prereleases.

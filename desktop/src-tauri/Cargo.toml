@@ -26,3 +26,11 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Dev packages favor turnaround time. Beta and main continue to use the fully
+# optimized release profile above.
+[profile.dev-package]
+inherits = "release"
+codegen-units = 8
+lto = "thin"
+opt-level = 2

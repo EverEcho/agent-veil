@@ -79,6 +79,9 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri -> target
       - name: Compile Tauri desktop shell
         run: cargo check --locked --manifest-path desktop/src-tauri/Cargo.toml
 
@@ -136,7 +139,7 @@ jobs:
       - name: Install pinned govulncheck
         env:
           GOBIN: ${{ runner.temp }}/govulncheck-bin
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.0.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - name: Scan reachable Go vulnerabilities
         run: ${{ runner.temp }}/govulncheck-bin/govulncheck ./...
 

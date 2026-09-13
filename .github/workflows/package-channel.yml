@@ -1,8 +1,6 @@
 name: Package release channel
 
 on:
-  push:
-    branches: [dev]
   workflow_dispatch:
     inputs:
       channel:
@@ -15,7 +13,7 @@ on:
         description: Package version without a leading v
         required: true
         type: string
-        default: 0.0.0-dev
+        default: 0.0.0
       quality_statement:
         description: Confirm the quality level required by the selected channel
         required: true
@@ -36,15 +34,15 @@ permissions:
 
 concurrency:
   group: package-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   package:
     runs-on: ubuntu-latest
     env:
-      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
-      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
-      QUALITY_STATEMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.quality_statement || 'dev-no-fatal' }}
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ inputs.version }}
+      QUALITY_STATEMENT: ${{ inputs.quality_statement }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -71,8 +69,8 @@ jobs:
             echo "::error::Channel ${CHANNEL} requires quality statement ${expected_statement}."
             exit 1
           fi
-          if ! [[ "${VERSION}" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
-            echo "::error::Version contains unsupported characters."
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must be numeric SemVer such as 0.1.1; the workflow adds the channel suffix to release tags."
             exit 1
           fi
 
@@ -176,8 +174,8 @@ jobs:
             bundles: nsis,msi
     runs-on: ${{ matrix.runner }}
     env:
-      CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'dev' }}
-      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || format('0.0.0-dev.{0}', github.run_number) }}
+      CHANNEL: ${{ inputs.channel }}
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -186,14 +184,20 @@ jobs:
         with:
           go-version: "1.23.x"
           cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri -> target
       - name: Install Linux Tauri dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Install pinned Tauri CLI
+      - name: Install prebuilt Tauri CLI
         shell: bash
-        run: cargo install tauri-cli --version 2.11.4 --locked
+        run: npm install --global @tauri-apps/cli@2.11.4
       - name: Build matching Core
         shell: bash
         run: |
@@ -206,9 +210,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo tauri icon src-tauri/icons/icon.png
-          AGENTVEIL_CHANNEL="${CHANNEL}" cargo tauri build --bundles "${{ matrix.bundles }}" --config "{\"version\":\"${VERSION}\"}"
-          find src-tauri/target/release/bundle -maxdepth 4 -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} ../artifacts/ \;
+          cargo_args=()
+          profile_dir=release
+          if [ "${CHANNEL}" = dev ]; then
+            cargo_args=(-- --profile dev-package)
+            profile_dir=dev-package
+          fi
+          AGENTVEIL_CHANNEL="${CHANNEL}" tauri build --bundles "${{ matrix.bundles }}" --config "{\"version\":\"${VERSION}\"}" "${cargo_args[@]}"
+          find "src-tauri/target/${profile_dir}/bundle" -maxdepth 4 -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} ../artifacts/ \;
           cd ../artifacts
           for file in *; do mv "${file}" "agentveil-${VERSION}-${CHANNEL}-${{ matrix.platform }}-${{ matrix.arch }}-${file}"; done
           checksum="agentveil-${VERSION}-${CHANNEL}-${{ matrix.platform }}-${{ matrix.arch }}.SHA256SUMS"
