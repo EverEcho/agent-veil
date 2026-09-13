@@ -108,6 +108,8 @@ conservatively than discovered traffic.
   reject linked, writable, or identity-changing source directories;
 - pinned CI actions with race and static analysis, six-target Linux/macOS/Windows
   cross-builds, byte-for-byte reproducible Linux release-build verification,
+  an explicit 500-sample pure-rule protocol/detection/policy/redaction P95 gate
+  against the documented 15 ms local-path budget,
   time-bounded protocol-body, endpoint-traversal, SSE, exact capability-tuple,
   and Upstream origin-confusion fuzzing, reachable-vulnerability and dependency
   review gates, sensitive-Canary test-log scanning that withholds leaking output,
@@ -310,6 +312,13 @@ Run the tests with:
 ```bash
 go test -race ./...
 go vet ./...
+```
+
+The hardware-sensitive pure-rule core-path P95 acceptance gate is opt-in for
+local runs and mandatory in CI:
+
+```bash
+VEIL_PERFORMANCE_GATE=1 go test ./internal/pipeline -run '^TestPureRulePipelineP95Budget$' -count=1 -v
 ```
 
 The repository is still under active development. Native/managed integrations,

@@ -36,6 +36,10 @@ jobs:
           fi
           cat "${output}"
           exit "${test_code}"
+      - name: Enforce pure-rule pipeline P95 budget
+        env:
+          VEIL_PERFORMANCE_GATE: "1"
+        run: go test ./internal/pipeline -run '^TestPureRulePipelineP95Budget$' -count=1 -v
       - run: go build -trimpath ./cmd/veil
 
   cross-build:
