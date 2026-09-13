@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +124,77 @@ func TestPrepareHermesHomeRejectsEntryCapacityBeforeCreatingTemporaryState(t *te
 	}
 	if _, cleanup, err := PrepareHermesHome(home, []byte("model: protected\n")); err == nil || cleanup != nil {
 		t.Fatalf("oversized Hermes home accepted: cleanup=%v error=%v", cleanup != nil, err)
+	}
+}
+
+func TestProtectedHermesHomeCopiesCredentialsAndPinsRuntimeEnvironment(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("OPENAI_API_KEY=provider-secret\nHERMES_CODEX_BASE_URL=https://bypass.example\nHERMES_IGNORE_USER_CONFIG=1\n")
+	if err := os.WriteFile(filepath.Join(home, ".env"), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authOriginal := []byte(`{"providers":{"openai-codex":{"tokens":{"access_token":"provider-token"}}},"credential_pool":{"openai-codex":[{"access_token":"provider-token","source":"device_code","base_url":"https://chatgpt.com/backend-api/codex"}]}}`)
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), authOriginal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	overrides := map[string]string{
+		"HERMES_CODEX_BASE_URL":     "http://127.0.0.1:9191/route/primary/v1",
+		"HERMES_IGNORE_USER_CONFIG": "0",
+		"HERMES_INFERENCE_PROVIDER": "",
+	}
+	protected, cleanup, err := prepareHermesHome(home, []byte("model: protected\n"), overrides)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	path := filepath.Join(protected, ".env")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("protected .env mode=%v", info.Mode())
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "OPENAI_API_KEY=provider-secret") || !strings.HasSuffix(text, "HERMES_INFERENCE_PROVIDER=\n") || strings.LastIndex(text, "HERMES_CODEX_BASE_URL=http://127.0.0.1:9191/route/primary/v1") < strings.LastIndex(text, "HERMES_CODEX_BASE_URL=https://bypass.example") || strings.LastIndex(text, "HERMES_IGNORE_USER_CONFIG=0") < strings.LastIndex(text, "HERMES_IGNORE_USER_CONFIG=1") {
+		t.Fatalf("protected environment overrides were not appended safely: %q", text)
+	}
+	source, err := os.ReadFile(filepath.Join(home, ".env"))
+	if err != nil || string(source) != string(original) {
+		t.Fatalf("source environment changed: %q err=%v", source, err)
+	}
+	protectedAuth, err := os.ReadFile(filepath.Join(protected, "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(protectedAuth), `"access_token":"provider-token"`) || !strings.Contains(string(protectedAuth), `"base_url":"http://127.0.0.1:9191/route/primary/v1"`) || !strings.Contains(string(protectedAuth), `"source":"manual:device_code"`) || !strings.Contains(string(protectedAuth), `"suppressed_sources":{"openai-codex":["device_code"]}`) || strings.Contains(string(protectedAuth), `"base_url":"https://chatgpt.com/backend-api/codex"`) {
+		t.Fatal("temporary Codex auth route was not rewritten without losing its token")
+	}
+	protectedAuthInfo, err := os.Lstat(filepath.Join(protected, "auth.json"))
+	if err != nil || protectedAuthInfo.Mode()&os.ModeSymlink != 0 || protectedAuthInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("protected auth file mode is unsafe: %v err=%v", protectedAuthInfo.Mode(), err)
+	}
+	sourceAuth, err := os.ReadFile(filepath.Join(home, "auth.json"))
+	if err != nil || string(sourceAuth) != string(authOriginal) {
+		t.Fatal("source Codex authentication state changed")
+	}
+}
+
+func TestRewriteHermesCodexAuthRejectsMissingPool(t *testing.T) {
+	for _, content := range [][]byte{
+		[]byte(`{"providers":{"openai-codex":{"tokens":{"access_token":"token"}}}}`),
+		[]byte(`{"credential_pool":{"openai-codex":[]}}`),
+		[]byte(`{"credential_pool":{"openai-codex":[{"source":"device_code"}]}}`),
+	} {
+		if _, err := rewriteHermesCodexAuth(content, "http://127.0.0.1:9191/route/primary/v1"); err == nil {
+			t.Fatalf("unsafe Codex auth state accepted: %s", content)
+		}
 	}
 }

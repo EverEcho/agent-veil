@@ -4,11 +4,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentveil/agentveil/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
+const hermesProtectedConfigFixture = `
+model:
+  provider: openai-codex
+  model: gpt-5
+  base_url: https://chatgpt.com/backend-api/codex
+  api_mode: codex_responses
+fallback_providers:
+  - provider: openai-codex
+    model: gpt-5-mini
+auxiliary:
+  vision:
+    provider: main
+    model: gpt-5
+delegation:
+  provider: auto
+  model: gpt-5
+mcp_servers:
+  research:
+    url: https://mcp.example/mcp
+    headers:
+      Authorization: Bearer must-never-enter-the-manifest
+`
+
 func TestRewriteHermesConfigBindsEverySurfaceIndependently(t *testing.T) {
-	slots, _, err := ParseHermesConfig([]byte(hermesConfigFixture))
+	slots, _, err := ParseHermesConfig([]byte(hermesProtectedConfigFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +40,7 @@ func TestRewriteHermesConfigBindsEverySurfaceIndependently(t *testing.T) {
 	for index, slot := range slots {
 		bindings[slot.ID] = HermesRouteBinding{RouteID: "route-" + slot.ID, Token: strings.Repeat(string(rune('a'+index)), 64)}
 	}
-	rewritten, err := RewriteHermesConfig([]byte(hermesConfigFixture), "http://127.0.0.1:44123", "session-1234567890abcdef", bindings)
+	rewritten, err := RewriteHermesConfig([]byte(hermesProtectedConfigFixture), "http://127.0.0.1:44123", "session-1234567890abcdef", bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,21 +49,22 @@ func TestRewriteHermesConfigBindsEverySurfaceIndependently(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := config["model"].(map[string]any)
-	if model["provider"] != "custom" || model["base_url"] != "http://127.0.0.1:44123/route/route-primary/v1" || model["api_mode"] != "chat_completions" {
+	primaryURL := hermesProtectedBaseURL("http://127.0.0.1:44123", bindings["primary"].RouteID, slots[0].Protocol, false, "session-1234567890abcdef", bindings["primary"].Token)
+	if model["provider"] != "openai-codex" || model["base_url"] != primaryURL || model["api_mode"] != "codex_responses" {
 		t.Fatalf("primary route was not safely rewritten: %+v", model)
 	}
-	providers := config["providers"].(map[string]any)
-	if len(providers) != 8 {
-		t.Fatalf("provider count=%d, want original plus seven protected header bindings", len(providers))
+	auxURL := hermesProtectedBaseURL("http://127.0.0.1:44123", bindings["aux-vision"].RouteID, slots[2].Protocol, false, "session-1234567890abcdef", bindings["aux-vision"].Token)
+	vision := config["auxiliary"].(map[string]any)["vision"].(map[string]any)
+	if vision["base_url"] != auxURL || vision["provider"] != "custom" {
+		t.Fatalf("auxiliary capability binding=%+v", vision)
 	}
-	protected := providers["agentveil_aux_vision"].(map[string]any)
-	headers := protected["extra_headers"].(map[string]any)
-	if protected["base_url"] != "http://127.0.0.1:44123/route/route-aux-vision/v1" || headers["X-Veil-Session"] != "session-1234567890abcdef" || headers["X-Veil-Route-Token"] != bindings["aux-vision"].Token {
-		t.Fatalf("auxiliary capability binding=%+v", protected)
+	if providers, exists := config["providers"].(map[string]any); exists && len(providers) != 0 {
+		t.Fatalf("model capability headers must not duplicate path capabilities: %+v", providers)
 	}
 	delegation := config["delegation"].(map[string]any)
-	if delegation["provider"] != "corp" || delegation["base_url"] != "http://127.0.0.1:44123/route/route-delegation" || delegation["api_mode"] != "anthropic_messages" {
-		t.Fatalf("delegation provider semantics were lost: %+v", delegation)
+	delegationURL := hermesProtectedBaseURL("http://127.0.0.1:44123", bindings["delegation"].RouteID, domain.ProtocolOpenAIResponses, false, "session-1234567890abcdef", bindings["delegation"].Token)
+	if delegation["provider"] != "custom" || delegation["base_url"] != delegationURL || delegation["api_mode"] != "codex_responses" {
+		t.Fatalf("delegation route was not converted to the protected Codex adapter: %+v", delegation)
 	}
 	mcp := config["mcp_servers"].(map[string]any)["research"].(map[string]any)
 	mcpHeaders := mcp["headers"].(map[string]any)
@@ -64,7 +89,8 @@ func TestRewriteHermesConfigExpandsAutoProviderBeforePinningRoute(t *testing.T) 
 		t.Fatal(err)
 	}
 	monitor := decoded["auxiliary"].(map[string]any)["monitor"].(map[string]any)
-	if monitor["provider"] != "openai-codex" || monitor["base_url"] != "http://127.0.0.1:44123/route/route-monitor/v1" || monitor["api_mode"] != "codex_responses" {
+	monitorURL := hermesProtectedBaseURL("http://127.0.0.1:44123", "route-monitor", domain.ProtocolOpenAIResponses, false, "session-1234567890abcdef", tokenB)
+	if monitor["provider"] != "custom" || monitor["base_url"] != monitorURL || monitor["api_mode"] != "codex_responses" {
 		t.Fatalf("auto provider was not pinned safely: %+v", monitor)
 	}
 }
@@ -94,7 +120,7 @@ func TestRewriteHermesConfigFailsClosed(t *testing.T) {
 }
 
 func TestRewriteHermesConfigRejectsDuplicateRouteCapabilities(t *testing.T) {
-	config := []byte("model:\n  provider: custom\n  model: x\n  base_url: https://one.example/v1\n  api_mode: chat_completions\nfallback_providers:\n  - provider: custom\n    model: y\n    base_url: https://two.example/v1\n    api_mode: chat_completions\n")
+	config := []byte("model:\n  provider: openai-codex\n  model: x\n  base_url: https://chatgpt.com/backend-api/codex\n  api_mode: codex_responses\nfallback_providers:\n  - provider: openai-codex\n    model: y\n")
 	token := strings.Repeat("a", 64)
 	bindings := map[string]HermesRouteBinding{
 		"primary":    {RouteID: "same-route", Token: token},
@@ -106,7 +132,7 @@ func TestRewriteHermesConfigRejectsDuplicateRouteCapabilities(t *testing.T) {
 }
 
 func TestRewriteHermesConfigRejectsDuplicateRouteTokens(t *testing.T) {
-	config := []byte("model:\n  provider: custom\n  model: x\n  base_url: https://one.example/v1\n  api_mode: chat_completions\nfallback_providers:\n  - provider: custom\n    model: y\n    base_url: https://two.example/v1\n    api_mode: chat_completions\n")
+	config := []byte("model:\n  provider: openai-codex\n  model: x\n  base_url: https://chatgpt.com/backend-api/codex\n  api_mode: codex_responses\nfallback_providers:\n  - provider: openai-codex\n    model: y\n")
 	token := strings.Repeat("a", 64)
 	bindings := map[string]HermesRouteBinding{
 		"primary":    {RouteID: "route-primary", Token: token},

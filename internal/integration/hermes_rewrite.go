@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -68,8 +70,8 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 	}
 	byID := make(map[string]Slot, len(slots))
 	for _, slot := range slots {
-		if slot.BaseURL == "" || hermesTransport(slot.Protocol) == "" {
-			return nil, hermesRewriteError("every network surface must have a resolved URL and supported protocol")
+		if slot.BaseURL == "" || hermesTransport(slot.Protocol) == "" || !slot.Rewritable {
+			return nil, hermesRewriteError("every network surface must use a verified rewritable runtime")
 		}
 		if _, duplicate := byID[slot.ID]; duplicate {
 			return nil, hermesRewriteError("discovered surface IDs must be unique")
@@ -106,13 +108,9 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 	}
 
 	root := document.Content[0]
-	providers, err := ensureHermesMapping(root, "providers")
-	if err != nil {
-		return nil, err
-	}
 	for _, target := range targets {
 		binding := bindings[target.id]
-		baseURL := hermesProtectedBaseURL(coreEndpoint, binding.RouteID, target.protocol, target.mcp)
+		baseURL := hermesProtectedBaseURL(coreEndpoint, binding.RouteID, target.protocol, target.mcp, sessionID, binding.Token)
 		if target.mcp {
 			setHermesScalar(target.node, "url", baseURL)
 			headers, headerErr := ensureHermesMapping(target.node, "headers")
@@ -123,7 +121,13 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 			setHermesScalar(headers, "X-Veil-Route-Token", binding.Token)
 			continue
 		}
-		if provider := hermesMappingValue(target.node, "provider"); provider != nil {
+		if target.id != "primary" {
+			// Hermes 0.20.6 auxiliary Codex clients otherwise use a fixed
+			// upstream constant and ignore their configured base_url. A custom
+			// route keeps the Responses adapter while inheriting the primary
+			// runtime token for the same loopback host.
+			setHermesScalar(target.node, "provider", "custom")
+		} else if provider := hermesMappingValue(target.node, "provider"); provider != nil {
 			resolvedProvider := strings.TrimSpace(byID[target.id].Metadata["provider"])
 			if resolvedProvider != "" && !strings.EqualFold(strings.TrimSpace(provider.Value), resolvedProvider) {
 				setHermesScalar(target.node, "provider", resolvedProvider)
@@ -131,19 +135,6 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 		}
 		setHermesScalar(target.node, "base_url", baseURL)
 		setHermesScalar(target.node, "api_mode", hermesTransport(target.protocol))
-		providerKey := "agentveil_" + strings.NewReplacer("-", "_", ".", "_").Replace(target.id)
-		if hermesMappingValue(providers, providerKey) != nil {
-			return nil, hermesRewriteError("generated provider name conflicts with existing configuration")
-		}
-		provider := hermesMapping(
-			"name", "AgentVeil "+target.id,
-			"base_url", baseURL,
-			"transport", hermesTransport(target.protocol),
-		)
-		setHermesBool(provider, "discover_models", false)
-		headers := hermesMapping("X-Veil-Session", sessionID, "X-Veil-Route-Token", binding.Token)
-		setHermesNode(provider, "extra_headers", headers)
-		setHermesNode(providers, providerKey, provider)
 	}
 
 	var output bytes.Buffer
@@ -164,7 +155,7 @@ func RewriteHermesConfig(content []byte, coreEndpoint, sessionID string, binding
 	}
 	for _, slot := range rewrittenSlots {
 		binding, ok := bindings[slot.ID]
-		if !ok || slot.Protocol != byID[slot.ID].Protocol || slot.BaseURL != hermesProtectedBaseURL(coreEndpoint, binding.RouteID, slot.Protocol, slot.Type == domain.SurfaceMCPHTTP) {
+		if !ok || slot.Protocol != byID[slot.ID].Protocol || slot.BaseURL != hermesProtectedBaseURL(coreEndpoint, binding.RouteID, slot.Protocol, slot.Type == domain.SurfaceMCPHTTP, sessionID, binding.Token) {
 			return nil, hermesRewriteError("rewritten route does not match its protected binding: " + slot.ID)
 		}
 	}
@@ -314,11 +305,12 @@ func validateHermesYAMLNode(node *yaml.Node) error {
 	return nil
 }
 
-func hermesProtectedBaseURL(endpoint, routeID string, protocol domain.Protocol, mcp bool) string {
+func hermesProtectedBaseURL(endpoint, routeID string, protocol domain.Protocol, mcp bool, sessionID, routeToken string) string {
 	base := strings.TrimSuffix(endpoint, "/") + "/route/" + routeID
 	if mcp {
 		return base + "/mcp"
 	}
+	base += "/__veil/" + url.PathEscape(veilproxy.EncodeCapability(sessionID, routeToken))
 	if protocol == domain.ProtocolOpenAIChat || protocol == domain.ProtocolOpenAIResponses {
 		return base + "/v1"
 	}

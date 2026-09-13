@@ -123,6 +123,11 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if name != "codex" && name != "claude" && name != "hermes" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
+	if name == "hermes" {
+		if err := validateHermesProtectedArgs(childArgs); err != nil {
+			return err
+		}
+	}
 	endpoint, err := resolveCoreEndpoint(os.Getenv("VEIL_CORE_ENDPOINT"))
 	if err != nil {
 		return err
@@ -192,7 +197,27 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		if rewriteErr != nil {
 			return rewriteErr
 		}
-		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), rewritten)
+		rewrittenSlots, _, parseErr := integration.ParseHermesConfig(rewritten)
+		if parseErr != nil {
+			return parseErr
+		}
+		var primaryBaseURL string
+		for _, slot := range rewrittenSlots {
+			if slot.ID == "primary" {
+				primaryBaseURL = slot.BaseURL
+				break
+			}
+		}
+		if primaryBaseURL == "" {
+			return errors.New("Hermes protected route set has no primary model")
+		}
+		runtimeEnvironment := map[string]string{
+			"HERMES_CODEX_BASE_URL":     primaryBaseURL,
+			"HERMES_IGNORE_USER_CONFIG": "0",
+			"HERMES_INFERENCE_PROVIDER": "",
+			"HERMES_TUI_PROVIDER":       "",
+		}
+		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), rewritten, runtimeEnvironment)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}
@@ -245,6 +270,16 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		return egressErr
 	}
 	return runErr
+}
+
+func validateHermesProtectedArgs(args []string) error {
+	for _, argument := range args {
+		normalized := strings.ToLower(strings.TrimSpace(argument))
+		if normalized == "--ignore-user-config" || normalized == "--safe-mode" || normalized == "--profile" || normalized == "-p" || strings.HasPrefix(normalized, "--profile=") {
+			return domain.NewError(domain.ErrPolicyBlocked, "prepare hermes launch", "launch argument can bypass the protected configuration")
+		}
+	}
+	return nil
 }
 
 func hermesManifestConfigPath(manifest domain.AgentManifest) (string, error) {

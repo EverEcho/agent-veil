@@ -69,8 +69,11 @@ func TestHermesConfigEnumeratesEveryIndependentSurface(t *testing.T) {
 			t.Fatalf("duplicate slot id %q", slot.ID)
 		}
 		byID[slot.ID] = slot
-		if !slot.Rewritable {
-			t.Fatalf("resolved supported slot omitted rewrite coverage: %+v", slot)
+		if slot.ID == "mcp-research" && !slot.Rewritable {
+			t.Fatalf("streamable MCP slot omitted rewrite coverage: %+v", slot)
+		}
+		if slot.ID != "mcp-research" && slot.Rewritable {
+			t.Fatalf("unverified custom-provider rewrite was claimed protected: %+v", slot)
 		}
 	}
 	if byID["primary"].Protocol != domain.ProtocolOpenAIChat || byID["primary"].BaseURL != "https://primary.example/gateway/v1" || !byID["primary"].Required {

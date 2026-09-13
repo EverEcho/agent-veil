@@ -331,7 +331,7 @@ func hermesSlot(id, name string, surfaceType domain.SurfaceType, route resolvedH
 	if len(metadata) == 0 {
 		metadata = nil
 	}
-	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Metadata: metadata, Rewritable: route.baseURL != "" && hermesTransport(protocolType) != "", Required: required}
+	return Slot{ID: id, Name: name, Type: surfaceType, Protocol: protocolType, BaseURL: route.baseURL, Auth: hermesAuth(), Metadata: metadata, Rewritable: route.baseURL != "" && hermesTransport(protocolType) != "" && strings.EqualFold(route.provider, "openai-codex"), Required: required}
 }
 
 func hermesAuth() domain.AuthStrategy {

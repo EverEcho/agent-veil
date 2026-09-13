@@ -165,7 +165,7 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 // PrepareHermesLaunch binds an already rewritten Hermes configuration to a
 // private temporary HERMES_HOME. The caller must defer Cleanup immediately
 // after a successful return.
-func PrepareHermesLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sessionID, parentID, routeToken, sourceHome string, config []byte) (LaunchPlan, error) {
+func PrepareHermesLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sessionID, parentID, routeToken, sourceHome string, config []byte, runtimeEnvironment map[string]string) (LaunchPlan, error) {
 	if agent.Kind != "hermes" {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare hermes launch", "agent kind is not Hermes")
 	}
@@ -173,11 +173,14 @@ func PrepareHermesLaunch(agent domain.AgentInstance, args []string, coreEndpoint
 	if err != nil {
 		return LaunchPlan{}, err
 	}
-	temporaryHome, cleanup, err := PrepareHermesHome(sourceHome, config)
+	temporaryHome, cleanup, err := prepareHermesHome(sourceHome, config, runtimeEnvironment)
 	if err != nil {
 		return LaunchPlan{}, err
 	}
 	plan.Environment["HERMES_HOME"] = temporaryHome
+	for key, value := range runtimeEnvironment {
+		plan.Environment[key] = value
+	}
 	plan.cleanup = cleanup
 	return plan, nil
 }

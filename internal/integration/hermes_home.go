@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/jsonsafe"
 )
 
 const maxHermesHomeEntries = 4096
@@ -18,6 +21,10 @@ const maxHermesHomeEntries = 4096
 // rewritten configuration. Existing Hermes state remains available through
 // symlinks, while the user's config.yaml is never modified.
 func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, error) {
+	return prepareHermesHome(sourceHome, config, nil)
+}
+
+func prepareHermesHome(sourceHome string, config []byte, protectedEnvironment map[string]string) (string, func() error, error) {
 	if !filepath.IsAbs(sourceHome) || strings.ContainsRune(sourceHome, 0) {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home must be an absolute safe path")
 	}
@@ -51,7 +58,35 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 		}
 		source := filepath.Join(sourceHome, entry.Name())
 		destination := filepath.Join(temporaryHome, entry.Name())
+		if entry.Name() == ".env" && len(protectedEnvironment) != 0 {
+			content, readErr := readHermesEnvironment(source)
+			if readErr != nil || writeHermesEnvironment(destination, content, protectedEnvironment) != nil {
+				return fail()
+			}
+			continue
+		}
+		if entry.Name() == "auth.json" && protectedEnvironment["HERMES_CODEX_BASE_URL"] != "" {
+			content, readErr := readHermesPrivateFile(source)
+			if readErr != nil {
+				return fail()
+			}
+			rewritten, rewriteErr := rewriteHermesCodexAuth(content, protectedEnvironment["HERMES_CODEX_BASE_URL"])
+			if rewriteErr != nil || writeHermesPrivateFile(destination, rewritten) != nil {
+				return fail()
+			}
+			continue
+		}
 		if err := os.Symlink(source, destination); err != nil {
+			return fail()
+		}
+	}
+	if len(protectedEnvironment) != 0 {
+		environmentPath := filepath.Join(temporaryHome, ".env")
+		if _, err := os.Lstat(environmentPath); errors.Is(err, os.ErrNotExist) {
+			if writeHermesEnvironment(environmentPath, nil, protectedEnvironment) != nil {
+				return fail()
+			}
+		} else if err != nil {
 			return fail()
 		}
 	}
@@ -83,6 +118,155 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 		return cleanupErr
 	}
 	return temporaryHome, cleanup, nil
+}
+
+func readHermesEnvironment(path string) ([]byte, error) {
+	return readHermesPrivateFile(path)
+}
+
+func readHermesPrivateFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxHermesConfigBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "environment file type or size is unsafe")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Size() != info.Size() {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "environment file changed before it was copied")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxHermesConfigBytes+1))
+	if err != nil || len(content) > maxHermesConfigBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "environment file could not be read safely")
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(opened, after) || after.Size() != int64(len(content)) || !after.ModTime().Equal(opened.ModTime()) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "environment file changed while it was copied")
+	}
+	return content, nil
+}
+
+func rewriteHermesCodexAuth(content []byte, baseURL string) ([]byte, error) {
+	if jsonsafe.Validate(content) != nil || strings.ContainsAny(baseURL, "\x00\r\n") {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex authentication state is invalid")
+	}
+	var root map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil || root == nil {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex authentication state is invalid")
+	}
+	credentialPool, ok := root["credential_pool"].(map[string]any)
+	if !ok {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex credential pool is missing")
+	}
+	rawEntries, exists := credentialPool["openai-codex"]
+	entries, valid := rawEntries.([]any)
+	if !exists || !valid || len(entries) == 0 {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex credential pool is missing or invalid")
+	}
+	for _, rawEntry := range entries {
+		entry, valid := rawEntry.(map[string]any)
+		if !valid || strings.TrimSpace(stringValue(entry["access_token"])) == "" {
+			return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex credential pool entry is invalid")
+		}
+		entry["base_url"] = baseURL
+		if _, exists := entry["runtime_base_url"]; exists {
+			entry["runtime_base_url"] = baseURL
+		}
+		// Hermes 0.20.x re-seeds device_code entries from providers.openai-codex
+		// with a hard-coded upstream URL whenever the pool is loaded. The protected
+		// copy suppresses that seed and retains the copied entry as a manual source.
+		// This changes only the isolated HERMES_HOME used for this launch.
+		if stringValue(entry["source"]) == "device_code" {
+			entry["source"] = "manual:device_code"
+		}
+	}
+	suppressed, ok := root["suppressed_sources"].(map[string]any)
+	if !ok {
+		suppressed = make(map[string]any)
+		root["suppressed_sources"] = suppressed
+	}
+	current := make([]any, 0, 1)
+	if raw, exists := suppressed["openai-codex"]; exists {
+		values, valid := raw.([]any)
+		if !valid {
+			return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex suppression state is invalid")
+		}
+		current = append(current, values...)
+	}
+	found := false
+	for _, value := range current {
+		if stringValue(value) == "device_code" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		current = append(current, "device_code")
+	}
+	suppressed["openai-codex"] = current
+	rewritten, err := json.Marshal(root)
+	if err != nil || len(rewritten) == 0 || len(rewritten) > maxHermesConfigBytes {
+		return nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "Codex authentication state could not be rewritten")
+	}
+	return append(rewritten, '\n'), nil
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func writeHermesPrivateFile(path string, content []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(content); err == nil {
+		err = file.Sync()
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
+func writeHermesEnvironment(path string, source []byte, overrides map[string]string) error {
+	allowed := map[string]struct{}{
+		"HERMES_CODEX_BASE_URL":     {},
+		"HERMES_IGNORE_USER_CONFIG": {},
+		"HERMES_INFERENCE_PROVIDER": {},
+		"HERMES_TUI_PROVIDER":       {},
+	}
+	keys := make([]string, 0, len(overrides))
+	for key, value := range overrides {
+		if _, ok := allowed[key]; !ok || strings.ContainsAny(value, "\x00\r\n") {
+			return domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "protected environment override is invalid")
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var content bytes.Buffer
+	content.Write(source)
+	if content.Len() != 0 && content.Bytes()[content.Len()-1] != '\n' {
+		content.WriteByte('\n')
+	}
+	content.WriteString("# AgentVeil protected launch overrides; last assignment wins.\n")
+	for _, key := range keys {
+		content.WriteString(key)
+		content.WriteByte('=')
+		content.WriteString(overrides[key])
+		content.WriteByte('\n')
+	}
+	if content.Len() > maxHermesConfigBytes {
+		return domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "protected environment exceeds its size limit")
+	}
+	return writeHermesPrivateFile(path, content.Bytes())
 }
 
 func readHermesHomeEntries(path string, expected os.FileInfo, limit int) ([]os.DirEntry, error) {

@@ -66,11 +66,13 @@ conservatively than discovered traffic.
   review gates, and SPDX JSON SBOM generation;
 - risk-only inspection for unverified Agent versions, which cannot publish a
   rewritable surface or claim protected coverage;
-- Hermes 0.20.6 enumeration and protected launch for primary, fallback,
-  auxiliary, delegation, and remote MCP Streamable HTTP surfaces without
+- Hermes 0.20.6 enumeration and protected launch for same-runtime
+  `openai-codex` primary, fallback, auxiliary, delegation, and remote MCP
+  Streamable HTTP surfaces without
   retaining credentials in the manifest; every protected network Surface
   receives an independent Core route and capability in an isolated temporary
-  `HERMES_HOME`, including documented
+  `HERMES_HOME` (model capabilities travel in a stripped loopback path segment,
+  while MCP capabilities use stripped headers), including documented
   OpenAI Chat, Responses, and Anthropic api-mode aliases. Runtime `main`, `auto`,
   and legacy custom fallback semantics are expanded before routes are pinned,
   while unsupported specialized transports and legacy MCP SSE remain
@@ -164,8 +166,9 @@ go run ./cmd/veil run hermes -- --help
 
 Protected Claude launch currently requires `ANTHROPIC_API_KEY`. OAuth-only
 Claude launch remains unverified and fails closed. Hermes protected launch is
-version-gated to 0.20.6 and requires every discovered network Surface to be
-rewritable; an unknown route blocks the whole launch. CLI protected launches
+version-gated to 0.20.6 and the verified same-runtime `openai-codex` route set;
+every discovered network Surface must be rewritable, so another provider or an
+unknown route blocks the whole launch. CLI protected launches
 create non-interactive Sessions by default, so an `ASK` policy blocks instead
 of waiting indefinitely. Pass `--interactive` before the argument separator to
 opt into one-time decisions through the Dashboard.

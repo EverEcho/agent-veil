@@ -63,6 +63,17 @@ func TestProtectedRunInteractionFlagIsExplicitAndDoesNotConsumeChildFlag(t *test
 	}
 }
 
+func TestHermesProtectedArgsRejectConfigurationBypasses(t *testing.T) {
+	for _, args := range [][]string{{"--ignore-user-config"}, {"chat", "--safe-mode"}, {"--profile", "work"}, {"--profile=work"}, {"-p", "work"}} {
+		if err := validateHermesProtectedArgs(args); err == nil {
+			t.Fatalf("bypass args were accepted: %v", args)
+		}
+	}
+	if err := validateHermesProtectedArgs([]string{"chat", "--ignore-rules", "-m", "gpt-5"}); err != nil {
+		t.Fatalf("safe Hermes args were rejected: %v", err)
+	}
+}
+
 func TestHermesManifestConfigPathRequiresOneAbsoluteConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	manifest := domain.AgentManifest{Surfaces: []domain.EgressSurface{{ID: "primary", ConfigSource: path}, {ID: "mcp-local", ConfigSource: path}}}

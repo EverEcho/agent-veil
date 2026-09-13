@@ -62,6 +62,7 @@ type Route struct {
 		Append(domain.AuditEvent) error
 	}
 	CapabilityHeader string
+	CapabilityPath   bool
 }
 type configuredRoute struct {
 	Route
@@ -154,7 +155,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionValues, routeTokenValues := r.Header.Values(HeaderSession), r.Header.Values(HeaderRouteToken)
 	var sessionID, routeToken string
-	if route.CapabilityHeader != "" {
+	if encoded, strippedEndpoint, pathCapability := splitCapabilityPath(endpoint); route.CapabilityPath && pathCapability {
+		if len(sessionValues) != 0 || len(routeTokenValues) != 0 {
+			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+			return
+		}
+		if decodedSession, decodedToken, valid := DecodeCapability(encoded); valid {
+			sessionID, routeToken, endpoint = decodedSession, decodedToken, strippedEndpoint
+		} else {
+			fail(w, http.StatusUnauthorized, string(domain.ErrUnauthorizedRoute))
+			return
+		}
+	} else if route.CapabilityHeader != "" {
 		encodedValues := r.Header.Values(route.CapabilityHeader)
 		r.Header.Del(route.CapabilityHeader)
 		if len(encodedValues) != 1 || len(sessionValues) != 0 || len(routeTokenValues) != 0 {
@@ -577,6 +589,18 @@ func splitRoutePath(path string) (string, string, bool) {
 		return "", "", false
 	}
 	return id, "/" + suffix, true
+}
+
+func splitCapabilityPath(endpoint string) (string, string, bool) {
+	rest := strings.TrimPrefix(endpoint, "/__veil/")
+	if rest == endpoint {
+		return "", "", false
+	}
+	capability, suffix, found := strings.Cut(rest, "/")
+	if !found || capability == "" || suffix == "" {
+		return "", "", false
+	}
+	return capability, "/" + suffix, true
 }
 
 func routeAllowsMethod(protocolType domain.Protocol, method string) bool {
