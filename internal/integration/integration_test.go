@@ -54,6 +54,9 @@ func TestUnknownVersionAndConflictingLaunchFailClosed(t *testing.T) {
 
 func TestPrepareHermesLaunchOwnsTemporaryHomeLifecycle(t *testing.T) {
 	sourceHome := t.TempDir()
+	if err := os.Chmod(sourceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceHome, "config.yaml"), []byte("model: original\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

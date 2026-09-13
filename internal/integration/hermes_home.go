@@ -24,11 +24,11 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 	if len(config) == 0 || len(config) > maxHermesConfigBytes {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "configuration is empty or too large")
 	}
-	info, err := os.Stat(sourceHome)
-	if err != nil || !info.IsDir() {
-		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home is not an accessible directory")
+	info, err := os.Lstat(sourceHome)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home permissions or type are unsafe")
 	}
-	entries, err := readHermesHomeEntries(sourceHome, maxHermesHomeEntries+1)
+	entries, err := readHermesHomeEntries(sourceHome, info, maxHermesHomeEntries+1)
 	if err != nil {
 		return "", nil, domain.NewError(domain.ErrInvalidContract, "prepare hermes home", "source home could not be enumerated")
 	}
@@ -71,6 +71,10 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 	if err = file.Close(); err != nil {
 		return fail()
 	}
+	current, err := os.Lstat(sourceHome)
+	if err != nil || !os.SameFile(info, current) || !current.IsDir() || current.Mode().Perm()&0o022 != 0 {
+		return fail()
+	}
 
 	var once sync.Once
 	var cleanupErr error
@@ -81,10 +85,15 @@ func PrepareHermesHome(sourceHome string, config []byte) (string, func() error, 
 	return temporaryHome, cleanup, nil
 }
 
-func readHermesHomeEntries(path string, limit int) ([]os.DirEntry, error) {
+func readHermesHomeEntries(path string, expected os.FileInfo, limit int) ([]os.DirEntry, error) {
 	directory, err := os.Open(path)
 	if err != nil {
 		return nil, err
+	}
+	opened, err := directory.Stat()
+	if err != nil || !os.SameFile(expected, opened) || !opened.IsDir() || opened.Mode().Perm()&0o022 != 0 {
+		directory.Close()
+		return nil, domain.NewError(domain.ErrInvalidContract, "enumerate hermes home", "source home changed during validation")
 	}
 	entries, readErr := directory.ReadDir(limit)
 	closeErr := directory.Close()
