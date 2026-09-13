@@ -50,7 +50,9 @@ conservatively than discovered traffic.
   a semantic main landmark, keyboard skip navigation, visible focus, reduced-
   motion handling, labelled inputs, and polite assistive status announcements.
   Its live Core status distinguishes healthy/degraded API, audit failure counts,
-  and required semantic availability;
+  and required semantic availability. A browser-language-aware English/Simplified
+  Chinese localization layer covers static controls and dynamically inserted
+  actions while persisting only the locale preference;
 - an authenticated, bounded diagnostics export that omits routes and paths,
   hashes runtime identities, and applies field-level plus final-payload scans,
   available from both CLI and a user-triggered local Dashboard download;
