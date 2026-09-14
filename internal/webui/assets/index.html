@@ -6,19 +6,15 @@
   <meta name="color-scheme" content="light dark">
   <title>AgentVeil</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/visibility.css">
 </head>
 <body>
   <div id="auth" class="auth-screen">
     <section class="auth-card" aria-labelledby="auth-title">
       <div class="brand-mark" aria-hidden="true">A</div>
       <p class="eyebrow">AGENTVEIL</p>
-      <h1 id="auth-title">连接本地保护服务</h1>
-      <p class="muted">输入启动 Core 时生成的管理令牌。令牌只保留在当前页面中。</p>
-      <label for="token">管理令牌</label>
-      <div class="auth-row">
-        <input id="token" type="password" autocomplete="off" placeholder="粘贴管理令牌">
-        <button id="load" class="button primary">进入面板</button>
-      </div>
+      <h1 id="auth-title">需要本机浏览器会话</h1>
+      <p class="muted">请从 AgentVeil 托盘选择“在浏览器打开面板”，或在终端运行 <code>veil web</code>。一次性票据会自动建立本机会话，无需输入管理令牌。</p>
       <p id="auth-error" class="error-text" role="alert"></p>
     </section>
   </div>

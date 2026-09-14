@@ -179,11 +179,12 @@
 
 ### 已开发
 
-- Tauri 2 独立桌面壳，系统 WebView 复用 Core 内嵌 Dashboard；
-- 浏览器与桌面使用同一 GUI，桌面自动装载本机管理凭据；
+- Tauri 2 独立桌面壳，系统 WebView 本地加载与 Core 内嵌页面同源的 Dashboard；
+- 浏览器与桌面使用同一套前端源码；桌面通过受限 Rust bridge 自动使用本机管理凭据，凭据不进入 JavaScript；
+- 浏览器入口由托盘或 `veil web` 签发 30 秒单次票据，并换取 `HttpOnly`、`SameSite=Strict` 的限时本机会话；页面不接受管理 Token；
 - 系统托盘、单实例、用户级开机启动和关闭窗口隐藏；
-- 用户级开机启动与 Linux、macOS、Windows 配置写入；
-- Core instance identity 预检、启动、探活、保活、崩溃重启和 Session-aware 退出；
+- Tauri 官方插件提供的用户级开机启动；
+- Rust 实际运行路径中的 Core instance identity 预检、启动、探活、保活、崩溃重启和 Session-aware 退出；
 - Core 内嵌本地 Web Dashboard；
 - Agent 发现、Inspection Preview、Protection Plan 和覆盖率展示；
 - Routing Graph、父子调用树、Session 与 Agent 撤销；

@@ -27,8 +27,9 @@ var versionPattern = regexp.MustCompile(`[0-9]+\.[0-9]+(?:\.[0-9]+)?`)
 
 const maxAgentConfigBytes = 8 << 20
 const maxAgentVersionBytes = 64 << 10
+
 const agentVersionTimeout = 3 * time.Second
-const agentVersionWaitDelay = 250 * time.Millisecond
+const agentVersionOutputDrainGrace = 25 * time.Millisecond
 const maxConcurrentVersionProbes = 4
 const maxAgentConfigPathBytes = 4096
 
@@ -67,17 +68,45 @@ func (OSSystem) Version(ctx context.Context, executable string) (string, error) 
 	defer cancel()
 	output := &boundedVersionOutput{limit: maxAgentVersionBytes}
 	command := exec.CommandContext(bounded, executable, "--version")
-	command.WaitDelay = agentVersionWaitDelay
 	configureVersionCommand(command)
-	command.Stdout = output
-	command.Stderr = output
-	err := command.Run()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return "", domain.NewError(domain.ErrInvalidContract, "read agent version", "version output pipe is unavailable")
+	}
+	command.Stdout = writer
+	command.Stderr = writer
+	if err := command.Start(); err != nil {
+		reader.Close()
+		writer.Close()
+		return "", err
+	}
+	writer.Close()
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(output, reader)
+		close(readDone)
+	}()
+	err = command.Wait()
+	inheritedOutputPipe := false
+	select {
+	case <-readDone:
+	case <-time.After(agentVersionOutputDrainGrace):
+		inheritedOutputPipe = true
+	}
 	cleanupVersionCommand(command)
+	if inheritedOutputPipe {
+		_ = reader.Close()
+		<-readDone
+	}
+	_ = reader.Close()
 	if output.Exceeded() {
 		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version output exceeds its size limit")
 	}
 	if bounded.Err() != nil {
 		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version command timed out or was cancelled")
+	}
+	if inheritedOutputPipe {
+		return output.String(), domain.NewError(domain.ErrInvalidContract, "read agent version", "version command left inherited output pipes open")
 	}
 	return output.String(), err
 }

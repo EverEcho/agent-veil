@@ -25,13 +25,13 @@ acceptance-evidence:
 	go test ./internal/audit ./internal/diagnostic -count=1
 	go test ./internal/compatibility -run '^(TestMatrixIsExplicitAndPlatformScoped|TestValidationRejectsUnsupportedProtectedProtocol)$$' -count=1
 	go test ./sdk/attach -run '^TestControllerAttachesRotatesAndRestores$$' -count=1
-	go test ./internal/desktopapp -run '^(TestSupervisorAdoptsButDoesNotStopExternalCore|TestAutoStartWritesAndRemovesPlatformEntries|TestDesktopTokenPersistsPrivately)$$' -count=1
+	cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 
 build:
 	go build -trimpath -o veil ./cmd/veil
 
 desktop-test:
-	go test ./internal/desktopapp
+	cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 
 desktop-build-ci:
 	cargo check --locked --manifest-path desktop/src-tauri/Cargo.toml
@@ -40,7 +40,8 @@ desktop-build-ci:
 package-dev:
 	test -z "$$(gofmt -l .)"
 	go vet ./...
-	go test ./internal/core ./internal/proxy ./internal/session ./internal/desktopapp ./sdk/attach
+	go test ./internal/core ./internal/proxy ./internal/session ./sdk/attach
+	cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 	mkdir -p dist/dev
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o dist/dev/veil ./cmd/veil
 	cargo build --release --locked --manifest-path desktop/src-tauri/Cargo.toml

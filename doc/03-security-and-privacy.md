@@ -44,6 +44,7 @@ AgentVeil 主要防止以下数据通过受支持的 AI Agent 出口意外离开
 9. 响应先做泄漏检测，再恢复请求中的占位符。
 10. 安全降级必须可见，不允许静默 passthrough。
 11. CLI 从状态文件发现 Core 时，必须先以不携带管理凭据的请求校验随机实例身份；崩溃残留状态不得导致管理 Token 被发送到复用该回环端口的其他进程。
+12. 浏览器管理界面不得接收管理 Token；只能由已认证的 CLI/桌面进程签发短期单次票据，经严格同源请求换取 `HttpOnly`、`SameSite=Strict`、作用域限于管理 API 的会话 Cookie。
 
 ## 4. 本地数据生命周期
 
@@ -52,6 +53,7 @@ AgentVeil 主要防止以下数据通过受支持的 AI Agent 出口意外离开
 | Session Secret | 进程内存 | Session |
 | Placeholder -> Original | 请求级内存 Vault | Request/Response |
 | 桌面管理 Token | 用户私有配置文件；后续由 macOS/Windows 原生凭据库替换 | 桌面安装实例，卸载时清除 |
+| 浏览器票据与会话 | Core 内存仅保存摘要；票据通过 URL fragment 短暂传递 | 票据 30 秒且单次使用；会话 8 小时或 Core 退出 |
 | Agent 配置快照 | 最小化临时文件或内存 | Session，退出清理 |
 | 审计事件 | 本地持久化 | 用户配置的保留期 |
 | 敏感原文 | 禁止持久化 | 不适用 |

@@ -218,6 +218,16 @@ export VEIL_ADMIN_TOKEN='replace-with-a-random-32-character-token'
 go run ./cmd/veil serve
 ```
 
+With Core running, open the shared Dashboard in the system browser or print a
+short-lived, one-time loopback session URL without opening a window. The command
+uses `VEIL_ADMIN_TOKEN`, or the private desktop token when Desktop owns Core;
+the management token is never placed in the browser:
+
+```bash
+go run ./cmd/veil web
+go run ./cmd/veil web --print
+```
+
 The Tauri 2 desktop shell is isolated in `desktop/` so the Go Core remains
 CGO-free. It renders the Core Dashboard inside a native WebView, expects `veil`
 beside the executable or in its bundled resources, and can be checked with

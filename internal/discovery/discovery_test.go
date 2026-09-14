@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,20 @@ import (
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv("GO_WANT_DISCOVERY_VERSION_HELPER") == "1" {
+		marker := os.Getenv("GO_DISCOVERY_VERSION_HELPER_MARKER")
+		child := exec.Command("/bin/sh", "-c", `sleep 1; printf survived > "$1"`, "agentveil-version-helper", marker)
+		child.Stdout = os.Stdout
+		child.Stderr = os.Stderr
+		if child.Start() != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 type fakeSystem struct {
 	version, config string
@@ -519,15 +535,18 @@ func TestDetectAllBoundsConcurrentVersionProbesAndPreservesOrder(t *testing.T) {
 }
 
 func TestOSSystemBoundsVersionWaitForInheritedOutputPipes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows descendant cleanup requires the pending Job Object implementation")
+	}
 	directory := t.TempDir()
 	markerPath := filepath.Join(directory, "descendant-survived")
-	script := filepath.Join(directory, "forking-agent")
-	content := []byte("#!/bin/sh\n(sleep 1; echo survived > \"" + markerPath + "\") &\n")
-	if err := os.WriteFile(script, content, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("GO_WANT_DISCOVERY_VERSION_HELPER", "1")
+	t.Setenv("GO_DISCOVERY_VERSION_HELPER_MARKER", markerPath)
+	// The race runtime otherwise keeps the helper process alive for one second
+	// after TestMain calls os.Exit, hiding the inherited-pipe condition.
+	t.Setenv("GORACE", "atexit_sleep_ms=0")
 	started := time.Now()
-	_, err := (OSSystem{}).Version(context.Background(), script)
+	_, err := (OSSystem{}).Version(context.Background(), os.Args[0])
 	if err == nil {
 		t.Fatal("version command with inherited open output pipe was accepted")
 	}

@@ -1,7 +1,8 @@
-const API_VERSION = 'v1';
+import {desktopInfo, exchangeBrowserTicket, isDesktop, requestCore} from './platform.js';
+
 const state = {
-  token: '', health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
-  policy: null, rules: null, models: null, refreshTimer: null, locale: localStorage.getItem('agentveil.locale') || 'zh-CN'
+  health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
+  policy: null, rules: null, models: null, browserSession: false, refreshTimer: null, locale: localStorage.getItem('agentveil.locale') || 'zh-CN'
 };
 
 const $ = selector => document.querySelector(selector);
@@ -19,7 +20,7 @@ const copy = {
     verified: '已识别，可检查', unverified: '已发现，兼容性待确认', versionUnknown: '已发现，版本未知',
     protected: '已加入保护', notProtected: '尚未加入保护', inspect: '查看保护能力',
     noActivity: '暂无保护记录', noActivityHelp: '启动受保护的 AI 工具后，安全处理摘要会显示在这里。',
-    loadPartial: '部分信息暂时无法读取，其他模块仍可正常使用。', authFailed: '令牌无效，或 Privacy Core 尚未启动。',
+    loadPartial: '部分信息暂时无法读取，其他模块仍可正常使用。', authFailed: '本机会话无效，或 Privacy Core 尚未启动。',
     saveOK: '策略已保存', saveFailed: '保存失败，请检查 JSON 内容', diagnosisOK: '诊断文件已导出', diagnosisFailed: '诊断导出失败',
     surfaces: '可检查的连接', risks: '需要了解', noSurface: '没有可显示的连接信息',
     protectionTruth: '“已发现”不代表“已保护”。只有通过 AgentVeil 启动并建立保护会话后，才会显示为正在保护。'
@@ -32,7 +33,7 @@ const copy = {
     verified: 'Recognized and inspectable', unverified: 'Found, compatibility pending', versionUnknown: 'Found, version unknown',
     protected: 'Protection configured', notProtected: 'Not protected yet', inspect: 'View protection capability',
     noActivity: 'No protection activity yet', noActivityHelp: 'Safe summaries appear here after a protected AI tool runs.',
-    loadPartial: 'Some information is temporarily unavailable. Other sections remain usable.', authFailed: 'The token is invalid or Privacy Core is not running.',
+    loadPartial: 'Some information is temporarily unavailable. Other sections remain usable.', authFailed: 'The local session is invalid or Privacy Core is not running.',
     saveOK: 'Policy saved', saveFailed: 'Save failed. Check the JSON document.', diagnosisOK: 'Diagnostics exported', diagnosisFailed: 'Diagnostics export failed',
     surfaces: 'Inspectable connections', risks: 'Things to know', noSurface: 'No connection details are available',
     protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.'
@@ -42,20 +43,11 @@ const copy = {
 function t(key) { return (copy[state.locale] || copy['zh-CN'])[key] || key; }
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set('X-AgentVeil-API-Version', API_VERSION);
-  if (state.token) headers.set('Authorization', `Bearer ${state.token}`);
-  const response = await fetch(path, {...options, headers});
-  if (response.headers.get('X-AgentVeil-API-Version') !== API_VERSION) throw new Error('API version mismatch');
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-  if (response.status === 204) return null;
-  return response.json();
+  return requestCore(path, options);
 }
 
-async function enter(token) {
-  state.token = String(token || '').trim();
-  if (!state.token) return;
-  $('#load').disabled = true;
+async function enter() {
+  if (!isDesktop && !state.browserSession) return;
   try {
     state.health = await api('/v1/health');
     $('#auth').hidden = true;
@@ -63,10 +55,7 @@ async function enter(token) {
     await loadAll();
     configureRefresh();
   } catch (_) {
-    state.token = '';
     $('#auth-error').textContent = t('authFailed');
-  } finally {
-    $('#load').disabled = false;
   }
 }
 
@@ -205,9 +194,9 @@ async function savePolicy() {
 async function downloadDiagnostics() {
   const result = $('#diagnostic-result');
   try {
-    const headers = new Headers({'X-AgentVeil-API-Version':API_VERSION, Authorization:`Bearer ${state.token}`});
-    const response = await fetch('/v1/diagnostics', {headers}); if (!response.ok) throw new Error();
-    const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
+    const diagnostics = await api('/v1/diagnostics');
+    const blob = new Blob([JSON.stringify(diagnostics, null, 2) + '\n'], {type:'application/json'});
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
     link.href = url; link.download = 'agentveil-diagnostics.json'; link.click(); URL.revokeObjectURL(url);
     result.textContent = t('diagnosisOK');
   } catch (_) { result.textContent = t('diagnosisFailed'); }
@@ -231,8 +220,6 @@ function applyLocale(locale) {
   renderAll(); const active = $('.nav-item.active')?.dataset.page || 'overview'; navigate(active);
 }
 
-$('#load').onclick = () => enter($('#token').value);
-$('#token').onkeydown = event => { if (event.key === 'Enter') enter(event.currentTarget.value); };
 $('#refresh').onclick = loadAll; $('#scan-tools').onclick = loadAll;
 $('#save-policy').onclick = savePolicy; $('#download-diagnostics').onclick = downloadDiagnostics;
 $('#dialog-close').onclick = () => $('#tool-dialog').close();
@@ -246,8 +233,45 @@ document.body.onclick = event => {
   if (decision) decide(decision.dataset.approval, decision.dataset.decision).catch(() => loadAll());
 };
 
-window.agentveilDesktopStart = token => enter(token);
-window.addEventListener('agentveil:desktop-token', event => window.agentveilDesktopStart(event.detail));
 document.documentElement.dataset.agentveilUiReady = 'true';
-if (window.__AGENTVEIL_DESKTOP_TOKEN) window.agentveilDesktopStart(window.__AGENTVEIL_DESKTOP_TOKEN);
 applyLocale(state.locale);
+
+async function startDesktop() {
+  document.documentElement.dataset.agentveilDesktop = 'true';
+  $('#auth').hidden = true;
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    try {
+      const info = await desktopInfo();
+      $('#channel-badge').textContent = String(info.channel || 'dev').toUpperCase();
+      if (info.desktop && info.ready) {
+        await enter();
+        return;
+      }
+    } catch (_) {}
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  state.health = {status:'offline'};
+  renderAll();
+  $('#notice').hidden = false;
+  $('#notice').textContent = t('authFailed');
+}
+
+async function startBrowserSession() {
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const ticket = fragment.get('ticket');
+  if (!ticket) {
+    state.browserSession = true;
+    await enter();
+    return;
+  }
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  try {
+    await exchangeBrowserTicket(ticket);
+    state.browserSession = true;
+    await enter();
+  } catch (_) {
+    $('#auth-error').textContent = '浏览器会话已失效，请重新运行 veil web。';
+  }
+}
+
+if (isDesktop) startDesktop(); else startBrowserSession();

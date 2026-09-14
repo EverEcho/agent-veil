@@ -3,8 +3,9 @@
   "productName": "AgentVeil",
   "version": "0.1.0",
   "identifier": "com.agentveil.desktop",
-  "build": { "frontendDist": "../../internal/core/webui" },
+  "build": { "frontendDist": "../../internal/webui/assets" },
   "app": {
+    "withGlobalTauri": true,
     "windows": [{ "label": "main", "title": "AgentVeil", "width": 1180, "height": 800, "minWidth": 820, "minHeight": 600, "center": true }],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" }
   },

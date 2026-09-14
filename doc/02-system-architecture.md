@@ -124,17 +124,21 @@ VEIL_CORE_ENDPOINT
 
 子 Agent 检测到父 Session 后加入现有会话，不重复启动代理。环境变量只包含短期能力令牌，不包含长期 Provider 凭据。
 
-## 7. 推荐代码布局
-
-这是实现阶段的建议，不是当前已存在的目录：
+## 7. 当前代码布局
 
 ```text
-cmd/veil/                 CLI 入口
+cmd/veil/main.go          最小进程入口
+cmd/veil/command.go       CLI 命令分派
+cmd/veil/cli_commands.go  管理命令与输出
+cmd/veil/management_client.go  版本化 Core 管理客户端
+cmd/veil/launch.go        Protected/Nested Launch
+cmd/veil/serve.go         Core 依赖装配与进程生命周期
 internal/integration/     Codex、Claude、Hermes、OpenClaw
-internal/manifest/        Surface 与 Manifest
+internal/domain/          Surface、Manifest 与共享领域契约
 internal/planner/         Protection Plan 与 Routing Graph
 internal/session/         会话生命周期
-internal/proxy/           本地代理
+internal/core/            本地管理 API；按 lifecycle/auth/agents/sessions/policy/observability 拆分
+internal/proxy/           Provider 数据面代理
 internal/protocol/        OpenAI、Responses、Anthropic、MCP
 internal/detector/        Rule、Secret、PII、Entropy、Semantic
 internal/policy/          Policy Engine
@@ -142,5 +146,10 @@ internal/redactor/        Placeholder、Vault、流式恢复
 internal/auth/            Passthrough、Bearer、SigV4 等
 internal/network/         Direct、HTTP Proxy、SOCKS5
 internal/audit/           隐私安全事件
-testdata/                 脱敏后的协议金样
+internal/webui/           浏览器与 Tauri 共用的 Dashboard 源码和 Go embed 边界
+sdk/                      Native、Attach 与 Tool Adapter 公共 SDK
+desktop/src-tauri/        Rust 桌面壳；bridge/supervisor/tray 分离
 ```
+
+`cmd/veil` 可以在未来替换为其他语言的 CLI；稳定边界是版本化 loopback 管理 API，
+不是 Go 包。Tauri 只实现桌面平台能力和受限 API bridge，不承载 Core 业务逻辑。
