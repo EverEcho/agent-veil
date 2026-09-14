@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/agentveil/agentveil/internal/compatibility"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/planner"
@@ -48,8 +49,9 @@ func TestInspectionPreviewReturnsManifestAndTruthfulCoverage(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var result struct {
-		Manifest domain.AgentManifest  `json:"manifest"`
-		Plan     domain.ProtectionPlan `json:"protection_plan"`
+		Manifest      domain.AgentManifest   `json:"manifest"`
+		Plan          domain.ProtectionPlan  `json:"protection_plan"`
+		Compatibility []compatibility.Record `json:"compatibility"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)

@@ -32,7 +32,13 @@ export async function requestCore(path, options = {}) {
   headers.set('X-AgentVeil-API-Version', API_VERSION);
   const response = await fetch(path, {...options, headers, credentials:'same-origin'});
   if (response.headers.get('X-AgentVeil-API-Version') !== API_VERSION) throw new Error('API version mismatch');
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  if (!response.ok) {
+    let detail = null;
+    try { detail = await response.json(); } catch (_) {}
+    const error = new Error(detail?.message || `${path}: HTTP ${response.status}`);
+    error.code = detail?.error || 'CORE_REQUEST_FAILED';
+    throw error;
+  }
   if (response.status === 204) return null;
   return response.json();
 }

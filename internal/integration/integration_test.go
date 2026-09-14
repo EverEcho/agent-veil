@@ -119,6 +119,15 @@ func TestPrepareLaunchRejectsUntrustedExecutionInputs(t *testing.T) {
 	}
 }
 
+func TestPrepareCodexLaunchRejectsProviderAndRemoteSelectors(t *testing.T) {
+	agent := domain.AgentInstance{Kind: "codex", Mode: domain.ModeLaunch, Executable: "/bin/codex"}
+	for _, args := range [][]string{{"--profile", "local"}, {"-p", "local"}, {"--oss"}, {"--local-provider=ollama"}, {"--remote", "ws://127.0.0.1:9000"}, {"--remote-auth-token-env=TOKEN"}} {
+		if _, err := PrepareLaunch(agent, args, "http://127.0.0.1:1", "session-0123456789", "", "01234567890123456789012345678901"); err == nil {
+			t.Fatalf("unsafe Codex arguments were accepted: %v", args)
+		}
+	}
+}
+
 func TestUnverifiedVersionCanOnlyProduceDiscoveryOnlyManifest(t *testing.T) {
 	inspector := Inspector{VerifiedVersions: map[string]map[string]struct{}{}}
 	manifest, err := inspector.Inspect(Config{AgentID: "openclaw", Kind: "openclaw", Version: "9.9.9", ConfigSource: "fixture", Mode: domain.ModeManaged, Observed: []Slot{{ID: "unknown", Name: "Unknown", Type: domain.SurfaceUnknown, Protocol: domain.ProtocolUnknown, Required: true}}})

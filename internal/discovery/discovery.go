@@ -253,15 +253,19 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 	}
 	switch name {
 	case "codex":
-		config.ConfigSource = filepath.Join(home, ".codex", "config.toml")
-		if content, readErr := d.System.ReadFile(config.ConfigSource); readErr == nil {
-			if containsTOMLKey(content, "model_provider") || containsTOMLKey(content, "base_url") {
-				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover codex", "custom provider configuration requires a versioned adapter")
+		codexHome := filepath.Join(home, ".codex")
+		if configuredHome, ok := d.System.LookupEnv("CODEX_HOME"); ok && configuredHome != "" {
+			var valid bool
+			codexHome, valid = safeAgentConfigPath(configuredHome)
+			if !valid {
+				return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover codex", "CODEX_HOME must be an absolute safe path")
 			}
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover codex", "configuration could not be inspected")
 		}
-		config.Slots = []integration.Slot{{ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary, Protocol: domain.ProtocolOpenAIResponses, BaseURL: "https://api.openai.com", Auth: domain.AuthStrategy{Type: domain.AuthPassthrough, Source: "agent:codex-login-or-environment"}, Network: environmentProxyRoute(d.System), Rewritable: true, Required: true}}
+		config.ConfigSource = filepath.Join(codexHome, "config.toml")
+		config.Slots, err = inspectCodex(d.System, codexHome, config.ConfigSource)
+		if err != nil {
+			return domain.AgentManifest{}, err
+		}
 	case "claude":
 		config.ConfigSource = filepath.Join(home, ".claude", "settings.json")
 		baseURL := "https://api.anthropic.com"
@@ -475,10 +479,6 @@ func environmentProxyRoute(system System) *domain.NetworkRoute {
 		}
 	}
 	return nil
-}
-
-func containsTOMLKey(content []byte, key string) bool {
-	return regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `\s*=`).Match(content)
 }
 
 func safeAgentConfigPath(value string) (string, bool) {

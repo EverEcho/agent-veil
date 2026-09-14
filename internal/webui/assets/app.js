@@ -42,6 +42,75 @@ const copy = {
 
 function t(key) { return (copy[state.locale] || copy['zh-CN'])[key] || key; }
 
+const zhCoverage = {
+  protected: '已保护', local: '仅本机', partial: '部分保护', observed: '仅观察', unprotected: '未保护'
+};
+
+const zhReasons = {
+  'request, response and stream inspection are available': '请求、响应和流式内容均可检查',
+  'surface uses local stdio; descendant network egress is separate': '该连接使用本机 stdio；子进程的网络出口需要单独评估',
+  'unknown surfaces and protocols fail closed': '未知连接或协议按安全策略阻断',
+  'no protocol capability is registered': '当前没有注册该协议的保护能力',
+  'traffic can be observed but the surface cannot be safely rewritten': '可观察流量，但无法安全改写该连接',
+  'surface cannot be safely rewritten': '当前无法安全改写该连接',
+  'request content is not inspectable': '请求内容暂不可检查',
+  'request inspection is available but response or stream protection is incomplete': '请求可检查，但响应或流式保护不完整',
+  'routing graph contains a content modifier after AgentVeil': '路由中 AgentVeil 之后仍有内容修改器',
+  'agent version has no verified complete Surface inventory': '当前 Agent 版本尚无完整连接清单的验证记录',
+  'custom model provider requires a versioned launch adapter': '自定义模型 Provider 需要匹配版本的启动适配器',
+  'provider query, header, dynamic discovery, or signer settings cannot yet be preserved': 'Provider 的查询参数、请求头、动态发现或签名配置尚不能完整保留',
+  'selected provider has no base URL': '当前选择的 Provider 没有可解析的服务地址',
+  'Codex authentication mode is unknown': '无法确认 Codex 当前使用的登录方式',
+  'Codex model route could not be resolved': '无法解析 Codex 当前使用的模型连接'
+};
+
+const zhRiskCodes = {
+  OBSERVED_ONLY: '仅可观察', UNKNOWN_PROTOCOL: '未知协议', NOT_REWRITABLE: '无法安全改写',
+  UNSUPPORTED_CAPABILITY: '尚不支持该能力', REQUEST_ONLY: '仅保护请求',
+  UNEXPECTED_EGRESS: '发现未预期的网络出口', DOWNSTREAM_MODIFIER: '下游仍会修改内容'
+};
+
+const zhSurfaceNames = {
+  'Primary model': '主模型', 'Small model': '轻量模型', Vision: '视觉模型', Fallback: '备用模型',
+  'Unverified version egress': '未验证版本的网络出口', 'Unresolved agent egress': '未解析的 Agent 网络出口',
+  'Unresolved Codex egress': '未解析的 Codex 网络出口', 'Browser automation': '浏览器自动化',
+  'Web tools': 'Web 工具', 'Local MCP': '本机 MCP', 'Remote MCP': '远程 MCP'
+};
+
+function localizedValue(value, dictionary) {
+  const raw = String(value ?? '');
+  return state.locale === 'zh-CN' ? dictionary[raw] || raw : raw;
+}
+
+function coverageLabel(value) { return localizedValue(value, zhCoverage); }
+function reasonLabel(value) { return localizedValue(value, zhReasons); }
+function riskLabel(value) { return localizedValue(value, zhRiskCodes); }
+function surfaceLabel(value) {
+  const raw = String(value ?? '');
+  if (state.locale !== 'zh-CN') return raw;
+  if (zhSurfaceNames[raw]) return zhSurfaceNames[raw];
+  for (const [prefix, translated] of [['Local MCP ', '本机 MCP '], ['Remote MCP ', '远程 MCP '], ['Cline provider ', 'Cline Provider '], ['Zed model ', 'Zed 模型 '], ['ACP agent ', 'ACP Agent ']]) {
+    if (raw.startsWith(prefix)) return translated + raw.slice(prefix.length);
+  }
+  return raw;
+}
+
+function platformLabel(value) {
+  return localizedValue(value, {darwin: 'macOS', linux: 'Linux', windows: 'Windows'});
+}
+
+function verificationLabel(value) {
+  return localizedValue(value, {launch_smoke: '受保护启动烟测', discovery_only: '仅发现验证'});
+}
+
+function compatibilityNote(record) {
+  if (state.locale !== 'zh-CN') return String(record.notes || '');
+  if (record.verification === 'launch_smoke' && record.coverage === 'protected') {
+    return `${record.agent || 'Agent'} ${record.version || ''} 已在 ${platformLabel(record.platform)} 完成受保护启动烟测；真实模型请求仍需单独验证。`;
+  }
+  return '当前仅完成工具发现验证，尚未证明该连接可以安全接管。';
+}
+
 async function api(path, options = {}) {
   return requestCore(path, options);
 }
@@ -158,9 +227,15 @@ async function inspectTool(name) {
   const dialog = $('#tool-dialog'), detail = $('#tool-detail');
   detail.innerHTML = '<p class="muted">正在检查保护能力…</p>'; dialog.showModal();
   try {
-    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), coverage = array(plan.coverage), risks = array(plan.risks);
-    detail.innerHTML = `<p class="eyebrow">保护能力</p><h2>${escapeHTML(agent.kind || name)} <span class="muted">${escapeHTML(agent.version || '')}</span></h2><p class="muted">检查只读取配置，不会启动、关闭或接管这个工具。</p><h3>${t('surfaces')}</h3><div class="coverage-list">${coverage.map(item => `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(item.status)}</span><strong> ${escapeHTML(item.surface_id)}</strong><p>${escapeHTML(item.reason || '暂无说明')}</p></div>`).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(risk.title || risk.code || '兼容性提示')}</strong><p>${escapeHTML(risk.action || risk.impact || '')}</p></div>`).join('')}</div>` : ''}<div class="error-box protection-note">${t('protectionTruth')}</div>`;
-  } catch (_) { detail.innerHTML = '<div class="error-box"><strong>无法检查这个工具</strong><p>没有修改任何配置，请稍后重新扫描。</p></div>'; }
+    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), surfaces = array(manifest.surfaces), coverage = array(plan.coverage), risks = array(plan.risks), compatibility = array(result.compatibility), summary = object(plan.summary);
+    const surfaceByID = new Map(surfaces.map(surface => [surface.id, surface]));
+    const fullyProtected = Number(summary.protected || 0) > 0 && Number(summary.partial || 0) === 0 && Number(summary.observed || 0) === 0 && Number(summary.unprotected || 0) === 0;
+    const operation = fullyProtected
+      ? `<div class="next-step"><span class="step-number">✓</span><div><strong>可以安全启动</strong><p>在终端运行 <code>veil run ${escapeHTML(name)}</code>，原配置不会被改写。</p></div></div>`
+      : `<div class="error-box protection-note"><strong>当前只能检查，不能安全接管</strong><p>存在 Observed、Partial 或 Unprotected 的必需连接，AgentVeil 不会静默绕过它们。</p></div>`;
+    const evidence = compatibility.length ? `<h3>兼容性证据</h3><div class="coverage-list">${compatibility.map(record => `<div class="coverage-row"><span class="pill ${record.coverage === 'protected' ? 'good' : 'warning'}">${escapeHTML(coverageLabel(record.coverage))}</span><strong> ${escapeHTML(platformLabel(record.platform))} · ${escapeHTML(verificationLabel(record.verification))}</strong><p>${escapeHTML(compatibilityNote(record))}</p></div>`).join('')}</div>` : '<p class="muted">当前版本与平台没有可声明为“已保护”的验证证据。</p>';
+    detail.innerHTML = `<p class="eyebrow">保护能力</p><h2>${escapeHTML(agent.kind || name)} <span class="muted">${escapeHTML(agent.version || '')}</span></h2><p class="muted">检查只读取配置，不会启动、关闭或接管这个工具。</p><h3>${t('surfaces')}</h3><div class="coverage-list">${coverage.map(item => { const surface = object(surfaceByID.get(item.surface_id)), metadata = object(surface.metadata), reasons = [item.reason, metadata.reason].filter(Boolean).map(reasonLabel); return `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(coverageLabel(item.status))}</span><strong> ${escapeHTML(surfaceLabel(surface.name || item.surface_id))}</strong><p>${escapeHTML(reasons.join('；') || '暂无说明')}</p></div>`; }).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(riskLabel(risk.title || risk.code || '兼容性提示'))}</strong><p>${escapeHTML(reasonLabel(risk.message || risk.action || risk.impact || ''))}</p></div>`).join('')}</div>` : ''}${evidence}${operation}`;
+  } catch (error) { const message = typeof error === 'string' ? error : error?.message; detail.innerHTML = `<div class="error-box"><strong>无法检查这个工具</strong><p>${escapeHTML(message || '未修改任何原配置。')}</p></div>`; }
 }
 
 async function decide(id, action) {

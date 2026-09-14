@@ -110,7 +110,7 @@ func (f fakeSystem) HomeDir() (string, error) {
 	return "/home/test", nil
 }
 
-func TestCodexDiscoveryAndCustomProviderFailClosed(t *testing.T) {
+func TestCodexDiscoveryIgnoresUnselectedCustomProviders(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4"}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
 	manifest, err := d.Inspect(context.Background(), "codex")
 	if err != nil {
@@ -119,9 +119,47 @@ func TestCodexDiscoveryAndCustomProviderFailClosed(t *testing.T) {
 	if manifest.Surfaces[0].Protocol != domain.ProtocolOpenAIResponses || !manifest.Surfaces[0].Required {
 		t.Fatalf("manifest=%+v", manifest)
 	}
-	d.System = fakeSystem{version: "codex-cli 0.153.4", config: "model_provider = \"custom\""}
-	if _, err := d.Inspect(context.Background(), "codex"); err == nil {
-		t.Fatal("custom provider was guessed")
+	d.System = fakeSystem{version: "codex-cli 0.153.4", config: "[model_providers.custom]\nbase_url = \"https://unused.example/v1\"\nwire_api = \"responses\""}
+	manifest, err = d.Inspect(context.Background(), "codex")
+	if err != nil || len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Upstream == nil || manifest.Surfaces[0].Upstream.Host != "api.openai.com" {
+		t.Fatalf("unselected provider changed default inspection: manifest=%+v err=%v", manifest, err)
+	}
+}
+
+func TestCodexDiscoveryReportsSelectedCustomProviderWithoutClaimingProtection(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", config: "model_provider = \"gateway\"\n[model_providers.gateway]\nbase_url = \"https://gateway.example/openai/v1\"\nwire_api = \"responses\"\nenv_key = \"GATEWAY_API_KEY\""}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Upstream == nil || manifest.Surfaces[0].Upstream.Host != "gateway.example" || manifest.Surfaces[0].Rewritable || manifest.Surfaces[0].Auth.Type != domain.AuthBearer || manifest.Surfaces[0].Auth.Source != "environment:GATEWAY_API_KEY" {
+		t.Fatalf("custom provider was not reported conservatively: %+v", manifest)
+	}
+}
+
+func TestCodexDiscoveryUsesChatGPTBackendForChatGPTLogin(t *testing.T) {
+	home := "/home/test"
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", files: map[string]string{filepath.Join(home, ".codex", "auth.json"): `{"auth_mode":"chatgpt","tokens":{"access_token":"not-retained"}}`}}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Surfaces[0].Upstream == nil || manifest.Surfaces[0].Upstream.Host != "chatgpt.com" || manifest.Surfaces[0].Upstream.Path != "/backend-api/codex" {
+		t.Fatalf("ChatGPT auth was mapped to the wrong upstream: %+v", manifest.Surfaces[0])
+	}
+	if !manifest.Surfaces[0].Rewritable {
+		t.Fatalf("verified default ChatGPT route was not rewritable: %+v", manifest.Surfaces[0])
+	}
+}
+
+func TestCodexDiscoveryKeepsUnsupportedProviderFeaturesVisibleAsRisk(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", config: "[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\nquery_params = { api-version = \"test\" }"}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Surfaces[0].Rewritable || !strings.Contains(manifest.Surfaces[0].Metadata["reason"], "cannot yet be preserved") {
+		t.Fatalf("unsupported provider features were overstated: %+v", manifest.Surfaces[0])
 	}
 }
 
@@ -143,6 +181,7 @@ func TestInspectionRejectsUnsafeConfigurationPathOverrides(t *testing.T) {
 		agent string
 		key   string
 	}{
+		{agent: "codex", key: "CODEX_HOME"},
 		{agent: "opencode", key: "OPENCODE_CONFIG"},
 		{agent: "zed", key: "XDG_CONFIG_HOME"},
 		{agent: "cline", key: "CLINE_DATA_DIR"},

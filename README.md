@@ -129,7 +129,7 @@ requires confirmed functionality with no known bugs.
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
   credentials;
-- version-gated Codex, Claude Code, and Hermes discovery/protected launch, plus
+- version-gated Codex API-key, Claude Code API-key, and Hermes discovery/protected launch, plus
   a discovery-only Cursor compatibility record; protected children receive
   only fresh Session/parent/route capabilities and never inherit the Core
   management token;
@@ -373,6 +373,13 @@ unknown route blocks the whole launch. CLI protected launches
 create non-interactive Sessions by default, so an `ASK` policy blocks instead
 of waiting indefinitely. Pass `--interactive` before the argument separator to
 opt into one-time decisions through the Dashboard.
+
+Codex inspection resolves only the selected model provider. Unselected custom
+provider definitions do not block inspection. Codex 0.153.4 default OpenAI API
+key and ChatGPT-login Responses routes are launch-verified on Linux/macOS.
+Custom providers and provider-specific query/header/signer settings remain
+Observed/Unprotected until their exact credential and routing contracts are
+version-verified; protected launch fails closed for those configurations.
 
 ## Verification
 

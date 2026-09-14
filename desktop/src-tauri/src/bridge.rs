@@ -148,9 +148,6 @@ fn decode_response(mut response: Response) -> Result<Value, String> {
     {
         return Err("Core 管理 API 版本不兼容".into());
     }
-    if !status.is_success() {
-        return Err(format!("Core 返回状态 {status}"));
-    }
     if status.as_u16() == 204 {
         return Ok(Value::Null);
     }
@@ -163,7 +160,21 @@ fn decode_response(mut response: Response) -> Result<Value, String> {
     if payload.len() as u64 > MAX_RESPONSE_BYTES {
         return Err("Core 响应超过桌面端上限".into());
     }
-    serde_json::from_slice(&payload).map_err(|_| "Core 返回了无效 JSON".into())
+    let value: Value =
+        serde_json::from_slice(&payload).map_err(|_| "Core 返回了无效 JSON".to_owned())?;
+    if !status.is_success() {
+        let message = value
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty() && value.len() <= 512)
+            .unwrap_or("");
+        return if message.is_empty() {
+            Err(format!("Core 返回状态 {status}"))
+        } else {
+            Err(message.to_owned())
+        };
+    }
+    Ok(value)
 }
 
 fn allowed_request(method: &Method, path: &str) -> bool {

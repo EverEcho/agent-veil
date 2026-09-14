@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -150,18 +151,19 @@ func (s *Server) getInspection(w http.ResponseWriter, r *http.Request) {
 	}
 	manifest, err := inspector.Inspect(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "INSPECTION_FAILED"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "INSPECTION_FAILED", "message": "Agent 配置无法安全解析；未修改原配置。"})
 		return
 	}
 	plan, err := s.registry.Preview(manifest)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "PLAN_FAILED"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "PLAN_FAILED", "message": "Agent 已检查，但当前能力无法生成安全的保护计划。"})
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Manifest domain.AgentManifest  `json:"manifest"`
-		Plan     domain.ProtectionPlan `json:"protection_plan"`
-	}{Manifest: manifest, Plan: plan})
+		Manifest      domain.AgentManifest   `json:"manifest"`
+		Plan          domain.ProtectionPlan  `json:"protection_plan"`
+		Compatibility []compatibility.Record `json:"compatibility"`
+	}{Manifest: manifest, Plan: plan, Compatibility: compatibility.ForAgent(manifest.Agent.Kind, manifest.Agent.Version, runtime.GOOS)})
 }
 
 func (s *Server) testDetection(w http.ResponseWriter, r *http.Request) {

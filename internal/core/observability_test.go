@@ -67,7 +67,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	}{
 		{path: "/styles.css", contentType: "text/css; charset=utf-8", required: []string{".app-shell", ".tool-grid", "prefers-reduced-motion"}},
 		{path: "/visibility.css", contentType: "text/css; charset=utf-8", required: []string{"[hidden]", "!important"}},
-		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics"}},
+		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "已保护", "仅观察", "受保护启动烟测", "未知连接或协议按安全策略阻断"}},
 		{path: "/platform.js", contentType: "text/javascript; charset=utf-8", required: []string{"core_request", "browser-sessions/exchange", "credentials:'same-origin'", "X-AgentVeil-API-Version"}},
 	} {
 		recorder := httptest.NewRecorder()

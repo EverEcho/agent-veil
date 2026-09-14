@@ -101,7 +101,7 @@
 
 | Agent | 已开发 | 已验证 | 待开发 | 待验证 |
 |---|---|---|---|---|
-| Codex | 配置发现、Manifest、Linux Protected Launch | Linux 0.153.4 `--help` launch smoke | ChatGPT/Codex 登录链路的完整接管 | 真实 Provider 请求、其他版本和平台 |
+| Codex | 按实际选中 Provider 解析 API Key、ChatGPT 登录上游和自定义 Base URL；未选中 Provider 不影响 Inspect；Linux/macOS 默认 OpenAI/ChatGPT Protected Launch | Linux 0.153.4 API Key/ChatGPT 与 macOS 0.153.4 ChatGPT `--help` launch smoke；自定义 Provider 保守降级测试 | 自定义 Header/Query/Signer 的完整接管 | 真实 Provider 请求、其他版本和 Windows |
 | Claude Code | 配置发现、API Key Protected Launch | Linux 2.1.220 `--help` launch smoke | OAuth 能力注入与验证 | OAuth、真实 Anthropic 请求和其他平台 |
 | Hermes | 主模型、辅助、Vision、Fallback、Delegation、远程 MCP 配置改写 | Linux 0.20.6 多 Surface 和 legacy SSE 自动化 | 更多 Provider 与特殊 transport | 真实复杂配置、远程 MCP 和长期运行 |
 | OpenClaw | 模型、MCP、ACP、Browser、Web Tool Surface 发现 | 配置 fixture | Provider Bridge、Gateway、Plugin 和 Protected 接入 | 真实版本与嵌套运行 |
@@ -112,7 +112,7 @@
 
 当前只有 Compatibility Matrix 中以下范围可以声明为指定条件下的 Protected：
 
-- Linux Codex 0.153.4 的 OpenAI Responses 主模型 Surface；
+- Linux/macOS Codex 0.153.4 的默认 OpenAI API Key/ChatGPT Responses 主模型 Surface；
 - Linux Claude Code 2.1.220 的 Anthropic API Key 主模型 Surface；
 - Linux Hermes 0.20.6 的主模型、辅助、Vision、Fallback、SubAgent、MCP Streamable HTTP 和 legacy SSE Surface。
 

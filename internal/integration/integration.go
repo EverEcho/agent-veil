@@ -145,6 +145,14 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 			}
 		}
 	}
+	if agent.Kind == "codex" {
+		for _, arg := range args {
+			normalized := strings.ToLower(strings.TrimSpace(arg))
+			if normalized == "-p" || normalized == "--profile" || strings.HasPrefix(normalized, "--profile=") || normalized == "--oss" || normalized == "--local-provider" || strings.HasPrefix(normalized, "--local-provider=") || normalized == "--remote" || strings.HasPrefix(normalized, "--remote=") || normalized == "--remote-auth-token-env" || strings.HasPrefix(normalized, "--remote-auth-token-env=") {
+				return LaunchPlan{}, domain.NewError(domain.ErrPolicyBlocked, "prepare codex launch", "launch argument can select an unprotected provider or remote transport")
+			}
+		}
+	}
 	environment := map[string]string{"VEIL_SESSION_ID": sessionID, "VEIL_PROTECTION_TOKEN": routeToken, "VEIL_CORE_ENDPOINT": coreEndpoint}
 	if parentID != "" {
 		environment["VEIL_PARENT_SESSION"] = parentID
