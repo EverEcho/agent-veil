@@ -32,6 +32,8 @@ func TestMain(m *testing.M) {
 
 type fakeSystem struct {
 	version, config string
+	mcpInventory    string
+	mcpErr          error
 	environment     map[string]string
 	files           map[string]string
 	readErrors      map[string]error
@@ -86,6 +88,15 @@ func (f inventorySystem) HomeDir() (string, error)        { return "/home/test",
 
 func (f fakeSystem) LookPath(name string) (string, error)            { return "/bin/" + name, nil }
 func (f fakeSystem) Version(context.Context, string) (string, error) { return f.version, nil }
+func (f fakeSystem) CodexMCPList(context.Context, string) ([]byte, error) {
+	if f.mcpErr != nil {
+		return nil, f.mcpErr
+	}
+	if f.mcpInventory == "" {
+		return []byte("[]"), nil
+	}
+	return []byte(f.mcpInventory), nil
+}
 
 func (f fakeSystem) ReadFile(path string) ([]byte, error) {
 	if err := f.readErrors[path]; err != nil {
@@ -123,6 +134,32 @@ func TestCodexDiscoveryIgnoresUnselectedCustomProviders(t *testing.T) {
 	manifest, err = d.Inspect(context.Background(), "codex")
 	if err != nil || len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Upstream == nil || manifest.Surfaces[0].Upstream.Host != "api.openai.com" {
 		t.Fatalf("unselected provider changed default inspection: manifest=%+v err=%v", manifest, err)
+	}
+}
+
+func TestCodexDiscoveryUsesEffectiveMCPInventory(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", mcpInventory: `[
+  {"name":"local-tools","enabled":true,"transport":{"type":"stdio","command":"node"}},
+  {"name":"disabled","enabled":false,"transport":{"type":"stdio","command":"ignored"}},
+  {"name":"remote-tools","enabled":true,"transport":{"type":"streamable_http","url":"https://mcp.example/mcp"}}
+]`}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 3 || manifest.Surfaces[1].Type != domain.SurfaceMCPStdio || manifest.Surfaces[1].Protocol != domain.ProtocolLocalStdio || manifest.Surfaces[2].Type != domain.SurfaceMCPHTTP || manifest.Surfaces[2].Rewritable {
+		t.Fatalf("manifest=%+v", manifest)
+	}
+}
+
+func TestCodexDiscoveryFailsClosedWhenEffectiveMCPInventoryIsUnavailable(t *testing.T) {
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", mcpErr: errors.New("inventory unavailable")}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Surfaces) != 2 || manifest.Surfaces[1].Type != domain.SurfaceUnknown || !manifest.Surfaces[1].Required {
+		t.Fatalf("manifest=%+v", manifest)
 	}
 }
 

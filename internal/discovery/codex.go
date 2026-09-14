@@ -2,12 +2,19 @@ package discovery
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/integration"
@@ -16,6 +23,21 @@ import (
 
 const defaultCodexAPIBaseURL = "https://api.openai.com/v1"
 const defaultCodexChatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
+const codexMCPInventoryTimeout = 3 * time.Second
+
+type codexMCPInventorySystem interface {
+	CodexMCPList(context.Context, string) ([]byte, error)
+}
+
+type codexMCPEntry struct {
+	Name      string `json:"name"`
+	Enabled   *bool  `json:"enabled"`
+	Transport struct {
+		Type    string `json:"type"`
+		URL     string `json:"url"`
+		Command string `json:"command"`
+	} `json:"transport"`
+}
 
 type codexProviderConfig struct {
 	baseURL     string
@@ -31,7 +53,7 @@ type codexUserConfig struct {
 	providers      map[string]codexProviderConfig
 }
 
-func inspectCodex(system System, codexHome, configPath string) ([]integration.Slot, error) {
+func inspectCodex(ctx context.Context, system System, executable, codexHome, configPath string) ([]integration.Slot, error) {
 	parsed := codexUserConfig{providers: make(map[string]codexProviderConfig)}
 	content, readErr := system.ReadFile(configPath)
 	if readErr == nil {
@@ -82,12 +104,86 @@ func inspectCodex(system System, codexHome, configPath string) ([]integration.Sl
 	} else if limitation != "" {
 		metadata["reason"] = limitation
 	}
-	return []integration.Slot{{
+	slots := []integration.Slot{{
 		ID: "primary", Name: "Primary model", Type: domain.SurfaceModelPrimary,
 		Protocol: domain.ProtocolOpenAIResponses, BaseURL: provider.baseURL, Auth: auth,
 		Network: environmentProxyRoute(system), Rewritable: rewritable, Required: true,
 		Metadata: metadata,
-	}}, nil
+	}}
+	mcpSlots := inspectCodexMCP(ctx, system, executable)
+	return append(slots, mcpSlots...), nil
+}
+
+func inspectCodexMCP(ctx context.Context, system System, executable string) []integration.Slot {
+	inventory, ok := system.(codexMCPInventorySystem)
+	if !ok {
+		return []integration.Slot{codexUnknownSlot("mcp-inventory", "effective Codex MCP inventory could not be verified")}
+	}
+	payload, err := inventory.CodexMCPList(ctx, executable)
+	if err != nil || jsonsafe.Validate(payload) != nil {
+		return []integration.Slot{codexUnknownSlot("mcp-inventory", "effective Codex MCP inventory could not be verified")}
+	}
+	var entries []codexMCPEntry
+	if json.Unmarshal(payload, &entries) != nil || len(entries) > 256 {
+		return []integration.Slot{codexUnknownSlot("mcp-inventory", "effective Codex MCP inventory is invalid or exceeds its limit")}
+	}
+	seen := make(map[string]struct{}, len(entries))
+	result := make([]integration.Slot, 0, len(entries))
+	for _, entry := range entries {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" || len(name) > 256 || entry.Enabled == nil {
+			return []integration.Slot{codexUnknownSlot("mcp-inventory", "effective Codex MCP inventory contains an invalid entry")}
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return []integration.Slot{codexUnknownSlot("mcp-inventory", "effective Codex MCP inventory contains duplicate entries")}
+		}
+		seen[name] = struct{}{}
+		if !*entry.Enabled {
+			continue
+		}
+		id := fmt.Sprintf("mcp-%x", sha256.Sum256([]byte(name)))[:20]
+		switch entry.Transport.Type {
+		case "stdio":
+			if strings.TrimSpace(entry.Transport.Command) == "" {
+				return []integration.Slot{codexUnknownSlot(id, "enabled Codex stdio MCP server has no executable command")}
+			}
+			result = append(result, integration.Slot{ID: id, Name: "Local MCP " + name, Type: domain.SurfaceMCPStdio, Protocol: domain.ProtocolLocalStdio, Required: true, Metadata: map[string]string{"reason": "stdio is local IPC; descendant process network egress is outside the model route"}})
+		case "streamable_http", "http":
+			endpoint, parseErr := url.Parse(entry.Transport.URL)
+			if parseErr != nil || endpoint.User != nil || endpoint.Hostname() == "" || endpoint.Fragment != "" || endpoint.RawQuery != "" || endpoint.Scheme != "https" && endpoint.Scheme != "http" {
+				return []integration.Slot{codexUnknownSlot(id, "enabled Codex HTTP MCP endpoint could not be represented safely")}
+			}
+			result = append(result, integration.Slot{ID: id, Name: "Remote MCP " + name, Type: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolMCPStreamable, BaseURL: entry.Transport.URL, Auth: domain.AuthStrategy{Type: domain.AuthPassthrough}, Rewritable: false, Required: true, Metadata: map[string]string{"reason": "Codex remote MCP launch rewriting is not implemented"}})
+		default:
+			result = append(result, codexUnknownSlot(id, "enabled Codex MCP server uses an unrecognized transport"))
+		}
+	}
+	return result
+}
+
+func (OSSystem) CodexMCPList(ctx context.Context, executable string) ([]byte, error) {
+	if ctx == nil || !filepath.IsAbs(executable) {
+		return nil, domain.NewError(domain.ErrInvalidContract, "inventory codex MCP", "context and absolute executable are required")
+	}
+	bounded, cancel := context.WithTimeout(ctx, codexMCPInventoryTimeout)
+	defer cancel()
+	output := &boundedVersionOutput{limit: maxAgentConfigBytes}
+	command := exec.CommandContext(bounded, executable, "mcp", "list", "--json")
+	configureVersionCommand(command)
+	command.Stdout = output
+	command.Stderr = io.Discard
+	err := command.Run()
+	cleanupVersionCommand(command)
+	if output.Exceeded() {
+		return nil, domain.NewError(domain.ErrInvalidContract, "inventory codex MCP", "MCP inventory exceeds its size limit")
+	}
+	if bounded.Err() != nil {
+		return nil, domain.NewError(domain.ErrInvalidContract, "inventory codex MCP", "MCP inventory command timed out or was cancelled")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []byte(output.String()), nil
 }
 
 func codexDefaultBaseURL(system System, codexHome string, config codexUserConfig) (string, string) {

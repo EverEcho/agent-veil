@@ -129,10 +129,17 @@ requires confirmed functionality with no known bugs.
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
   credentials;
-- version-gated Codex API-key, Claude Code API-key, and Hermes discovery/protected launch, plus
+- version-gated Codex API-key/ChatGPT-login, Claude Code API-key, and Hermes discovery/protected launch, plus
   a discovery-only Cursor compatibility record; protected children receive
   only fresh Session/parent/route capabilities and never inherit the Core
   management token;
+- Codex discovery asks the installed CLI for its effective MCP inventory, so
+  plugin-provided servers are not hidden by a config-file-only view. Enabled
+  stdio MCP is reported as Local with descendant-process egress called out;
+  enabled remote MCP remains Unprotected until Codex-specific route rewriting
+  is implemented. Codex Protected coverage refers to the enumerated model
+  Surface, not to an OS firewall around arbitrary shell, plugin, or child-process
+  traffic;
 - bounded Agent configuration inspection restricted to stable regular files,
   with hard deadlines for version commands and inherited output pipes, plus a
   fixed concurrency ceiling for deterministic discovery; temporary Hermes homes

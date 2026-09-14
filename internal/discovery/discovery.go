@@ -262,7 +262,7 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 			}
 		}
 		config.ConfigSource = filepath.Join(codexHome, "config.toml")
-		config.Slots, err = inspectCodex(d.System, codexHome, config.ConfigSource)
+		config.Slots, err = inspectCodex(ctx, d.System, executable, codexHome, config.ConfigSource)
 		if err != nil {
 			return domain.AgentManifest{}, err
 		}

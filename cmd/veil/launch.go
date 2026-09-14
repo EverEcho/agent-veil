@@ -36,6 +36,11 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if name != "codex" && name != "claude" && name != "hermes" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
+	if name == "codex" {
+		if err := validateCodexProtectedArgs(childArgs); err != nil {
+			return err
+		}
+	}
 	if name == "hermes" {
 		if err := validateHermesProtectedArgs(childArgs); err != nil {
 			return err
@@ -520,7 +525,7 @@ func localNoProxy(values ...string) string {
 }
 
 func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []string {
-	values := []string{`model_provider="agentveil"`, `model_providers.agentveil.name="AgentVeil"`, `model_providers.agentveil.base_url="` + baseURL + `"`, `model_providers.agentveil.wire_api="responses"`, `model_providers.agentveil.supports_websockets=false`, `model_providers.agentveil.env_http_headers={"X-Veil-Session"="VEIL_SESSION_ID","X-Veil-Route-Token"="VEIL_PROTECTION_TOKEN"}`}
+	values := []string{`model_provider="agentveil"`, `model_providers.agentveil.name="AgentVeil"`, `model_providers.agentveil.base_url="` + baseURL + `"`, `model_providers.agentveil.wire_api="responses"`, `model_providers.agentveil.supports_websockets=false`, `model_providers.agentveil.env_http_headers={"X-Veil-Session"="VEIL_SESSION_ID","X-Veil-Route-Token"="VEIL_PROTECTION_TOKEN"}`, `features.enable_request_compression=false`, `features.apps=false`}
 	if hasAPIKey {
 		values = append(values, `model_providers.agentveil.env_key="OPENAI_API_KEY"`)
 	} else {
@@ -531,4 +536,31 @@ func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []st
 		result = append(result, "-c", value)
 	}
 	return append(result, childArgs...)
+}
+
+func validateCodexProtectedArgs(args []string) error {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--enable" && index+1 < len(args) && strings.EqualFold(args[index+1], "apps") || strings.EqualFold(argument, "--enable=apps") {
+			return errors.New("protected Codex launch cannot enable Apps because their transport bypasses the model route")
+		}
+		var override string
+		switch {
+		case (argument == "-c" || argument == "--config") && index+1 < len(args):
+			override = args[index+1]
+			index++
+		case strings.HasPrefix(argument, "--config="):
+			override = strings.TrimPrefix(argument, "--config=")
+		case strings.HasPrefix(argument, "-c="):
+			override = strings.TrimPrefix(argument, "-c=")
+		case strings.HasPrefix(argument, "-c") && len(argument) > 2:
+			override = strings.TrimPrefix(argument, "-c")
+		}
+		key, _, exists := strings.Cut(override, "=")
+		key = strings.TrimSpace(key)
+		if exists && (key == "model_provider" || strings.HasPrefix(key, "model_providers.") || key == "features.enable_request_compression" || key == "features.apps") {
+			return fmt.Errorf("protected Codex launch cannot override %s", key)
+		}
+	}
+	return nil
 }

@@ -56,6 +56,30 @@ func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 	if strings.Contains(joined, "session-secret") || !strings.Contains(joined, "env_http_headers") || !strings.Contains(joined, "env_key") {
 		t.Fatalf("args=%v", args)
 	}
+	for _, required := range []string{`supports_websockets=false`, `features.enable_request_compression=false`, `features.apps=false`} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("protected Codex arguments are missing %q: %s", required, joined)
+		}
+	}
+}
+
+func TestProtectedCodexArgsRejectRouteBypasses(t *testing.T) {
+	blocked := [][]string{
+		{"-c", `model_provider="direct"`},
+		{"--config", `model_providers.openai.base_url="https://api.openai.com/v1"`},
+		{`--config=features.enable_request_compression=true`},
+		{`-c=features.apps=true`},
+		{"--enable", "apps"},
+		{"--enable=apps"},
+	}
+	for _, args := range blocked {
+		if err := validateCodexProtectedArgs(args); err == nil {
+			t.Fatalf("validateCodexProtectedArgs(%q) allowed a protected-route bypass", args)
+		}
+	}
+	if err := validateCodexProtectedArgs([]string{"exec", "--ephemeral", "task", "-c", `model_reasoning_effort="high"`}); err != nil {
+		t.Fatalf("ordinary Codex arguments rejected: %v", err)
+	}
 }
 
 func TestProtectedRunInteractionFlagIsExplicitAndDoesNotConsumeChildFlag(t *testing.T) {
