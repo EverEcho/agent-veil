@@ -58,6 +58,30 @@ func TestNonStreamingResponseProtocolMatrixRestoresPlaceholders(t *testing.T) {
 	}
 }
 
+func TestNonStreamingResponseRejectsTransformedPlaceholder(t *testing.T) {
+	vault, err := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vault.Destroy()
+	placeholder, err := vault.Store("phone", "13100000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
+	body, err := json.Marshal(map[string]any{"output_text": hyphenated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ProcessResponse(domain.ProtocolOpenAIResponses, "application/json", body, detector.NewDefault(), vault)
+	if err == nil {
+		t.Fatalf("transformed placeholder was accepted: %s", result)
+	}
+	if strings.Contains(string(result), "1-3-1") {
+		t.Fatalf("transformed original leaked into response: %s", result)
+	}
+}
+
 func TestResponseRestoresContentButNeverIntegrityFields(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	placeholder, _ := vault.Store("email", "dev@example.com")

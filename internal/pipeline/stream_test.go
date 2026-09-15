@@ -154,9 +154,9 @@ func TestResponsesSSEPreservesEncryptedReasoningUnchanged(t *testing.T) {
 	}
 }
 
-func TestSSEProcessorRestoresHyphenatedPlaceholderAcrossEvents(t *testing.T) {
+func TestSSEProcessorRejectsTransformedPlaceholderAcrossEvents(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
-	placeholder, _ := vault.Store("pii.email", "qa-person@example.com")
+	placeholder, _ := vault.Store("pii.cn.phone", "13100000000")
 	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
 	processor, _ := NewSSEProcessorWithPolicy(Context{}, domain.ProtocolOpenAIResponses, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault, 4096, 128)
 	var stream bytes.Buffer
@@ -166,39 +166,14 @@ func TestSSEProcessorRestoresHyphenatedPlaceholderAcrossEvents(t *testing.T) {
 	}
 	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}})
 	stream.WriteString("data: " + string(completed) + "\n\n")
-	first, err := processor.Push(stream.Bytes())
-	if err != nil {
-		t.Fatal(err)
+	output, err := processor.Push(stream.Bytes())
+	if err == nil {
+		var tail []byte
+		tail, err = processor.Close()
+		output = append(output, tail...)
 	}
-	tail, err := processor.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := string(append(first, tail...))
-	if !strings.Contains(output, "q-a---p-e-r-s-o-n-@-e-x-a-m-p-l-e-.-c-o-m") || strings.Contains(output, "V-E-I-L") || !strings.Contains(output, "response.completed") {
-		t.Fatalf("hyphenated placeholder was not restored across events: %s", output)
-	}
-}
-
-func TestSSEProcessorRestoresHyphenatedPlaceholderFromResponsesDoneEvents(t *testing.T) {
-	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
-	placeholder, _ := vault.Store("pii.email", "qa-person@example.com")
-	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
-	processor, _ := NewSSEProcessorWithPolicy(Context{}, domain.ProtocolOpenAIResponses, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault, 1<<20, 128)
-	done, _ := json.Marshal(map[string]any{"type": "response.output_text.done", "text": hyphenated})
-	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed", "output": []any{map[string]any{"type": "message", "status": "completed", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": hyphenated}}}}}})
-	stream := []byte("data: " + string(done) + "\n\ndata: " + string(completed) + "\n\n")
-	first, err := processor.Push(stream)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tail, err := processor.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := string(append(first, tail...))
-	if strings.Contains(output, "V-E-I-L") || strings.Count(output, "q-a---p-e-r-s-o-n-@-e-x-a-m-p-l-e-.-c-o-m") != 2 || !strings.Contains(output, "response.completed") {
-		t.Fatalf("Responses done events were not restored: %s", output)
+	if err == nil || strings.Contains(string(output), "1-3-1") {
+		t.Fatalf("transformed placeholder escaped: output=%s err=%v", output, err)
 	}
 }
 
