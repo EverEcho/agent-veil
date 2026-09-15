@@ -18,6 +18,7 @@ AgentVeil 是一个本地优先的 AI Agent 数据安全控制层。它在模型
 | [08-acceptance-evidence.md](./08-acceptance-evidence.md) | 12 条产品验收标准的自动化证据、真实验证与阻塞项 | 产品、研发、测试、发布 |
 | [09-development-progress.md](./09-development-progress.md) | 按已开发、已验证、待开发、待验证维度维护当前功能进度 | 产品、研发、测试、项目管理 |
 | [10-release-channels.md](./10-release-channels.md) | `main`、`beta`、`dev` 的质量定义、晋级和手动打包规则 | 产品、研发、测试、发布 |
+| [11-development-guide.md](./11-development-guide.md) | 本地环境、项目结构、启动、构建和测试入口 | 研发、测试 |
 | [adr/](./adr/README.md) | 已接受安全决策、后果、验证证据和开放边界 | 架构、安全、研发 |
 
 ## 一句话架构

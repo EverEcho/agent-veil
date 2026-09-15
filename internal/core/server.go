@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/discovery"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -76,11 +77,12 @@ type Server struct {
 	auditReader  interface {
 		Recent(time.Time) ([]domain.AuditEvent, error)
 	}
-	feedbackStore *feedback.Store
-	proxySlots    chan struct{}
-	streamSlots   chan struct{}
-	legacySSE     *veilproxy.LegacySSEManager
-	discoverer    interface {
+	feedbackStore   *feedback.Store
+	debugTraceStore *debugtrace.Store
+	proxySlots      chan struct{}
+	streamSlots     chan struct{}
+	legacySSE       *veilproxy.LegacySSEManager
+	discoverer      interface {
 		DetectAll(context.Context) []discovery.Detection
 	}
 	scanner       detector.ContentScanner
@@ -278,6 +280,14 @@ func (s *Server) WithFeedbackStore(store *feedback.Store) error {
 		return domain.NewError(domain.ErrInvalidContract, "configure feedback", "feedback store is required")
 	}
 	s.feedbackStore = store
+	return nil
+}
+
+func (s *Server) WithDebugTraceStore(store *debugtrace.Store) error {
+	if store == nil {
+		return domain.NewError(domain.ErrInvalidContract, "configure developer traces", "developer trace store is required")
+	}
+	s.debugTraceStore = store
 	return nil
 }
 

@@ -5,22 +5,86 @@ use reqwest::{
 use serde::Serialize;
 use serde_json::Value;
 use std::io::Read;
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::thread;
 use std::time::Duration;
 use tauri::State;
 
 use crate::core_supervisor::{
-    credentials, launch_protected_codex, ready, SharedRuntime, RELEASE_CHANNEL,
+    credentials, launch_protected_codex, protected_codex_running, ready, SharedRuntime,
+    RELEASE_CHANNEL,
 };
 
 pub(crate) const API_VERSION: &str = "v1";
 const MAX_REQUEST_BYTES: usize = 1 << 20;
-const MAX_RESPONSE_BYTES: u64 = 4 << 20;
+const MAX_RESPONSE_BYTES: u64 = 8 << 20;
 
 #[derive(Serialize)]
 pub(crate) struct DesktopInfo {
     desktop: bool,
     ready: bool,
     channel: &'static str,
+    codex_desktop_running: Option<bool>,
+    codex_desktop_protected: bool,
+}
+
+#[cfg(target_os = "macos")]
+const CODEX_DESKTOP_PROCESS_PATTERN: &str =
+    "^/Applications/ChatGPT\\.app/Contents/MacOS/ChatGPT( |$)";
+
+#[cfg(target_os = "macos")]
+fn codex_desktop_running() -> Option<bool> {
+    Command::new("/usr/bin/pgrep")
+        .args(["-f", CODEX_DESKTOP_PROCESS_PATTERN])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()
+        .and_then(|status| match status.code() {
+            Some(0) => Some(true),
+            Some(1) => Some(false),
+            _ => None,
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn stop_unprotected_codex_desktop() -> Result<(), String> {
+    match codex_desktop_running() {
+        Some(false) => return Ok(()),
+        None => return Err("无法安全确认 Codex 桌面客户端是否正在运行".into()),
+        Some(true) => {}
+    }
+    let status = Command::new("/usr/bin/pkill")
+        .args(["-TERM", "-f", CODEX_DESKTOP_PROCESS_PATTERN])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| "无法关闭未受保护的 Codex 桌面客户端")?;
+    if !matches!(status.code(), Some(0 | 1)) {
+        return Err("无法关闭未受保护的 Codex 桌面客户端".into());
+    }
+    for _ in 0..50 {
+        match codex_desktop_running() {
+            Some(false) => return Ok(()),
+            Some(true) => thread::sleep(Duration::from_millis(100)),
+            None => return Err("关闭 Codex 后无法确认进程状态".into()),
+        }
+    }
+    Err("Codex 桌面客户端未能在 5 秒内退出，请手动退出后重试".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stop_unprotected_codex_desktop() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn codex_desktop_running() -> Option<bool> {
+    None
 }
 
 pub(crate) fn client() -> Result<Client, String> {
@@ -75,6 +139,8 @@ pub(crate) fn desktop_info(runtime: State<'_, SharedRuntime>) -> DesktopInfo {
         desktop: true,
         ready: ready(&runtime),
         channel: RELEASE_CHANNEL,
+        codex_desktop_running: codex_desktop_running(),
+        codex_desktop_protected: protected_codex_running(&runtime).unwrap_or(false),
     }
 }
 
@@ -84,9 +150,14 @@ pub(crate) async fn launch_codex_desktop(
     runtime: State<'_, SharedRuntime>,
 ) -> Result<Value, String> {
     let runtime = runtime.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || launch_protected_codex(&app, &runtime))
-        .await
-        .map_err(|_| "Codex 桌面启动任务异常退出".to_owned())??;
+    tauri::async_runtime::spawn_blocking(move || {
+        if !protected_codex_running(&runtime)? {
+            stop_unprotected_codex_desktop()?;
+        }
+        launch_protected_codex(&app, &runtime)
+    })
+    .await
+    .map_err(|_| "Codex 桌面启动任务异常退出".to_owned())??;
     Ok(serde_json::json!({"status": "started"}))
 }
 
@@ -199,8 +270,9 @@ fn allowed_request(method: &Method, path: &str) -> bool {
         (&Method::GET, "/v1/health" | "/v1/discovery" | "/v1/agents")
         | (&Method::GET, "/v1/approvals" | "/v1/audit" | "/v1/call-tree")
         | (&Method::GET, "/v1/policy" | "/v1/rules" | "/v1/models")
+        | (&Method::GET, "/v1/developer-settings" | "/v1/developer-traces")
         | (&Method::GET, "/v1/diagnostics")
-        | (&Method::PUT, "/v1/policy") => true,
+        | (&Method::PUT, "/v1/policy" | "/v1/developer-settings") => true,
         (&Method::GET, value) => single_safe_segment(value, "/v1/discovery/"),
         (&Method::POST, value) => single_safe_segment(value, "/v1/approvals/"),
         _ => false,
@@ -222,6 +294,16 @@ fn single_safe_segment(path: &str, prefix: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_desktop_pattern_targets_only_the_gui_main_executable() {
+        assert_eq!(
+            CODEX_DESKTOP_PROCESS_PATTERN,
+            "^/Applications/ChatGPT\\.app/Contents/MacOS/ChatGPT( |$)"
+        );
+        assert!(!CODEX_DESKTOP_PROCESS_PATTERN.contains("app-server"));
+    }
+
     #[test]
     fn bridge_allows_only_dashboard_contract() {
         for (method, path) in [
@@ -229,6 +311,8 @@ mod tests {
             (&Method::GET, "/v1/discovery/codex"),
             (&Method::POST, "/v1/approvals/approval-123"),
             (&Method::PUT, "/v1/policy"),
+            (&Method::GET, "/v1/developer-traces"),
+            (&Method::PUT, "/v1/developer-settings"),
         ] {
             assert!(allowed_request(method, path), "{method} {path}");
         }

@@ -79,9 +79,10 @@ func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, so
 
 // linkCodexDesktopState exposes the user's existing conversations and normal
 // desktop state inside the isolated launch home without sharing configuration
-// or credentials. Directories use symlinks so newly created conversation files
-// persist in the original Codex state; regular files use hard links when the
-// filesystem permits it so SQLite state remains shared without being copied.
+// or credentials. Every shared entry uses a symlink so Codex and SQLite resolve
+// one canonical path for database, WAL, shared-memory and lock coordination.
+// Hard-linking a live SQLite database under another path creates a second WAL
+// and lock namespace and can corrupt the shared history database.
 func linkCodexDesktopState(sourceHome, temporaryHome string) error {
 	sourceInfo, err := os.Lstat(sourceHome)
 	if err != nil || !sourceInfo.IsDir() || runtime.GOOS != "windows" && sourceInfo.Mode().Perm()&0o022 != 0 {
@@ -103,13 +104,8 @@ func linkCodexDesktopState(sourceHome, temporaryHome string) error {
 			return domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "Codex state changed while it was linked")
 		}
 		switch {
-		case info.IsDir() || info.Mode()&os.ModeSymlink != 0:
+		case info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular():
 			err = os.Symlink(source, destination)
-		case info.Mode().IsRegular():
-			err = os.Link(source, destination)
-			if err != nil {
-				err = os.Symlink(source, destination)
-			}
 		default:
 			return domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "Codex state contains an unsupported file type")
 		}
@@ -219,9 +215,10 @@ func cleanupCodexDesktopLaunchHome(home string) error {
 }
 
 // retireCodexDesktopHome removes credentials, configuration and runtime state,
-// but keeps the absolute sessions path alive. Codex stores rollout_path as an
-// absolute CODEX_HOME path; deleting that path makes existing conversations
-// impossible to restore or delete even though the rollout file still exists.
+// but keeps the absolute conversation paths alive. Codex stores rollout_path as
+// an absolute CODEX_HOME path; deleting either the active or archived path makes
+// existing conversations impossible to restore or delete even though the
+// rollout file still exists.
 func retireCodexDesktopHome(home string) error {
 	marker := filepath.Join(home, codexDesktopMarker)
 	payload, err := os.ReadFile(marker)
@@ -239,6 +236,16 @@ func retireCodexDesktopHome(home string) error {
 	if err != nil || !filepath.IsAbs(sourceSessions) || strings.ContainsRune(sourceSessions, 0) {
 		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "conversation path is unavailable or unsafe")
 	}
+	conversationLinks := map[string]string{"sessions": sourceSessions}
+	archivedSessions := filepath.Join(home, "archived_sessions")
+	if sourceArchivedSessions, archivedErr := os.Readlink(archivedSessions); archivedErr == nil {
+		if !filepath.IsAbs(sourceArchivedSessions) || strings.ContainsRune(sourceArchivedSessions, 0) {
+			return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "archived conversation path is unsafe")
+		}
+		conversationLinks["archived_sessions"] = sourceArchivedSessions
+	} else if !errors.Is(archivedErr, os.ErrNotExist) {
+		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "archived conversation path is unavailable or unsafe")
+	}
 	if err := removeOwnedCodexDesktopHome(home); err != nil {
 		return err
 	}
@@ -248,7 +255,16 @@ func retireCodexDesktopHome(home string) error {
 	if err := writePrivateFile(filepath.Join(home, codexDesktopMarker), []byte(codexDesktopRetiredMarkerContent)); err != nil {
 		return err
 	}
-	return os.Symlink(sourceSessions, sessions)
+	for _, name := range []string{"sessions", "archived_sessions"} {
+		target, ok := conversationLinks[name]
+		if !ok {
+			continue
+		}
+		if err := os.Symlink(target, filepath.Join(home, name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureCodexDesktopRoot(root string) error {

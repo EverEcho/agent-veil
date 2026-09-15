@@ -37,8 +37,8 @@ Integration 不实现检测、策略、Vault 或流式恢复。相同协议必�
 - 关闭可能绕过 HTTP 检查的 WebSocket 与请求压缩能力；
 - 拒绝会覆盖 provider、base URL、WebSocket 或 compression 的冲突参数；
 - 兼容 OpenAI API Key 与 ChatGPT/Codex 登录链路需分别做端到端验证。
-- Codex Desktop 作为独立 Integration 识别其内置 `codex app-server` 版本；macOS 使用 AgentVeil 私有的会话级 `CODEX_HOME` 启动官方 App，退出后清理，不修改 `~/.codex`；
-- 已运行的 Codex Desktop 不做伪 Attach。必须先退出，再从 AgentVeil 受保护启动；App Tools、MCP 与 Shell 子进程仍逐项展示其独立出口边界。
+- Codex Desktop 作为独立 Integration 识别其内置 `codex app-server` 版本；macOS 使用 AgentVeil 私有的会话级 `CODEX_HOME` 启动官方 App，持久状态通过符号链接共享以维持唯一 SQLite/WAL 锁域，退出后清理临时认证与配置并保留活动/归档会话路径，不修改 `~/.codex`；
+- 已运行的 Codex Desktop 不做伪 Attach。桌面控制端会区分自己持有的受保护启动器与普通 GUI 进程：前者保持运行，后者收到 `SIGTERM` 并在确认退出后由 AgentVeil 受保护地重启；若无法确认或 5 秒内未退出则安全失败，不使用 `SIGKILL`。App Tools、MCP 与 Shell 子进程仍逐项展示其独立出口边界。
 
 ### Claude Code
 

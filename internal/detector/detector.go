@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"encoding/pem"
 	"math"
 	"net"
 	"regexp"
@@ -75,7 +76,7 @@ type Scanner struct {
 
 func NewDefault() *Scanner {
 	scanner := &Scanner{rules: []rule{
-		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----`), nil, 0},
+		{"secret.private_key", "secret.private_key", domain.SeverityCritical, domain.ActionBlock, regexp.MustCompile(`(?s:-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----)`), validPrivateKeyPEM, 0},
 		{"secret.github_pat", "secret.github_pat", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b`), nil, 0},
 		{"secret.openai_key", "secret.openai_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b`), nil, 0},
 		{"secret.anthropic_key", "secret.anthropic_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`), nil, 0},
@@ -161,6 +162,19 @@ func NewDefault() *Scanner {
 	}
 	scanner.prefixIndex, scanner.prefixRules = buildPrefixIndex(prefixes, foldedPrefixes)
 	return scanner
+}
+
+func validPrivateKeyPEM(value string) bool {
+	block, rest := pem.Decode([]byte(value))
+	if block == nil || len(block.Bytes) < 32 || strings.TrimSpace(string(rest)) != "" {
+		return false
+	}
+	switch block.Type {
+	case "PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "DSA PRIVATE KEY", "OPENSSH PRIVATE KEY", "ENCRYPTED PRIVATE KEY":
+		return true
+	default:
+		return false
+	}
 }
 
 type prefixCandidate struct {

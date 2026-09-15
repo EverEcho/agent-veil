@@ -1,8 +1,10 @@
 import {desktopInfo, exchangeBrowserTicket, isDesktop, launchCodexDesktop, requestCore} from './platform.js';
+import {locale, preferredLocale, setLocale, t, translatePrefix, translateValue} from './i18n.js';
 
 const state = {
   health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
-  policy: null, policySaving: false, rules: null, models: null, browserSession: false, refreshTimer: null, locale: localStorage.getItem('agentveil.locale') || 'zh-CN'
+  policy: null, policySaving: false, rules: null, models: null, desktopInfo: null, browserSession: false, refreshTimer: null, locale: preferredLocale(),
+  developerSettings: null, developerTraces: [], developerSaving: false
 };
 
 const $ = selector => document.querySelector(selector);
@@ -10,37 +12,6 @@ const $$ = selector => [...document.querySelectorAll(selector)];
 const array = value => Array.isArray(value) ? value : [];
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
-
-const copy = {
-  'zh-CN': {
-    overview: ['概览', '首页'], tools: ['自动发现', '我的工具'], activity: ['本机记录', '保护记录'],
-    settings: ['偏好与诊断', '设置'], advanced: ['谨慎操作', '高级功能'],
-    connected: '保护服务正常', degraded: '保护服务需要检查', offline: '无法连接保护服务',
-    noTools: '没有发现支持的 AI 工具', noToolsHelp: '确认工具已安装，并从系统菜单重新启动 AgentVeil。',
-    verified: '支持保护', unverified: '暂不支持此版本', versionUnknown: '暂不支持此版本',
-    protected: '已加入保护', notProtected: '尚未加入保护', inspect: '查看详情',
-    noActivity: '暂无保护记录', noActivityHelp: '启动受保护的 AI 工具后，安全处理摘要会显示在这里。',
-    loadPartial: '部分信息暂时无法读取，其他模块仍可正常使用。', authFailed: '本机会话无效，或 Privacy Core 尚未启动。',
-    saveOK: '策略已保存', saveFailed: '保存失败，请检查 JSON 内容', diagnosisOK: '诊断文件已导出', diagnosisFailed: '诊断导出失败',
-    surfaces: '保护范围', risks: '需要注意', noSurface: '没有可显示的保护范围',
-    protectionTruth: '“已发现”不代表“已保护”。只有通过 AgentVeil 启动并建立保护会话后，才会显示为正在保护。',
-    launchDesktop: '受保护地启动 Codex', launchStarting: '正在创建受保护会话…', launchStarted: 'Codex 已从受保护会话启动', protectedContent: '处理内容'
-  },
-  en: {
-    overview: ['Overview', 'Home'], tools: ['Auto discovery', 'My tools'], activity: ['On-device history', 'Protection activity'],
-    settings: ['Preferences & diagnostics', 'Settings'], advanced: ['Use with care', 'Advanced'],
-    connected: 'Protection service is healthy', degraded: 'Protection service needs attention', offline: 'Unable to reach protection service',
-    noTools: 'No supported AI tools found', noToolsHelp: 'Make sure a tool is installed, then restart AgentVeil from the system menu.',
-    verified: 'Recognized and inspectable', unverified: 'Found, compatibility pending', versionUnknown: 'Found, version unknown',
-    protected: 'Protection configured', notProtected: 'Not protected yet', inspect: 'View protection capability',
-    noActivity: 'No protection activity yet', noActivityHelp: 'Safe summaries appear here after a protected AI tool runs.',
-    loadPartial: 'Some information is temporarily unavailable. Other sections remain usable.', authFailed: 'The local session is invalid or Privacy Core is not running.',
-    saveOK: 'Policy saved', saveFailed: 'Save failed. Check the JSON document.', diagnosisOK: 'Diagnostics exported', diagnosisFailed: 'Diagnostics export failed',
-    surfaces: 'Protection scope', risks: 'Things to know', noSurface: 'No protection scope is available',
-    protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.',
-    launchDesktop: 'Launch protected Codex', launchStarting: 'Creating a protected session…', launchStarted: 'Codex launched in a protected session', protectedContent: 'Protected content'
-  }
-};
 
 const protectionSettingGroups = {
   contact: ['pii.email', 'pii.cn.phone', 'pii.cn.landline'],
@@ -52,72 +23,20 @@ const protectionSettingGroups = {
   network: ['pii.ipv4', 'pii.ipv6', 'pii.mac']
 };
 
-function t(key) { return (copy[state.locale] || copy['zh-CN'])[key] || key; }
 function agentLabel(value) {
-  if (value === 'codex-desktop') return state.locale === 'zh-CN' ? 'Codex 桌面版' : 'Codex Desktop';
-  return value;
+  return translateValue('agentLabels', value);
+}
+function localizedValue(value, namespace) {
+  return translateValue(namespace, value);
 }
 
-const zhCoverage = {
-  protected: '已保护', local: '本机运行', partial: '部分保护', observed: '仅观察', unprotected: '未保护'
-};
-
-const zhReasons = {
-  'request, response and stream inspection are available': '请求、响应和流式内容均可检查',
-  'surface uses local stdio; descendant network egress is separate': '该连接使用本机 stdio；子进程的网络出口需要单独评估',
-  'unknown surfaces and protocols fail closed': '未知连接或协议按安全策略阻断',
-  'no protocol capability is registered': '当前没有注册该协议的保护能力',
-  'traffic can be observed but the surface cannot be safely rewritten': '可观察流量，但无法安全改写该连接',
-  'surface cannot be safely rewritten': '当前无法安全改写该连接',
-  'request content is not inspectable': '请求内容暂不可检查',
-  'request inspection is available but response or stream protection is incomplete': '请求可检查，但响应或流式保护不完整',
-  'routing graph contains a content modifier after AgentVeil': '路由中 AgentVeil 之后仍有内容修改器',
-  'agent version has no verified complete Surface inventory': '当前 Agent 版本尚无完整连接清单的验证记录',
-  'custom model provider requires a versioned launch adapter': '自定义模型 Provider 需要匹配版本的启动适配器',
-  'provider query, header, dynamic discovery, or signer settings cannot yet be preserved': 'Provider 的查询参数、请求头、动态发现或签名配置尚不能完整保留',
-  'selected provider has no base URL': '当前选择的 Provider 没有可解析的服务地址',
-  'Codex authentication mode is unknown': '无法确认 Codex 当前使用的登录方式',
-  'Codex model route could not be resolved': '无法解析 Codex 当前使用的模型连接',
-  'effective Codex MCP inventory could not be verified': '无法确认 Codex 最终生效的 MCP 清单',
-  'effective Codex MCP inventory is invalid or exceeds its limit': 'Codex 最终生效的 MCP 清单无效或超过限制',
-  'effective Codex MCP inventory contains an invalid entry': 'Codex 最终生效的 MCP 清单包含无效项目',
-  'effective Codex MCP inventory contains duplicate entries': 'Codex 最终生效的 MCP 清单包含重复项目',
-  'enabled Codex stdio MCP server has no executable command': '已启用的 Codex stdio MCP 没有可执行命令',
-  'enabled Codex HTTP MCP endpoint could not be represented safely': '已启用的 Codex HTTP MCP 地址无法安全表示',
-  'enabled Codex MCP server uses an unrecognized transport': '已启用的 Codex MCP 使用了无法识别的传输方式',
-  'Codex remote MCP launch rewriting is not implemented': 'Codex 远程 MCP 尚未实现受保护启动改写',
-  'stdio is local IPC; descendant process network egress is outside the model route': 'stdio 是本机进程通信；其子进程独立联网不经过主模型保护路线'
-};
-
-const zhRiskCodes = {
-  OBSERVED_ONLY: '仅可观察', UNKNOWN_PROTOCOL: '未知协议', NOT_REWRITABLE: '无法安全改写',
-  UNSUPPORTED_CAPABILITY: '尚不支持该能力', REQUEST_ONLY: '仅保护请求',
-  UNEXPECTED_EGRESS: '发现未预期的网络出口', DOWNSTREAM_MODIFIER: '下游仍会修改内容'
-};
-
-const zhSurfaceNames = {
-  'Primary model': '主模型', 'Small model': '轻量模型', Vision: '视觉模型', Fallback: '备用模型',
-  'Unverified version egress': '未验证版本的网络出口', 'Unresolved agent egress': '未解析的 Agent 网络出口',
-  'Unresolved Codex egress': '未解析的 Codex 网络出口', 'Browser automation': '浏览器自动化',
-  'Web tools': 'Web 工具', 'Local MCP': '本机 MCP', 'Remote MCP': '远程 MCP'
-};
-
-function localizedValue(value, dictionary) {
-  const raw = String(value ?? '');
-  return state.locale === 'zh-CN' ? dictionary[raw] || raw : raw;
-}
-
-function coverageLabel(value) { return localizedValue(value, zhCoverage); }
-function reasonLabel(value) { return localizedValue(value, zhReasons); }
-function riskLabel(value) { return localizedValue(value, zhRiskCodes); }
+function coverageLabel(value) { return localizedValue(value, 'coverage'); }
+function reasonLabel(value) { return localizedValue(value, 'reasons'); }
+function riskLabel(value) { return localizedValue(value, 'riskCodes'); }
 function surfaceLabel(value) {
   const raw = String(value ?? '');
-  if (state.locale !== 'zh-CN') return raw;
-  if (zhSurfaceNames[raw]) return zhSurfaceNames[raw];
-  for (const [prefix, translated] of [['Local MCP ', '本机 MCP '], ['Remote MCP ', '远程 MCP '], ['Cline provider ', 'Cline Provider '], ['Zed model ', 'Zed 模型 '], ['ACP agent ', 'ACP Agent ']]) {
-    if (raw.startsWith(prefix)) return translated + raw.slice(prefix.length);
-  }
-  return raw;
+  const translatedName = translateValue('surfaceNames', raw);
+  return translatedName === raw ? translatePrefix('surfacePrefixes', raw) : translatedName;
 }
 
 function protectionScopeRows(surfaces, coverage) {
@@ -128,22 +47,20 @@ function protectionScopeRows(surfaces, coverage) {
   const rows = network.map(({item, surface}) => {
     const model = ['model_primary', 'model_auxiliary', 'model_fallback', 'vision'].includes(surface.type);
     const name = model
-      ? state.locale === 'zh-CN' ? 'AI 对话' : 'AI conversations'
+      ? t('scope.aiConversations')
       : surfaceLabel(surface.name || item.surface_id);
     const description = model
       ? item.status === 'protected'
-        ? state.locale === 'zh-CN' ? '发送给 AI 的内容和 AI 返回的内容，会先经过本机隐私检查。' : 'Messages sent to and returned by the AI pass through on-device privacy checks.'
-        : state.locale === 'zh-CN' ? '这部分内容目前还不能安全接入 AgentVeil。' : 'This content cannot yet be safely routed through AgentVeil.'
+        ? t('scope.protectedConversation')
+        : t('scope.unprotectedConversation')
       : reasonLabel(item.reason || object(surface.metadata).reason || '');
     return {status:item.status, name, description};
   });
   if (local.length) {
     rows.push({
       status:'local',
-      name: state.locale === 'zh-CN' ? `本地工具（${local.length} 个）` : `Local tools (${local.length})`,
-      description: state.locale === 'zh-CN'
-        ? '这些工具在你的电脑上运行；如果它们自己联网，当前不会经过 AgentVeil。'
-        : 'These tools run on your computer. Their own network requests do not currently pass through AgentVeil.'
+      name: t('scope.localTools', {count:local.length}),
+      description: t('scope.localToolsDescription')
     });
   }
   return rows;
@@ -171,6 +88,12 @@ async function safeLoad(path, apply) {
   catch (_) { return false; }
 }
 
+async function loadDesktopInfo() {
+  if (!isDesktop) return true;
+  try { state.desktopInfo = await desktopInfo(); return true; }
+  catch (_) { state.desktopInfo = null; return true; }
+}
+
 async function loadAll() {
   $('#refresh').disabled = true;
   const results = await Promise.all([
@@ -180,7 +103,10 @@ async function loadAll() {
     safeLoad('/v1/approvals', value => state.approvals = array(value)),
     safeLoad('/v1/audit', value => state.audit = array(value)),
     safeLoad('/v1/call-tree', value => state.calls = object(value)),
-    safeLoad('/v1/policy', value => state.policy = object(value))
+    safeLoad('/v1/policy', value => state.policy = object(value)),
+    safeLoad('/v1/developer-settings', value => state.developerSettings = object(value)),
+    safeLoad('/v1/developer-traces', value => state.developerTraces = array(value)),
+    loadDesktopInfo()
   ]);
   renderAll();
   const failed = results.filter(result => !result).length;
@@ -191,7 +117,7 @@ async function loadAll() {
 }
 
 function renderAll() {
-  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderProtectionSettings(); renderAdvancedSummary();
+  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderProtectionSettings(); renderDeveloperSettings(); renderAdvancedSummary();
 }
 
 function globalFindingRule(rule, category) {
@@ -212,12 +138,24 @@ function renderProtectionSettings() {
     input.checked = Boolean(state.policy) && categories.length > 0 && categories.every(category => protectionAction(category) !== 'allow');
     input.disabled = !state.policy || state.policySaving;
   });
+  const privateKeyAction = $('#private-key-action');
+  privateKeyAction.innerHTML = [
+    ['block', t('policy.privateKeyBlock')],
+    ['redact', t('policy.privateKeyRedact')],
+    ['ask', t('policy.privateKeyAsk')],
+    ['allow', t('policy.privateKeyAllow')]
+  ].map(([value, label]) => `<option value="${value}">${escapeHTML(label)}</option>`).join('');
+  privateKeyAction.value = protectionAction('secret.private_key') || 'block';
+  privateKeyAction.disabled = !state.policy || state.policySaving;
+  $('#private-key-policy-title').textContent = t('policy.privateKeyTitle');
+  $('#private-key-policy-description').textContent = t('policy.privateKeyDescription');
+  $('#settings-safety-note').textContent = t('policy.safetyNote');
 }
 
 async function updateProtectionSetting(input) {
   const result = $('#protection-settings-result'), enabled = input.checked;
   state.policySaving = true; renderProtectionSettings();
-  result.textContent = state.locale === 'zh-CN' ? '正在保存…' : 'Saving…';
+  result.textContent = t('saving');
   result.className = 'inline-result';
   try {
     const latest = object(await api('/v1/policy'));
@@ -227,13 +165,84 @@ async function updateProtectionSetting(input) {
     await api('/v1/policy', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(latest)});
     state.policy = latest;
     if (document.activeElement !== $('#policy')) $('#policy').value = JSON.stringify(latest, null, 2);
-    result.textContent = state.locale === 'zh-CN' ? '已保存' : 'Saved';
+    result.textContent = t('saved');
     result.className = 'inline-result success';
   } catch (_) {
-    result.textContent = state.locale === 'zh-CN' ? '保存失败，请重试' : 'Save failed. Please try again.';
+    result.textContent = t('saveRetry');
     result.className = 'inline-result failure';
   }
   state.policySaving = false; renderProtectionSettings();
+}
+
+async function updatePrivateKeyAction(select) {
+  const result = $('#protection-settings-result'), action = select.value;
+  if (!['block', 'redact', 'ask', 'allow'].includes(action)) return;
+  state.policySaving = true; renderProtectionSettings();
+  result.textContent = t('saving');
+  result.className = 'inline-result';
+  try {
+    const latest = object(await api('/v1/policy'));
+    latest.rules = array(latest.rules).filter(rule => !globalFindingRule(rule, 'secret.private_key'));
+    if (action !== latest.default) latest.rules.push({scope:{finding_type:'secret.private_key'}, action});
+    await api('/v1/policy', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(latest)});
+    state.policy = latest;
+    if (document.activeElement !== $('#policy')) $('#policy').value = JSON.stringify(latest, null, 2);
+    result.textContent = t('saved');
+    result.className = 'inline-result success';
+  } catch (_) {
+    result.textContent = t('saveRetry');
+    result.className = 'inline-result failure';
+  }
+  state.policySaving = false; renderProtectionSettings();
+}
+
+function renderDeveloperSettings() {
+  const settings = object(state.developerSettings), enabled = settings.enabled === true;
+  const enabledInput = $('#developer-enabled'), captureInput = $('#developer-capture-bodies');
+  enabledInput.checked = enabled;
+  enabledInput.disabled = !state.developerSettings || state.developerSaving;
+  captureInput.checked = enabled && settings.capture_request_bodies === true;
+  captureInput.disabled = !enabled || state.developerSaving;
+  $('#developer-title').textContent = t('developer.title');
+  $('#developer-description').textContent = t('developer.description');
+  $('#developer-enabled-title').textContent = t('developer.enabledTitle');
+  $('#developer-enabled-description').textContent = t('developer.enabledDescription');
+  $('#developer-capture-title').textContent = t('developer.captureTitle');
+  $('#developer-capture-description').textContent = t('developer.captureDescription');
+  $('#developer-warning').textContent = t('developer.warning');
+  $('#developer-log-title').textContent = t('developer.logTitle');
+  $('#developer-log-count').textContent = String(state.developerTraces.length);
+  const list = $('#developer-trace-list');
+  if (!state.developerTraces.length) {
+    list.innerHTML = `<p class="muted">${escapeHTML(t('developer.empty'))}</p>`;
+    return;
+  }
+  list.innerHTML = [...state.developerTraces].reverse().map(trace => {
+    const findings = array(trace.findings);
+    const findingRows = findings.map(finding => {
+      const location = object(finding.location);
+      const range = `${String(location.path || '')}:${Number(location.start || 0)}-${Number(location.end || 0)}`;
+      return `<li><strong>${escapeHTML(finding.category || finding.rule_id || '')}</strong> · ${escapeHTML(actionLabel(finding.action))}<br><code>${escapeHTML(range)}</code> · ${escapeHTML(finding.detector || '')} · ${Number(finding.match_bytes || 0)} bytes · ${Math.round(Number(finding.confidence || 0) * 100)}%</li>`;
+    }).join('');
+    const before = trace.request_before ? `<div><strong>${escapeHTML(t('developer.before'))}${trace.request_before_truncated ? ` · ${escapeHTML(t('developer.truncated'))}` : ''}</strong><pre>${escapeHTML(trace.request_before)}</pre></div>` : '';
+    const after = trace.request_after ? `<div><strong>${escapeHTML(t('developer.after'))}${trace.request_after_truncated ? ` · ${escapeHTML(t('developer.truncated'))}` : ''}</strong><pre>${escapeHTML(trace.request_after)}</pre></div>` : '';
+    return `<details class="developer-trace"><summary>${formatTime(trace.timestamp)} · ${escapeHTML(trace.method || '')} ${escapeHTML(trace.endpoint || '')} · ${findings.length} ${escapeHTML(t('developer.findings'))}</summary><div class="developer-trace-meta"><span>${escapeHTML(trace.agent_id || 'Agent')}</span><span>${escapeHTML(trace.protocol || '')}</span><span>${Number(trace.original_body_bytes || 0)} → ${Number(trace.processed_body_bytes || 0)} bytes</span>${trace.error_code ? `<span class="pill bad">${escapeHTML(trace.error_code)}</span>` : ''}</div>${trace.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(trace.preview)}</p>` : ''}${findingRows ? `<ul>${findingRows}</ul>` : `<p class="muted">${escapeHTML(t('developer.noFindings'))}</p>`}${before}${after}</details>`;
+  }).join('');
+}
+
+async function updateDeveloperSettings(next) {
+  const result = $('#developer-settings-result');
+  state.developerSaving = true; renderDeveloperSettings();
+  result.textContent = t('saving'); result.className = 'inline-result';
+  const settings = {schema_version:'v1', enabled:Boolean(next.enabled), capture_request_bodies:Boolean(next.enabled && next.capture_request_bodies)};
+  try {
+    await api('/v1/developer-settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(settings)});
+    state.developerSettings = settings;
+    result.textContent = t('saved'); result.className = 'inline-result success';
+  } catch (_) {
+    result.textContent = t('saveRetry'); result.className = 'inline-result failure';
+  }
+  state.developerSaving = false; renderDeveloperSettings();
 }
 
 function renderHealth() {
@@ -280,7 +289,18 @@ function renderTools() {
   grid.innerHTML = state.tools.map(tool => {
     const registered = registeredFor(tool), verified = tool.status === 'verified';
     const label = registered ? t('protected') : tool.status === 'version_unknown' ? t('versionUnknown') : verified ? t('verified') : t('unverified');
-    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">版本 ${escapeHTML(tool.version || '未知')}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span></p><button class="button ${verified ? 'primary' : ''}" data-inspect="${escapeHTML(tool.agent)}">${t('inspect')}</button></article>`;
+    const name = escapeHTML(tool.agent);
+    const desktopProcess = tool.agent === 'codex-desktop' && isDesktop;
+    const running = desktopProcess ? object(state.desktopInfo).codex_desktop_running : null;
+    const protectedRunning = desktopProcess && object(state.desktopInfo).codex_desktop_protected === true;
+    const processLabel = protectedRunning ? t('process.protected') : running === true ? t('process.unprotected') : running === false ? t('process.stopped') : t('process.unknown');
+    const processState = desktopProcess ? `<span class="pill ${protectedRunning ? 'good' : running === true ? 'warning' : 'neutral'}">${escapeHTML(processLabel)}</span>` : '';
+    const infoIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7.25h.01"></path></svg>';
+    const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 8 5-8 5z"></path></svg>';
+    const launchAction = desktopProcess
+      ? `<button class="tool-action tool-launch${protectedRunning ? ' is-running' : ''}" data-launch-codex-desktop="${name}" aria-label="${escapeHTML(protectedRunning ? processLabel : t('launchDesktop'))}" title="${escapeHTML(protectedRunning ? processLabel : running === true ? t('process.restartHint') : t('launchDesktop'))}"${protectedRunning ? ' disabled' : ''}>${playIcon}<span>${escapeHTML(protectedRunning ? t('process.running') : running === true ? t('process.restart') : t('launch'))}</span></button>`
+      : '';
+    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>${processState}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}" aria-label="${escapeHTML(t('inspect'))}" title="${escapeHTML(t('inspect'))}">${infoIcon}</button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
   }).join('');
 }
 
@@ -301,36 +321,41 @@ function renderActivity() {
 
 function formatTime(value) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '刚刚' : new Intl.DateTimeFormat(state.locale, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}).format(date);
+  return Number.isNaN(date.getTime()) ? t('justNow') : new Intl.DateTimeFormat(locale(), {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}).format(date);
 }
 
 async function inspectTool(name) {
   const dialog = $('#tool-dialog'), detail = $('#tool-detail');
-  detail.innerHTML = '<p class="muted">正在检查保护能力…</p>'; dialog.showModal();
+  detail.innerHTML = `<p class="muted">${escapeHTML(t('tool.loading'))}</p>`; dialog.showModal();
   try {
-    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), surfaces = array(manifest.surfaces), coverage = array(plan.coverage), risks = array(plan.risks), summary = object(plan.summary);
-    const fullyProtected = Number(summary.protected || 0) > 0 && Number(summary.partial || 0) === 0 && Number(summary.observed || 0) === 0 && Number(summary.unprotected || 0) === 0;
+    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), surfaces = array(manifest.surfaces), coverage = array(plan.coverage), risks = array(plan.risks);
     const localMCP = surfaces.filter(surface => surface.type === 'mcp_stdio').length;
     const scopeRows = protectionScopeRows(surfaces, coverage);
-    const scopeNotice = name === 'codex' || name === 'codex-desktop' ? `<div class="notice protection-note"><strong>当前保护什么</strong><p>AgentVeil 会检查你发给 Codex 的内容，以及 Codex 返回的内容。${localMCP ? 'Codex 使用的本地工具，以及这些工具自己发起的网络请求，暂不在保护范围内。' : ''}${name === 'codex-desktop' ? ' 启动前请先退出当前运行的 Codex。' : ' 请通过 AgentVeil 启动 Codex 才能生效。'}</p></div>` : '';
-    const launchAction = name === 'codex-desktop' && isDesktop ? `<button class="button primary" data-launch-codex-desktop>${escapeHTML(t('launchDesktop'))}</button><span id="launch-codex-result" class="inline-result"></span>` : `<p>在终端运行 <code>veil run ${escapeHTML(name)}</code>，原配置不会被改写。</p>`;
-    const operation = fullyProtected
-      ? `<div class="next-step"><span class="step-number">✓</span><div><strong>可以开始保护</strong>${launchAction}</div></div>`
-      : `<div class="error-box protection-note"><strong>当前只能检查，不能安全接管</strong><p>存在 Observed、Partial 或 Unprotected 的必需连接，AgentVeil 不会静默绕过它们。</p></div>`;
-    detail.innerHTML = `<p class="eyebrow">保护能力</p><h2>${escapeHTML(agentLabel(agent.kind || name))} <span class="muted">${escapeHTML(agent.version || '')}</span></h2><p class="muted">查看不会启动或修改这个工具。</p>${scopeNotice}<h3>${t('surfaces')}</h3><div class="coverage-list">${scopeRows.map(item => `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(coverageLabel(item.status))}</span><strong> ${escapeHTML(item.name)}</strong><p>${escapeHTML(item.description)}</p></div>`).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(riskLabel(risk.title || risk.code || '保护提示'))}</strong><p>${escapeHTML(reasonLabel(risk.message || risk.action || risk.impact || ''))}</p></div>`).join('')}</div>` : ''}${operation}`;
-  } catch (error) { const message = typeof error === 'string' ? error : error?.message; detail.innerHTML = `<div class="error-box"><strong>无法检查这个工具</strong><p>${escapeHTML(message || '未修改任何原配置。')}</p></div>`; }
+    const scopeNotice = name === 'codex' || name === 'codex-desktop' ? `<div class="notice protection-note"><strong>${escapeHTML(t('tool.currentProtection'))}</strong><p>${escapeHTML(t('tool.codexDescription'))}${localMCP ? escapeHTML(t('tool.codexLocalTools')) : ''}</p></div>` : '';
+    detail.innerHTML = `<p class="eyebrow">${escapeHTML(t('tool.description'))}</p><h2>${escapeHTML(agentLabel(agent.kind || name))} <span class="muted">${escapeHTML(agent.version || '')}</span></h2>${scopeNotice}<h3>${t('surfaces')}</h3><div class="coverage-list">${scopeRows.map(item => `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(coverageLabel(item.status))}</span><strong> ${escapeHTML(item.name)}</strong><p>${escapeHTML(item.description)}</p></div>`).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(riskLabel(risk.title || risk.code || t('tool.protectionNotice')))}</strong><p>${escapeHTML(reasonLabel(risk.message || risk.action || risk.impact || ''))}</p></div>`).join('')}</div>` : ''}`;
+  } catch (error) { const message = typeof error === 'string' ? error : error?.message; detail.innerHTML = `<div class="error-box"><strong>${escapeHTML(t('tool.inspectFailed'))}</strong><p>${escapeHTML(message || t('tool.noChanges'))}</p></div>`; }
 }
 
 async function startProtectedCodexDesktop(button) {
-  const result = $('#launch-codex-result');
+  const name = button.dataset.launchCodexDesktop;
+  const card = button.closest('.tool-card');
+  const result = card?.querySelector('[data-launch-result]');
+  const label = button.querySelector('span');
   button.disabled = true;
-  if (result) result.textContent = t('launchStarting');
+  button.classList.add('is-loading');
+  if (label) label.textContent = t('launchStarting');
+  if (result) { result.textContent = ''; result.className = 'tool-launch-result'; }
   try {
+    const discovery = await api(`/v1/discovery/${encodeURIComponent(name)}`);
+    const summary = object(object(discovery.protection_plan).summary);
+    const fullyProtected = Number(summary.protected || 0) > 0 && Number(summary.partial || 0) === 0 && Number(summary.observed || 0) === 0 && Number(summary.unprotected || 0) === 0;
+    if (!fullyProtected) throw new Error(t('launchUnavailable'));
     await launchCodexDesktop();
-    if (result) { result.textContent = t('launchStarted'); result.className = 'inline-result success'; }
     await loadAll();
   } catch (error) {
-    if (result) { result.textContent = error?.message || String(error); result.className = 'inline-result failure'; }
+    if (result) { result.textContent = error?.message || String(error); result.className = 'tool-launch-result failure'; }
+    if (label) label.textContent = t('launch');
+    button.classList.remove('is-loading');
     button.disabled = false;
   }
 }
@@ -388,8 +413,8 @@ function configureRefresh() {
   if ($('#auto-refresh').checked) state.refreshTimer = setInterval(() => { if (!document.hidden) loadAll(); }, 5000);
 }
 
-function applyLocale(locale) {
-  state.locale = locale; localStorage.setItem('agentveil.locale', locale); document.documentElement.lang = locale;
+async function applyLocale(locale) {
+  state.locale = await setLocale(locale);
   renderAll(); const active = $('.nav-item.active')?.dataset.page || 'overview'; navigate(active);
 }
 
@@ -397,10 +422,13 @@ $('#refresh').onclick = loadAll; $('#scan-tools').onclick = loadAll;
 $('#save-policy').onclick = savePolicy; $('#download-diagnostics').onclick = downloadDiagnostics;
 $('#dialog-close').onclick = () => $('#tool-dialog').close();
 $('#menu-button').onclick = () => $('.sidebar').classList.toggle('open');
-$('#locale').value = state.locale; $('#locale').onchange = event => applyLocale(event.currentTarget.value);
+$('#locale').value = state.locale; $('#locale').onchange = event => applyLocale(event.currentTarget.value).catch(() => { event.currentTarget.value = state.locale; });
 $('#auto-refresh').onchange = configureRefresh;
 $('#advanced-toggle').onchange = event => { $('#advanced-nav').hidden = !event.currentTarget.checked; if (!event.currentTarget.checked && $('.nav-item.active')?.dataset.page === 'advanced') navigate('settings'); };
 $$('[data-protection-setting]').forEach(input => { input.onchange = () => updateProtectionSetting(input); });
+$('#private-key-action').onchange = event => updatePrivateKeyAction(event.currentTarget);
+$('#developer-enabled').onchange = event => updateDeveloperSettings({enabled:event.currentTarget.checked, capture_request_bodies:object(state.developerSettings).capture_request_bodies});
+$('#developer-capture-bodies').onchange = event => updateDeveloperSettings({enabled:true, capture_request_bodies:event.currentTarget.checked});
 document.body.onclick = event => {
   const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]');
   if (nav) navigate(nav.dataset.page); if (go) navigate(go.dataset.go); if (inspect) inspectTool(inspect.dataset.inspect);
@@ -408,15 +436,13 @@ document.body.onclick = event => {
   if (launchCodex) startProtectedCodexDesktop(launchCodex);
 };
 
-document.documentElement.dataset.agentveilUiReady = 'true';
-applyLocale(state.locale);
-
 async function startDesktop() {
   document.documentElement.dataset.agentveilDesktop = 'true';
   $('#auth').hidden = true;
   for (let attempt = 0; attempt < 150; attempt += 1) {
     try {
       const info = await desktopInfo();
+      state.desktopInfo = info;
       $('#channel-badge').textContent = String(info.channel || 'dev').toUpperCase();
       if (info.desktop && info.ready) {
         await enter();
@@ -449,4 +475,12 @@ async function startBrowserSession() {
   }
 }
 
-if (isDesktop) startDesktop(); else startBrowserSession();
+async function boot() {
+  await applyLocale(state.locale);
+  document.documentElement.dataset.agentveilUiReady = 'true';
+  if (isDesktop) await startDesktop(); else await startBrowserSession();
+}
+
+boot().catch(() => {
+  $('#auth-error').textContent = 'AgentVeil language resources could not be loaded.';
+});

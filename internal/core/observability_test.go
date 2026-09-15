@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/feedback"
 	"github.com/agentveil/agentveil/internal/policy"
@@ -51,7 +53,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'self'") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "base-uri 'none'") {
 		t.Fatalf("dashboard CSP=%q", csp)
 	}
-	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "我的工具", "保护记录", "隐私保护", "敏感环境变量", "疑似未知密钥", "data-protection-setting=\"contact\"", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/visibility.css\""} {
+	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "我的工具", "保护记录", "隐私保护", "敏感环境变量", "疑似未知密钥", "data-protection-setting=\"contact\"", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/tools.css\"", "href=\"/visibility.css\""} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("dashboard shell is missing %q", required)
 		}
@@ -66,8 +68,12 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 		required    []string
 	}{
 		{path: "/styles.css", contentType: "text/css; charset=utf-8", required: []string{".app-shell", ".tool-grid", "prefers-reduced-motion"}},
+		{path: "/tools.css", contentType: "text/css; charset=utf-8", required: []string{".tool-card-actions", ".tool-info", ".tool-launch"}},
 		{path: "/visibility.css", contentType: "text/css; charset=utf-8", required: []string{"[hidden]", "!important"}},
-		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "/v1/policy", "protectionSettingGroups", "secret.assignment", "secret.high_entropy", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "保护范围", "AI 对话", "本地工具（", "当前保护什么", "可以开始保护"}},
+		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "/v1/policy", "protectionSettingGroups", "secret.assignment", "secret.high_entropy", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "from './i18n.js'", "t('tool.description')", "data-launch-codex-desktop"}},
+		{path: "/i18n.js", contentType: "text/javascript; charset=utf-8", required: []string{"preferredLocale", "setLocale", "translateValue", "translatePrefix"}},
+		{path: "/locales/zh-CN.json", contentType: "application/json; charset=utf-8", required: []string{"\"工具说明\"", "\"启动\"", "\"保护范围\""}},
+		{path: "/locales/en.json", contentType: "application/json; charset=utf-8", required: []string{"\"Tool details\"", "\"Launch\"", "\"Protection scope\""}},
 		{path: "/platform.js", contentType: "text/javascript; charset=utf-8", required: []string{"core_request", "browser-sessions/exchange", "credentials:'same-origin'", "X-AgentVeil-API-Version"}},
 	} {
 		recorder := httptest.NewRecorder()
@@ -88,6 +94,42 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 		if strings.Contains(app.Body.String(), developerCopy) {
 			t.Fatalf("dashboard still exposes developer copy %q", developerCopy)
 		}
+	}
+}
+
+func TestDeveloperTraceSettingsAndListingAPIs(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "private")
+	store, err := debugtrace.NewStore(filepath.Join(directory, "developer.json"), filepath.Join(directory, "developer-traces.jsonl"), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := New(session.NewManager(), "01234567890123456789012345678901")
+	if err := s.WithDebugTraceStore(store); err != nil {
+		t.Fatal(err)
+	}
+
+	update := httptest.NewRequest(http.MethodPut, "/v1/developer-settings", strings.NewReader(`{"schema_version":"v1","enabled":true,"capture_request_bodies":true}`))
+	update.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.updateDeveloperSettings(recorder, update)
+	if recorder.Code != http.StatusNoContent || !store.Settings().CaptureRequestBodies {
+		t.Fatalf("status=%d settings=%+v body=%s", recorder.Code, store.Settings(), recorder.Body.String())
+	}
+	if err := store.Append(debugtrace.RequestTrace{Timestamp: time.Now().UTC(), SessionID: "session-1", Findings: []debugtrace.Finding{}, RequestBefore: `{"input":"private context"}`}); err != nil {
+		t.Fatal(err)
+	}
+	recorder = httptest.NewRecorder()
+	s.listDeveloperTraces(recorder, httptest.NewRequest(http.MethodGet, "/v1/developer-traces", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "private context") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	invalid := httptest.NewRequest(http.MethodPut, "/v1/developer-settings", strings.NewReader(`{"schema_version":"v1","enabled":false,"capture_request_bodies":true}`))
+	invalid.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	s.updateDeveloperSettings(recorder, invalid)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid settings status=%d", recorder.Code)
 	}
 }
 

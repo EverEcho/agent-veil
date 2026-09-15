@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -15,5 +16,90 @@ func TestDashboardServesAuditPreviewStyles(t *testing.T) {
 	stylesheet := httptest.NewRecorder()
 	if !Serve(stylesheet, httptest.NewRequest("GET", "/audit.css", nil)) || stylesheet.Header().Get("Content-Type") != "text/css; charset=utf-8" || !strings.Contains(stylesheet.Body.String(), ".audit-preview") || !strings.Contains(stylesheet.Body.String(), ".settings-safety-note") {
 		t.Fatalf("audit preview stylesheet was not served: headers=%v body=%s", stylesheet.Header(), stylesheet.Body.String())
+	}
+}
+
+func TestDashboardToolCardsExposeInfoAndProtectedDesktopLaunch(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) || !strings.Contains(page.Body.String(), `href="/tools.css"`) {
+		t.Fatal("dashboard does not load tool card styles")
+	}
+
+	stylesheet := httptest.NewRecorder()
+	if !Serve(stylesheet, httptest.NewRequest("GET", "/tools.css", nil)) || stylesheet.Header().Get("Content-Type") != "text/css; charset=utf-8" || !strings.Contains(stylesheet.Body.String(), ".tool-card-actions") {
+		t.Fatalf("tool card stylesheet was not served: headers=%v body=%s", stylesheet.Header(), stylesheet.Body.String())
+	}
+
+	app := httptest.NewRecorder()
+	if !Serve(app, httptest.NewRequest("GET", "/app.js", nil)) {
+		t.Fatal("app asset was not served")
+	}
+	body := app.Body.String()
+	for _, want := range []string{`class="tool-action tool-info"`, `data-launch-codex-desktop`, `class="tool-card-actions"`, `codex_desktop_running`, `codex_desktop_protected`, `t('process.restart')`, `from './i18n.js'`, `t('tool.description')`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("app asset does not contain %q", want)
+		}
+	}
+	if strings.Contains(body, `id="launch-codex-result"`) || strings.Contains(body, `在终端运行 <code>veil run`) {
+		t.Fatal("tool detail still contains launch controls")
+	}
+}
+
+func TestDashboardServesLocalI18nResources(t *testing.T) {
+	i18n := httptest.NewRecorder()
+	if !Serve(i18n, httptest.NewRequest("GET", "/i18n.js", nil)) || i18n.Header().Get("Content-Type") != "text/javascript; charset=utf-8" || !strings.Contains(i18n.Body.String(), "export async function setLocale") {
+		t.Fatalf("i18n layer was not served: headers=%v body=%s", i18n.Header(), i18n.Body.String())
+	}
+
+	for _, path := range []string{"/locales/zh-CN.json", "/locales/en.json"} {
+		resource := httptest.NewRecorder()
+		if !Serve(resource, httptest.NewRequest("GET", path, nil)) || resource.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+			t.Fatalf("locale resource %s was not served: headers=%v", path, resource.Header())
+		}
+		var messages map[string]any
+		if err := json.Unmarshal(resource.Body.Bytes(), &messages); err != nil {
+			t.Fatalf("locale resource %s is invalid JSON: %v", path, err)
+		}
+		if messages["launch"] == nil || messages["tool"] == nil || messages["scope"] == nil {
+			t.Fatalf("locale resource %s is missing required namespaces", path)
+		}
+	}
+}
+
+func TestDashboardExposesPrivateKeyPolicySelector(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) || !strings.Contains(page.Body.String(), `id="private-key-action"`) {
+		t.Fatal("dashboard does not expose the private-key policy selector")
+	}
+
+	app := httptest.NewRecorder()
+	if !Serve(app, httptest.NewRequest("GET", "/app.js", nil)) {
+		t.Fatal("app asset was not served")
+	}
+	for _, want := range []string{"updatePrivateKeyAction", "'secret.private_key'", "policy.privateKeyRedact", "action !== latest.default"} {
+		if !strings.Contains(app.Body.String(), want) {
+			t.Fatalf("private-key policy selector is missing %q", want)
+		}
+	}
+}
+
+func TestDashboardExposesOptInDeveloperTraces(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("dashboard was not served")
+	}
+	for _, want := range []string{`id="developer-enabled"`, `id="developer-capture-bodies"`, `id="developer-trace-list"`, "权限为 0600", "256 KiB"} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Fatalf("developer settings are missing %q", want)
+		}
+	}
+	app := httptest.NewRecorder()
+	if !Serve(app, httptest.NewRequest("GET", "/app.js", nil)) {
+		t.Fatal("app asset was not served")
+	}
+	for _, want := range []string{"/v1/developer-settings", "/v1/developer-traces", "renderDeveloperSettings", "request_before", "finding.match_bytes"} {
+		if !strings.Contains(app.Body.String(), want) {
+			t.Fatalf("developer trace UI is missing %q", want)
+		}
 	}
 }

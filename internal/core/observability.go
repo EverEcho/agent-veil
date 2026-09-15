@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentveil/agentveil/internal/compatibility"
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/diagnostic"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -36,6 +37,44 @@ func (s *Server) listAudit(w http.ResponseWriter, _ *http.Request) {
 		events = events[len(events)-limit:]
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) getDeveloperSettings(w http.ResponseWriter, _ *http.Request) {
+	if s.debugTraceStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "DEVELOPER_TRACES_UNAVAILABLE"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.debugTraceStore.Settings())
+}
+
+func (s *Server) updateDeveloperSettings(w http.ResponseWriter, r *http.Request) {
+	if s.debugTraceStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "DEVELOPER_TRACES_UNAVAILABLE"})
+		return
+	}
+	var settings debugtrace.Settings
+	if err := decodeManagement(r, &settings); err != nil || settings.Validate() != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": string(domain.ErrInvalidContract)})
+		return
+	}
+	if err := s.debugTraceStore.SaveSettings(settings); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DEVELOPER_SETTINGS_WRITE_FAILED"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listDeveloperTraces(w http.ResponseWriter, _ *http.Request) {
+	if s.debugTraceStore == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "DEVELOPER_TRACES_UNAVAILABLE"})
+		return
+	}
+	traces, err := s.debugTraceStore.Recent(time.Now().UTC(), 5)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "DEVELOPER_TRACE_READ_FAILED"})
+		return
+	}
+	writeJSON(w, http.StatusOK, traces)
 }
 
 func (s *Server) diagnostics(w http.ResponseWriter, _ *http.Request) {

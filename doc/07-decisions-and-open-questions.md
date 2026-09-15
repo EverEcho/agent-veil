@@ -23,8 +23,9 @@
 | 目标 Agent 版本与配置入口 | 部分落地 | 编译进二进制并可离线导出的 Compatibility Matrix 是唯一验证事实源；矩阵在进程初始化时执行生产校验，Protected 记录必须同时命中协议层完整请求/响应/流适配器集合和 `launch_smoke` 证据。当前 Protected launch 仅覆盖 Linux Codex 0.153.4、Claude Code 2.1.220 与 Hermes 0.20.6 Surface；其他发现结果不能提升覆盖级别。新增版本必须先增加 fixture、启动证据和精确矩阵记录。 |
 | Codex API Key 与 ChatGPT 登录链路的凭据边界 | 已落地（当前范围） | API Key 仅通过 Agent 自身环境读取并由受保护路由引用；无 API Key 时使用 Codex 现有登录能力，Core 不迁移、不存储长期凭据。两条路径都只向子进程下发短期 Session/Route capability。新的登录传输出现时重新进入未验证状态。 |
 | `ASK/本次允许` 的一致行为 | 已落地 | 交互 Session 在 Core 内暂停并创建一次性审批，只接受 `allow/redact/block`；Dashboard 与 `veil approvals` 使用同一版本化 API。取消等同阻断，超时阻断，非交互 Session 将 `ASK` 直接按 `BLOCK` 执行。Finding 只暴露位置和分类元数据，不暴露原文。 |
-| 默认 PII 策略与 Action | 已落地（可配置） | 默认 Action 为 `REDACT`，`secret.private_key` 显式为 `BLOCK`。用户可通过同一 Policy Document 在 Dashboard 或 `veil policy` 覆盖；重复 Scope、无效 Action、原始工作区路径和未知字段均拒绝。误报反馈只保留本地有界元数据，不自动弱化策略。 |
+| 默认 PII 策略与 Action | 已落地（可配置） | 默认 Action 为 `REDACT`，`secret.private_key` 显式为 `BLOCK`。Dashboard 的私钥处理方式可明确选择 `BLOCK`、`REDACT`、`ASK` 或高风险 `ALLOW`，并与 `veil policy` 共用同一 Policy Document；重复 Scope、无效 Action、原始工作区路径和未知字段均拒绝。误报反馈只保留本地有界元数据，不自动弱化策略。 |
 | 审计保留期与工作区路径 | 已落地 | 默认保留 30 天，可用正时长配置覆盖；文件最大 64 MiB 并优先压缩最旧事件。工作区使用 `sha256:` 截断哈希引用，不持久化原始路径。CLI、Dashboard 和诊断导出只读取元数据及全部命中值替换为 `***` 的有界上下文摘要。 |
+| 开发模式请求诊断 | 已落地（显式高风险） | 默认关闭并与安全审计隔离。基础模式记录规则、动作、路径、偏移和安全摘要；完整请求正文需要第二个显式开关，最多 256 KiB/份、保留 24 小时、总量 32 MiB、文件权限 `0600`，且永不记录认证 Header 和 URL Query。 |
 | 本地 HTTP Upstream | 已落地 | 远端默认只允许 HTTPS；HTTP 仅允许明确识别的 loopback 主机（`localhost` 或数字 loopback 地址），且必须来自 Protection Plan 的固定 Upstream。UI 将 Local 与 Protected 分开表达，不把明文或本地跳转宣传为内容保护。 |
 | 本地语义模型的体积、许可证、中文基准和下载方式 | 未完成 | Core 只接受不超过 512 MiB 的签名模型并支持流式安装、校验、启停和回滚；具体模型、许可证、中文基准、硬件分档和可信下载源仍需产品与发布决策，在此之前不内置或自动下载模型。 |
 
@@ -36,6 +37,7 @@
 - Bedrock SigV4、Vertex OAuth 与 Custom Auth 的运行时凭据边界：[ADR-0003](./adr/0003-runtime-credential-boundary.md) **已接受当前接口**，新增 Provider 前需逐项安全 ADR；
 - 规则包与模型包的独立 Ed25519 trust root、规范签名载荷、原子激活和回滚：[ADR-0004](./adr/0004-signed-rule-and-model-artifacts.md) **已接受**，分发与紧急更新流程未完成；
 - 透明 MITM CA 生命周期、进程作用域和观察/保护表述：[ADR-0005](./adr/0005-transparent-mode-boundary.md) **部分接受**，完整数据面、跨平台与 pre-connect 阻断未完成。
+- 开发模式诊断日志与敏感原文持久化边界：[ADR-0008](./adr/0008-development-trace-boundary.md) **已接受**；正文记录必须经过独立高风险开关。
 
 ## 4. 产品表述边界
 

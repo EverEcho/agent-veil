@@ -14,6 +14,7 @@ import (
 	"time"
 
 	veilauth "github.com/agentveil/agentveil/internal/auth"
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/redactor"
@@ -401,6 +402,13 @@ func (a *recordingAuditor) Append(event domain.AuditEvent) error {
 	return nil
 }
 
+type recordingDeveloperTracer struct{ traces []debugtrace.RequestTrace }
+
+func (r *recordingDeveloperTracer) Append(trace debugtrace.RequestTrace) error {
+	r.traces = append(r.traces, trace)
+	return nil
+}
+
 type deadlineRecorder struct {
 	*httptest.ResponseRecorder
 	deadlines []time.Time
@@ -753,6 +761,40 @@ func TestAuthorizedRequestsEmitSanitizedAuditPreview(t *testing.T) {
 	encoded, _ := json.Marshal(event)
 	if event.AgentID != "agent-a" || event.SurfaceID != "surface-a" || event.SessionID != created.Session.ID || event.Protocol != domain.ProtocolOpenAIResponses || event.Action != domain.ActionRedact || event.FindingCount != 1 || len(event.FindingTypes) != 1 || event.FindingTypes[0] != "pii.email" || event.ErrorCode != "" || event.Preview != "***" || strings.Contains(string(encoded), "dev@example.com") {
 		t.Fatalf("unsafe or incomplete event: %s", encoded)
+	}
+}
+
+func TestDeveloperTraceExplainsRequestRedaction(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output_text":"ok"}`))
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	tracer := &recordingDeveloperTracer{}
+	handler, err := NewHandler(manager, []Route{{ID: "primary", AgentID: "agent-a", SurfaceID: "surface-a", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, DeveloperTracer: tracer, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := `{"input":"contact dev@example.com"}`
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/v1/responses", strings.NewReader(original))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || len(tracer.traces) != 1 {
+		t.Fatalf("status=%d traces=%+v", recorder.Code, tracer.traces)
+	}
+	trace := tracer.traces[0]
+	if trace.RequestBefore != original || strings.Contains(trace.RequestAfter, "dev@example.com") || !strings.Contains(trace.RequestAfter, "[[VEIL_") || trace.Preview != "contact ***" || len(trace.Findings) != 1 {
+		t.Fatalf("trace=%+v", trace)
+	}
+	finding := trace.Findings[0]
+	if finding.RuleID != "pii.email" || finding.Category != "pii.email" || finding.Action != domain.ActionRedact || finding.Location.Path == "" || finding.MatchBytes != len("dev@example.com") {
+		t.Fatalf("finding=%+v", finding)
 	}
 }
 

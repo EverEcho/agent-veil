@@ -12,6 +12,8 @@
 | [0004](./0004-signed-rule-and-model-artifacts.md) | 已接受 | 规则包与模型包签名、安装和回滚 |
 | [0005](./0005-transparent-mode-boundary.md) | 部分接受 | 透明模式作用域、CA 生命周期和平台边界 |
 | [0006](./0006-desktop-shell-and-core-lifecycle.md) | 部分接受 | Tauri 统一 GUI、托盘、自启动与 Core 生命周期 |
+| [0007](./0007-codex-desktop-protected-launch.md) | 已接受 | Codex Desktop 受保护启动与旧进程替换 |
+| [0008](./0008-development-trace-boundary.md) | 已接受 | 开发诊断日志与敏感请求正文边界 |
 
 尚未形成可执行决策的系统安装/升级、模型分发来源，以及
 macOS/Windows 的透明阻断方案继续保留在

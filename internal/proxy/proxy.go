@@ -14,6 +14,7 @@ import (
 	"time"
 
 	veilauth "github.com/agentveil/agentveil/internal/auth"
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
 	veilnetwork "github.com/agentveil/agentveil/internal/network"
@@ -60,6 +61,9 @@ type Route struct {
 	Network     domain.NetworkRoute
 	Auditor     interface {
 		Append(domain.AuditEvent) error
+	}
+	DeveloperTracer interface {
+		Append(debugtrace.RequestTrace) error
 	}
 	CapabilityHeader string
 	CapabilityPath   bool
@@ -331,6 +335,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			mcpVersionMismatch = err != nil
 		}
 	}
+	appendDeveloperTrace(route, sessionID, surfaceID, r.Method, endpoint, r.Header.Get("Content-Type"), body, processed, err)
 	if err != nil {
 		applyAuditResult(&auditEvent, processed)
 		auditEvent.Action = domain.ActionBlock
@@ -482,6 +487,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	secureResponseHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseResult.Body)
+}
+
+func appendDeveloperTrace(route configuredRoute, sessionID, surfaceID, method, endpoint, contentType string, original []byte, processed pipeline.Result, processErr error) {
+	if route.DeveloperTracer == nil {
+		return
+	}
+	before, beforeTruncated := debugtrace.CaptureBody(original)
+	after, afterTruncated := debugtrace.CaptureBody(processed.Body)
+	trace := debugtrace.RequestTrace{
+		Timestamp: time.Now().UTC(), SessionID: sessionID, AgentID: route.AgentID, SurfaceID: surfaceID,
+		Protocol: processed.Protocol, Method: method, Endpoint: endpoint, ContentType: contentType,
+		OriginalBodyBytes: len(original), ProcessedBodyBytes: len(processed.Body), Preview: processed.Preview,
+		RequestBefore: before, RequestAfter: after, RequestBeforeTruncated: beforeTruncated, RequestAfterTruncated: afterTruncated,
+		Findings: make([]debugtrace.Finding, 0, len(processed.Findings)),
+	}
+	if trace.Protocol == "" {
+		trace.Protocol = route.Protocol
+	}
+	if processErr != nil {
+		trace.ErrorCode = errorCodeValue(processErr)
+	}
+	for index, finding := range processed.Findings {
+		action := domain.ActionAllow
+		if index < len(processed.Actions) {
+			action = processed.Actions[index]
+		}
+		trace.Findings = append(trace.Findings, debugtrace.Finding{
+			RuleID: finding.RuleID, Category: finding.Category, Detector: finding.Detector,
+			Severity: finding.Severity, Confidence: finding.Confidence, Location: finding.Location,
+			MatchBytes: finding.Location.End - finding.Location.Start, Action: action,
+		})
+	}
+	_ = route.DeveloperTracer.Append(trace)
 }
 
 type replayReadCloser struct {

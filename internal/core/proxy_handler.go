@@ -11,6 +11,7 @@ import (
 
 	"github.com/agentveil/agentveil/internal/audit"
 	veilauth "github.com/agentveil/agentveil/internal/auth"
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/domain"
 	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 	"github.com/agentveil/agentveil/internal/redactor"
@@ -78,7 +79,13 @@ func (s *Server) proxyHandler() http.Handler {
 		if slices.Contains(capabilityTransports, capabilityTransportAnthropicAPIKey) {
 			capabilityHeader = "X-Api-Key"
 		}
-		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, CapabilityHeader: capabilityHeader, CapabilityPath: slices.Contains(capabilityTransports, capabilityTransportPath), LegacySessions: s.legacySSE, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
+		var developerTracer interface {
+			Append(debugtrace.RequestTrace) error
+		}
+		if s.debugTraceStore != nil {
+			developerTracer = s.debugTraceStore
+		}
+		handler, err := veilproxy.NewHandlerWithScanner(s.manager, []veilproxy.Route{{ID: selected.ID, AgentID: selectedAgentID, SurfaceID: selected.SurfaceID, Workspace: workspaceRef, WorkspaceRef: workspaceRef, Protocol: selected.Protocol, Upstream: upstream, Auth: selected.Auth, AuthApplier: authApplier, Network: selected.Network, Auditor: s.auditor, DeveloperTracer: developerTracer, CapabilityHeader: capabilityHeader, CapabilityPath: slices.Contains(capabilityTransports, capabilityTransportPath), LegacySessions: s.legacySSE, Policy: s.policyEngine(), Interactive: true, Approver: s.broker, MaxRequestBytes: 8 << 20, MaxResponseBytes: 32 << 20, VaultLimits: redactor.Limits{MaxEntries: 4096, MaxOriginalBytes: 8 << 20}}}, &http.Client{Timeout: 5 * time.Minute}, s.currentScanner())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "INVALID_ROUTE"})
 			return

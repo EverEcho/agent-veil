@@ -214,11 +214,17 @@ func TestCaseInsensitiveBearerPrefixRemainsDetectable(t *testing.T) {
 	}
 }
 
-func TestEncryptedAndDSAPrivateKeysAreBlocked(t *testing.T) {
-	for _, marker := range []string{"-----BEGIN ENCRYPTED PRIVATE KEY-----", "-----BEGIN DSA PRIVATE KEY-----"} {
-		matches := scan(t, NewDefault(), marker)
-		if len(matches) != 1 || matches[0].Finding.Category != "secret.private_key" || matches[0].Finding.SuggestedAction != "block" {
-			t.Fatalf("marker %q matches=%+v", marker, matches)
+func TestCompletePrivateKeysAreDetectedAndStandaloneMarkersAreIgnored(t *testing.T) {
+	for _, keyType := range []string{"ENCRYPTED PRIVATE KEY", "DSA PRIVATE KEY"} {
+		value := "-----BEGIN " + keyType + "-----\nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\n-----END " + keyType + "-----"
+		matches := scan(t, NewDefault(), value)
+		if len(matches) != 1 || matches[0].Value != value || matches[0].Finding.Category != "secret.private_key" || matches[0].Finding.SuggestedAction != "block" {
+			t.Fatalf("key type %q matches=%+v", keyType, matches)
+		}
+	}
+	for _, marker := range []string{"-----BEGIN PRIVATE KEY-----", "-----BEGIN ENCRYPTED PRIVATE KEY-----", "-----END PRIVATE KEY-----"} {
+		if matches := scan(t, NewDefault(), marker); len(matches) != 0 {
+			t.Fatalf("standalone marker %q matches=%+v", marker, matches)
 		}
 	}
 }

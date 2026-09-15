@@ -1,0 +1,106 @@
+.tool-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: auto;
+}
+
+.tool-card .tool-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.tool-action {
+  height: 38px;
+  border: 1px solid #dce2ec;
+  border-radius: 10px;
+  background: #f5f7fa;
+  color: #526078;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-weight: 720;
+  transition: border-color .18s, background .18s, color .18s, transform .18s;
+}
+
+.tool-action:hover {
+  border-color: #c4c9f5;
+  background: #fff;
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.tool-action:focus-visible {
+  outline: 3px solid rgba(98, 91, 246, .22);
+  outline-offset: 2px;
+}
+
+.tool-action svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tool-launch {
+  padding: 0 13px;
+}
+
+.tool-info {
+  width: 38px;
+  padding: 0;
+}
+
+.tool-launch-result {
+  display: block;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tool-launch-result:empty {
+  display: none;
+}
+
+.tool-launch-result.failure {
+  color: var(--bad);
+}
+
+.tool-action:disabled {
+  cursor: not-allowed;
+  opacity: .65;
+  transform: none;
+}
+
+.tool-action.is-loading {
+  cursor: wait;
+}
+
+.tool-action.is-running {
+  color: var(--good);
+}
+
+.tool-card > .tool-card-actions .tool-action {
+  margin-top: 0;
+  align-self: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tool-action {
+    background: #1d2535;
+    border-color: #323d52;
+    color: #aab4c7;
+  }
+
+  .tool-action:hover {
+    background: #252e40;
+    border-color: #514c9c;
+    color: #b8b3ff;
+  }
+}

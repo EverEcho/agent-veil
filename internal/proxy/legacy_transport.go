@@ -68,6 +68,7 @@ func (h *Handler) serveLegacySSEGet(w http.ResponseWriter, r *http.Request, rout
 		blockLegacyRequest(w, auditEvent, http.StatusBadRequest, domain.ErrUnknownProtocol)
 		return
 	}
+	appendDeveloperTrace(route, sessionID, routeSurfaceID(route), r.Method, endpoint, r.Header.Get("Content-Type"), body, pipeline.Result{Body: body, Protocol: domain.ProtocolMCPLegacySSE}, nil)
 	vault, err := redactor.NewVault(authorization.Secret, route.VaultLimits)
 	wipe(authorization.Secret)
 	if err != nil {
@@ -153,6 +154,7 @@ func (h *Handler) serveLegacySSEPost(w http.ResponseWriter, r *http.Request, rou
 		return
 	}
 	processed, err := pipeline.ProcessForProtocol(legacyPipelineContext(route, interactive, requestContext), domain.ProtocolMCPLegacySSE, "/mcp", r.Header.Get("Content-Type"), r.Header.Get("Content-Encoding"), body, h.scanner, route.Policy, binding.Vault)
+	appendDeveloperTrace(route, sessionID, routeSurfaceID(route), r.Method, endpoint, r.Header.Get("Content-Type"), body, processed, err)
 	applyAuditResult(auditEvent, processed)
 	if err != nil {
 		blockLegacyError(w, auditEvent, http.StatusForbidden, err)
@@ -388,11 +390,14 @@ func legacyRequestContext(requestContext, channelContext context.Context) (conte
 }
 
 func legacyPipelineContext(route configuredRoute, interactive bool, requestContext context.Context) pipeline.Context {
-	surfaceID := route.SurfaceID
-	if surfaceID == "" {
-		surfaceID = route.ID
+	return pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: routeSurfaceID(route), Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}
+}
+
+func routeSurfaceID(route configuredRoute) string {
+	if route.SurfaceID != "" {
+		return route.SurfaceID
 	}
-	return pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}
+	return route.ID
 }
 
 func legacyAuthStrategy(route configuredRoute) domain.AuthStrategy {

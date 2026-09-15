@@ -8,11 +8,14 @@
 Codex Desktop 与终端 Codex 分开发现和维护兼容矩阵。AgentVeil 不重做 Codex
 界面，也不永久修改 `~/.codex`。用户从 AgentVeil 点击启动后，Go Launch
 Integration 创建私有会话、Protected Route 和稳定的 AgentVeil 专用 `CODEX_HOME`，复制现有
-认证状态并写入临时 Provider 配置，再启动官方 App 主程序。原 `sessions`、归档
-会话和历史数据库以受控链接接入专用 Home，使旧对话可见且新对话继续持久化；
-用户配置、认证文件和运行时 IPC 不共享。退出后清除认证、Provider 配置和运行时
-状态，但保留只指向原 `sessions` 的路径转发。Codex 会把 `rollout_path` 记录为
-`CODEX_HOME` 下的绝对路径，因此该稳定路径不能随会话删除，否则对话将无法恢复或删除。
+认证状态并写入临时内置 `openai` Provider Base URL，再启动官方 App 主程序。原
+`sessions`、归档会话和历史数据库以受控符号链接接入专用 Home，使旧对话可见且
+新对话继续持久化；用户配置、认证文件和运行时 IPC 不共享。SQLite 数据库及其
+WAL/SHM 不得使用硬链接接入：同一数据库经不同路径打开会形成分离的 WAL/锁域并
+可能损坏历史投影库。退出后清除认证、Provider 配置和运行时状态，但保留分别指向
+原 `sessions` 与 `archived_sessions` 的路径转发。Codex 会把 `rollout_path` 记录为
+`CODEX_HOME` 下的绝对路径，因此这些稳定路径不能随会话删除，否则对话将无法恢复
+或删除。
 
 终端 Codex 不需要隔离 Home：启动器采用一次性的 `-c` Provider 覆盖，保留用户原
 Home。官方桌面 App 没有同等可靠的参数注入入口；直接使用 `~/.codex` 将要求永久
@@ -23,7 +26,12 @@ Home。官方桌面 App 没有同等可靠的参数注入入口；直接使用 `
 自己的能力头、Cookie、Provider `Set-Cookie` 和 hop-by-hop 头仍按安全边界剥离。
 
 Tauri 只负责调用 Go 启动器和显示结果，不持有 Route capability，也不实现 DLP。
-如果官方 App 已经运行，启动器拒绝宣称 Attach 成功；用户需要先退出再重新启动。
+它通过精确匹配官方 GUI 主进程显示运行状态，同时以自己持有的 Go 启动器子进程
+判断该运行实例是否由当前 AgentVeil 启动。已有受保护实例时不重复启动；只有普通
+GUI 进程存在时，先发送 `SIGTERM`，最多等待 5 秒并确认退出，再调用 Go 启动器。
+无法读取进程状态或旧进程未按时退出时安全失败，不使用 `SIGKILL`，也不把正在
+运行的普通实例宣称为已 Attach 或已保护。Go 启动器仍保留启动前的独立进程检查，
+防止竞态窗口内出现第二个实例。
 
 ## 当前声明边界
 

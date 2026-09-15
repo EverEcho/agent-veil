@@ -123,9 +123,21 @@ func TestInteractiveASKCanResolveToRedact(t *testing.T) {
 
 func TestPrivateKeyFailsClosed(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
-	_, err := Process(Context{}, "/v1/chat/completions", "application/json", "", []byte(`{"messages":[{"role":"user","content":"-----BEGIN PRIVATE KEY-----"}]}`), detector.NewDefault(), policy.Engine{Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{FindingType: "secret.private_key"}, Action: domain.ActionBlock}}}, vault)
+	privateKey := "-----BEGIN PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\n-----END PRIVATE KEY-----"
+	body, _ := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": privateKey}}})
+	_, err := Process(Context{}, "/v1/chat/completions", "application/json", "", body, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact, Rules: []policy.Rule{{Scope: policy.Scope{FindingType: "secret.private_key"}, Action: domain.ActionBlock}}}, vault)
 	if err == nil {
 		t.Fatal("private key was not blocked")
+	}
+}
+
+func TestPrivateKeyCanBeFullyRedactedByPolicy(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	privateKey := "-----BEGIN PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=\n-----END PRIVATE KEY-----"
+	body, _ := json.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": privateKey}}})
+	result, err := Process(Context{}, "/v1/chat/completions", "application/json", "", body, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil || strings.Contains(string(result.Body), "PRIVATE KEY") || strings.Contains(string(result.Body), "QUFBQU") || !strings.Contains(string(result.Body), "[[VEIL_") {
+		t.Fatalf("private key was not fully redacted: body=%s err=%v", result.Body, err)
 	}
 }
 

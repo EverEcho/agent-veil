@@ -23,13 +23,25 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := os.WriteFile(filepath.Join(source, "config.toml"), []byte("model = \"original\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "thread_history_1.sqlite"), []byte("existing conversations"), 0o600); err != nil {
-		t.Fatal(err)
+	for name, content := range map[string]string{
+		"thread_history_1.sqlite":     "existing conversations",
+		"thread_history_1.sqlite-wal": "existing write-ahead log",
+		"thread_history_1.sqlite-shm": "existing shared memory",
+	} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.Mkdir(filepath.Join(source, "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(source, "sessions", "existing.jsonl"), []byte("existing session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "archived_sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "archived_sessions", "archived.jsonl"), []byte("archived session"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(source, "ipc"), 0o700); err != nil {
@@ -70,6 +82,11 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err != nil || !os.SameFile(sourceHistory, protectedHistory) {
 		t.Fatalf("existing conversation database was not shared: %v", err)
 	}
+	for _, name := range []string{"thread_history_1.sqlite", "thread_history_1.sqlite-wal", "thread_history_1.sqlite-shm"} {
+		if linkedHistory, err := os.Lstat(filepath.Join(home, name)); err != nil || linkedHistory.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("conversation database state %s must use one canonical symlinked path: %v %v", name, linkedHistory, err)
+		}
+	}
 	if linked, err := os.ReadFile(filepath.Join(home, "sessions", "existing.jsonl")); err != nil || string(linked) != "existing session" {
 		t.Fatalf("existing session history is unavailable: %q error=%v", linked, err)
 	}
@@ -88,9 +105,16 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if target, err := os.Readlink(filepath.Join(home, "sessions")); err != nil || target != filepath.Join(source, "sessions") {
 		t.Fatalf("conversation path was not retained: %q %v", target, err)
 	}
+	if target, err := os.Readlink(filepath.Join(home, "archived_sessions")); err != nil || target != filepath.Join(source, "archived_sessions") {
+		t.Fatalf("archived conversation path was not retained: %q %v", target, err)
+	}
 	sourceSession, err := os.ReadFile(filepath.Join(source, "sessions", "existing.jsonl"))
 	if err != nil || string(sourceSession) != "existing session" {
 		t.Fatalf("source session history changed during cleanup: %q %v", sourceSession, err)
+	}
+	archivedSession, err := os.ReadFile(filepath.Join(home, "archived_sessions", "archived.jsonl"))
+	if err != nil || string(archivedSession) != "archived session" {
+		t.Fatalf("archived session history is unavailable after cleanup: %q %v", archivedSession, err)
 	}
 	sourceDatabase, err := os.ReadFile(filepath.Join(source, "thread_history_1.sqlite"))
 	if err != nil || string(sourceDatabase) != "existing conversations" {
@@ -158,7 +182,14 @@ func TestResetCodexDesktopLaunchRootRetiresOwnedResidueOnly(t *testing.T) {
 	if err := os.Mkdir(sourceSessions, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	sourceArchivedSessions := filepath.Join(t.TempDir(), "archived_sessions")
+	if err := os.Mkdir(sourceArchivedSessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(sourceSessions, filepath.Join(owned, "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sourceArchivedSessions, filepath.Join(owned, "archived_sessions")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(foreign, 0o700); err != nil {
@@ -175,6 +206,9 @@ func TestResetCodexDesktopLaunchRootRetiresOwnedResidueOnly(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(owned, "sessions")); err != nil || target != sourceSessions {
 		t.Fatalf("retired rollout path is invalid: %q %v", target, err)
+	}
+	if target, err := os.Readlink(filepath.Join(owned, "archived_sessions")); err != nil || target != sourceArchivedSessions {
+		t.Fatalf("retired archived rollout path is invalid: %q %v", target, err)
 	}
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("foreign directory changed: %v", err)

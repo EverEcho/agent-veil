@@ -14,6 +14,7 @@ import (
 
 	"github.com/agentveil/agentveil/internal/audit"
 	"github.com/agentveil/agentveil/internal/core"
+	"github.com/agentveil/agentveil/internal/debugtrace"
 	"github.com/agentveil/agentveil/internal/domain"
 	"github.com/agentveil/agentveil/internal/feedback"
 	"github.com/agentveil/agentveil/internal/instance"
@@ -109,6 +110,13 @@ func serve() (resultErr error) {
 		return err
 	}
 	if err := server.WithFeedbackStore(feedbackStore); err != nil {
+		return err
+	}
+	debugTraceStore, err := debugtrace.NewStore(filepath.Join(configDir, "developer.json"), filepath.Join(configDir, "developer-traces.jsonl"), 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	if err := server.WithDebugTraceStore(debugTraceStore); err != nil {
 		return err
 	}
 	if err := server.Start(); err != nil {

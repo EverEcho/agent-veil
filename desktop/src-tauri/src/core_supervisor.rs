@@ -49,6 +49,19 @@ pub(crate) fn credentials(runtime: &SharedRuntime) -> Result<(String, String), S
         .map_err(|_| "Core 运行状态不可用".into())
 }
 
+pub(crate) fn protected_codex_running(runtime: &SharedRuntime) -> Result<bool, String> {
+    let mut value = runtime.lock().map_err(|_| "Core 运行状态不可用")?;
+    let mut running = Vec::with_capacity(value.launches.len());
+    for mut launch in value.launches.drain(..) {
+        match launch.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => running.push(launch),
+        }
+    }
+    value.launches = running;
+    Ok(!value.launches.is_empty())
+}
+
 pub(crate) fn stop_owned(runtime: &SharedRuntime) {
     if let Ok(mut value) = runtime.lock() {
         for mut launch in value.launches.drain(..) {
@@ -205,19 +218,8 @@ pub(crate) fn launch_protected_codex(
     if endpoint.is_empty() || token.is_empty() {
         return Err("Privacy Core 尚未就绪".into());
     }
-    {
-        let mut value = runtime.lock().map_err(|_| "Core 运行状态不可用")?;
-        let mut running = Vec::with_capacity(value.launches.len());
-        for mut launch in value.launches.drain(..) {
-            match launch.try_wait() {
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => running.push(launch),
-            }
-        }
-        value.launches = running;
-        if !value.launches.is_empty() {
-            return Err("已有一个由 AgentVeil 启动的 Codex 桌面会话".into());
-        }
+    if protected_codex_running(runtime)? {
+        return Err("已有一个由 AgentVeil 启动的 Codex 桌面会话".into());
     }
     let executable = core_executable(app)?;
     if !executable.is_file() {

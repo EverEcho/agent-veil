@@ -53,7 +53,7 @@ Finding 至少包含：规则 ID、类别、严重级别、内容位置、置信
 
 - OpenAI、Anthropic、Google、GitHub、GitLab、AWS；
 - Slack、Stripe、JWT、Bearer；
-- PEM Private Key；
+- 完整 PEM Private Key 块（必须包含可解码的头、密钥载荷和对应结尾；源码中的单独示例标记不判为私钥）；
 - 敏感环境变量赋值，包括 `PASSWORD`、`TOKEN`、`SECRET`、`API_KEY`、`ACCESS_KEY`、`AES_KEY/AES_IV`、`SALT` 等后缀；兼容 Markdown 转义的下划线，并跳过变量引用、占位符和布尔/空值哨兵；
 - 数据库连接串；
 - 国内主要云厂商与模型 Provider 的可稳定识别格式。
@@ -101,7 +101,7 @@ Global -> Agent -> Workspace -> Provider -> Surface -> Finding Type
 
 更具体的规则覆盖更宽泛规则；任何层级的显式 BLOCK 不应被低可信来源自动降级。
 
-面向普通用户的设置开关必须落到同一份 Policy，而不是绕过 Detector：联系方式、身份与财务信息、敏感环境变量、数据库连接凭据、常见服务密钥、疑似未知密钥和网络标识可以分别开启或关闭。开启生成对应 `finding_type: REDACT` 规则，关闭生成 `finding_type: ALLOW` 规则；Agent、Workspace、Provider、Surface 的高级规则继续保留。私钥显式阻断、协议解析与未知协议失败关闭、响应检查、Placeholder/Vault 边界不作为普通设置开关。
+面向普通用户的设置开关必须落到同一份 Policy，而不是绕过 Detector：联系方式、身份与财务信息、敏感环境变量、数据库连接凭据、常见服务密钥、疑似未知密钥和网络标识可以分别开启或关闭。开启生成对应 `finding_type: REDACT` 规则，关闭生成 `finding_type: ALLOW` 规则；Agent、Workspace、Provider、Surface 的高级规则继续保留。私钥默认显式阻断，但 Dashboard 提供 `BLOCK`、`REDACT`、`ASK` 和高风险 `ALLOW` 选择；选择默认 Action 时删除冗余的全局私钥规则。协议解析与未知协议失败关闭、响应检查、Placeholder/Vault 边界不作为普通设置开关。
 
 示例：
 
@@ -138,3 +138,7 @@ Provider 响应先检查：
 
 随后才恢复当前请求 Vault 中已知占位符。未知占位符不得猜测或跨 Session 恢复。
 响应发现继续遵循同一 Policy：`redact` 只替换命中的响应内容并保持协议正常结束，显式 `block` 才终止响应。只有完整、未变形且属于当前请求 Vault 的占位符可以恢复；逐字符拆分、插入分隔符或其他变形可以作为不透明文本正常透传，但绝不能据此变换或恢复原文。
+
+## 11. 开发模式与误脱敏排查
+
+Dashboard 可显式开启开发模式。每条请求诊断记录包含协议、端点、正文处理前后字节数，以及每个 Finding 的规则、类型、Detector、Policy Action、字段路径、字节偏移、命中长度与置信度。默认仍不保存原文；高风险“记录原始请求正文”是独立二次开关，启用后保存有界的脱敏前和上游请求正文，用于对照是否误脱敏。安全审计、诊断导出与开发日志保持独立，关闭开发模式不会继续写入新记录。
