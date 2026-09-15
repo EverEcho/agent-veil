@@ -99,7 +99,7 @@ veil status
 - 构建 Routing Graph 并识别 DLP 后内容修改、未知出口和旁路连接；
 - 明确显示 Protected、Local、Partial、Observed、Unprotected；
 - 观察 Agent 及子进程出口，对未保护外联告警；
-- 本地审计只记录元数据、动作和性能，不记录敏感原文。
+- 本地审计记录元数据、动作、性能，以及将全部命中值替换为 `***` 的有界上下文摘要；不记录敏感原文。
 
 ## 6. 产品边界
 

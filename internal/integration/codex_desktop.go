@@ -15,12 +15,15 @@ import (
 const codexDesktopMarker = ".agentveil-codex-desktop-launch"
 const codexDesktopRootMarker = ".agentveil-owned-codex-desktop-root"
 const codexDesktopRootMarkerContent = "agentveil-codex-desktop-root-v1\n"
+const codexDesktopActiveMarkerContent = "agentveil-codex-desktop-v1\n"
+const codexDesktopUpgradeMarkerContent = "agentveil-codex-desktop-preserve-for-upgrade-v1\n"
+const codexDesktopRetiredMarkerContent = "agentveil-codex-desktop-rollout-link-v1\n"
 const maxCodexDesktopAuthBytes = 8 << 20
 const maxCodexDesktopHomeEntries = 4096
 
 // PrepareCodexDesktopLaunch creates an isolated Codex home for the official
 // desktop application. The user's Codex configuration is never modified.
-func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, temporaryRoot, baseURL string, hasAPIKey bool, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
+func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, protectedRoot, baseURL string, hasAPIKey bool, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
 	if agent.Kind != "codex-desktop" {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "agent kind is not Codex Desktop")
 	}
@@ -28,32 +31,32 @@ func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, so
 	if err != nil {
 		return LaunchPlan{}, err
 	}
-	if !filepath.IsAbs(desktopExecutable) || strings.ContainsRune(desktopExecutable, 0) || !filepath.IsAbs(sourceHome) || !filepath.IsAbs(temporaryRoot) {
+	if !filepath.IsAbs(desktopExecutable) || strings.ContainsRune(desktopExecutable, 0) || !filepath.IsAbs(sourceHome) || !filepath.IsAbs(protectedRoot) {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "desktop executable and launch directories must be absolute")
 	}
 	info, err := os.Lstat(desktopExecutable)
 	if err != nil || !info.Mode().IsRegular() {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "official desktop executable was not found")
 	}
-	if err := ensureCodexDesktopRoot(temporaryRoot); err != nil {
+	if err := ensureCodexDesktopRoot(protectedRoot); err != nil {
 		return LaunchPlan{}, err
 	}
-	temporaryHome, err := os.MkdirTemp(temporaryRoot, "session-")
-	if err != nil {
+	protectedHome := filepath.Join(protectedRoot, "home")
+	if err := initializeCodexDesktopHome(protectedHome); err != nil {
 		return LaunchPlan{}, err
 	}
-	cleanup := func() error { return cleanupCodexDesktopHome(temporaryHome) }
+	cleanup := func() error { return cleanupCodexDesktopLaunchHome(protectedHome) }
 	fail := func(cause error) (LaunchPlan, error) {
 		return LaunchPlan{}, errors.Join(cause, cleanup())
 	}
-	if err := linkCodexDesktopState(sourceHome, temporaryHome); err != nil {
+	if err := writePrivateFile(filepath.Join(protectedHome, codexDesktopMarker), []byte(codexDesktopActiveMarkerContent)); err != nil {
 		return fail(err)
 	}
-	if err := writePrivateFile(filepath.Join(temporaryHome, codexDesktopMarker), []byte("agentveil-codex-desktop-v1\n")); err != nil {
+	if err := linkCodexDesktopState(sourceHome, protectedHome); err != nil {
 		return fail(err)
 	}
 	config := renderCodexDesktopConfig(baseURL, hasAPIKey)
-	if err := writePrivateFile(filepath.Join(temporaryHome, "config.toml"), []byte(config)); err != nil {
+	if err := writePrivateFile(filepath.Join(protectedHome, "config.toml"), []byte(config)); err != nil {
 		return fail(err)
 	}
 	auth, found, err := readCodexDesktopAuth(filepath.Join(sourceHome, "auth.json"))
@@ -62,12 +65,12 @@ func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, so
 	}
 	if found {
 		defer clearSensitiveBytes(auth)
-		if err := writePrivateFile(filepath.Join(temporaryHome, "auth.json"), auth); err != nil {
+		if err := writePrivateFile(filepath.Join(protectedHome, "auth.json"), auth); err != nil {
 			return fail(err)
 		}
 	}
 	plan.Executable = desktopExecutable
-	plan.Environment["CODEX_HOME"] = temporaryHome
+	plan.Environment["CODEX_HOME"] = protectedHome
 	plan.cleanup = cleanup
 	return plan, nil
 }
@@ -187,19 +190,73 @@ func writePrivateFile(path string, payload []byte) error {
 	return file.Close()
 }
 
-func cleanupCodexDesktopHome(home string) error {
+func initializeCodexDesktopHome(home string) error {
+	if !filepath.IsAbs(home) || filepath.Base(home) != "home" {
+		return domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "stable home path is invalid")
+	}
+	if _, err := os.Lstat(home); err == nil {
+		if err := removeOwnedCodexDesktopHome(home); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Mkdir(home, 0o700)
+}
+
+func removeOwnedCodexDesktopHome(home string) error {
 	if !filepath.IsAbs(home) || filepath.Base(home) == "." {
 		return domain.NewError(domain.ErrInvalidContract, "clean Codex Desktop launch", "temporary home is invalid")
 	}
 	marker := filepath.Join(home, codexDesktopMarker)
 	payload, err := os.ReadFile(marker)
-	if err != nil || string(payload) != "agentveil-codex-desktop-v1\n" {
+	if err != nil || string(payload) != codexDesktopActiveMarkerContent && string(payload) != codexDesktopUpgradeMarkerContent && string(payload) != codexDesktopRetiredMarkerContent {
 		return domain.NewError(domain.ErrInvalidContract, "clean Codex Desktop launch", "temporary home ownership could not be verified")
 	}
 	if err := validateCodexDesktopRoot(filepath.Dir(home)); err != nil {
 		return err
 	}
 	return os.RemoveAll(home)
+}
+
+func cleanupCodexDesktopLaunchHome(home string) error {
+	if _, err := os.Readlink(filepath.Join(home, "sessions")); err == nil {
+		return retireCodexDesktopHome(home)
+	}
+	return removeOwnedCodexDesktopHome(home)
+}
+
+// retireCodexDesktopHome removes credentials, configuration and runtime state,
+// but keeps the absolute sessions path alive. Codex stores rollout_path as an
+// absolute CODEX_HOME path; deleting that path makes existing conversations
+// impossible to restore or delete even though the rollout file still exists.
+func retireCodexDesktopHome(home string) error {
+	marker := filepath.Join(home, codexDesktopMarker)
+	payload, err := os.ReadFile(marker)
+	if err != nil {
+		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "launch ownership could not be verified")
+	}
+	if string(payload) == codexDesktopRetiredMarkerContent {
+		return nil
+	}
+	if string(payload) != codexDesktopActiveMarkerContent && string(payload) != codexDesktopUpgradeMarkerContent {
+		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "launch ownership could not be verified")
+	}
+	sessions := filepath.Join(home, "sessions")
+	sourceSessions, err := os.Readlink(sessions)
+	if err != nil || !filepath.IsAbs(sourceSessions) || strings.ContainsRune(sourceSessions, 0) {
+		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "conversation path is unavailable or unsafe")
+	}
+	if err := removeOwnedCodexDesktopHome(home); err != nil {
+		return err
+	}
+	if err := os.Mkdir(home, 0o700); err != nil {
+		return err
+	}
+	if err := writePrivateFile(filepath.Join(home, codexDesktopMarker), []byte(codexDesktopRetiredMarkerContent)); err != nil {
+		return err
+	}
+	return os.Symlink(sourceSessions, sessions)
 }
 
 func ensureCodexDesktopRoot(root string) error {
@@ -236,8 +293,8 @@ func validateCodexDesktopRoot(root string) error {
 	return nil
 }
 
-// ResetCodexDesktopLaunchRoot removes only session directories carrying the
-// AgentVeil ownership marker. Unrecognized entries are left untouched.
+// ResetCodexDesktopLaunchRoot retires interrupted launch homes without
+// removing their rollout paths. Unrecognized entries are left untouched.
 func ResetCodexDesktopLaunchRoot(root string) error {
 	if err := ensureCodexDesktopRoot(root); err != nil {
 		return err
@@ -247,12 +304,12 @@ func ResetCodexDesktopLaunchRoot(root string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "session-") {
+		if !entry.IsDir() || entry.Name() != "home" && !strings.HasPrefix(entry.Name(), "session-") {
 			continue
 		}
 		home := filepath.Join(root, entry.Name())
-		if payload, readErr := os.ReadFile(filepath.Join(home, codexDesktopMarker)); readErr == nil && string(payload) == "agentveil-codex-desktop-v1\n" {
-			if err := cleanupCodexDesktopHome(home); err != nil {
+		if payload, readErr := os.ReadFile(filepath.Join(home, codexDesktopMarker)); readErr == nil && (string(payload) == codexDesktopActiveMarkerContent || string(payload) == codexDesktopUpgradeMarkerContent) {
+			if err := retireCodexDesktopHome(home); err != nil {
 				return err
 			}
 		}

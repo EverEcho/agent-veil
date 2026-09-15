@@ -47,7 +47,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 		t.Fatal(err)
 	}
 	home := plan.Environment["CODEX_HOME"]
-	if plan.Executable != executable || home == "" || !strings.HasPrefix(home, launches+string(filepath.Separator)) {
+	if plan.Executable != executable || home != filepath.Join(launches, "home") {
 		t.Fatalf("plan=%+v", plan)
 	}
 	config, err := os.ReadFile(filepath.Join(home, "config.toml"))
@@ -76,8 +76,14 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := plan.Cleanup(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(home); !os.IsNotExist(err) {
-		t.Fatalf("temporary home remains: %v", err)
+	if _, err := os.Stat(filepath.Join(home, "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("authentication remained in retired home: %v", err)
+	}
+	if payload, err := os.ReadFile(filepath.Join(home, codexDesktopMarker)); err != nil || string(payload) != codexDesktopRetiredMarkerContent {
+		t.Fatalf("rollout redirect marker is missing: %q %v", payload, err)
+	}
+	if target, err := os.Readlink(filepath.Join(home, "sessions")); err != nil || target != filepath.Join(source, "sessions") {
+		t.Fatalf("conversation path was not retained: %q %v", target, err)
 	}
 	sourceSession, err := os.ReadFile(filepath.Join(source, "sessions", "existing.jsonl"))
 	if err != nil || string(sourceSession) != "existing session" {
@@ -121,7 +127,7 @@ func TestCodexDesktopAuthAcceptsOfficialReadPermissionsButRejectsSharedWrite(t *
 
 func TestCodexDesktopCleanupRefusesUnknownDirectory(t *testing.T) {
 	directory := t.TempDir()
-	if err := cleanupCodexDesktopHome(directory); err == nil {
+	if err := removeOwnedCodexDesktopHome(directory); err == nil {
 		t.Fatal("unknown directory was removed")
 	}
 	if _, err := os.Stat(directory); err != nil {
@@ -129,7 +135,7 @@ func TestCodexDesktopCleanupRefusesUnknownDirectory(t *testing.T) {
 	}
 }
 
-func TestResetCodexDesktopLaunchRootRemovesOwnedResidueOnly(t *testing.T) {
+func TestResetCodexDesktopLaunchRootRetiresOwnedResidueOnly(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "launches")
 	if err := ensureCodexDesktopRoot(root); err != nil {
 		t.Fatal(err)
@@ -139,10 +145,17 @@ func TestResetCodexDesktopLaunchRootRemovesOwnedResidueOnly(t *testing.T) {
 	if err := os.Mkdir(owned, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(owned, codexDesktopMarker), []byte("agentveil-codex-desktop-v1\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(owned, codexDesktopMarker), []byte(codexDesktopUpgradeMarkerContent), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(owned, "runtime-created-file"), []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceSessions := filepath.Join(t.TempDir(), "sessions")
+	if err := os.Mkdir(sourceSessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sourceSessions, filepath.Join(owned, "sessions")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(foreign, 0o700); err != nil {
@@ -151,8 +164,14 @@ func TestResetCodexDesktopLaunchRootRemovesOwnedResidueOnly(t *testing.T) {
 	if err := ResetCodexDesktopLaunchRoot(root); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(owned); !os.IsNotExist(err) {
-		t.Fatalf("owned residue remains: %v", err)
+	if _, err := os.Stat(filepath.Join(owned, "runtime-created-file")); !os.IsNotExist(err) {
+		t.Fatalf("runtime residue remains: %v", err)
+	}
+	if payload, err := os.ReadFile(filepath.Join(owned, codexDesktopMarker)); err != nil || string(payload) != codexDesktopRetiredMarkerContent {
+		t.Fatalf("owned launch was not retired: %q %v", payload, err)
+	}
+	if target, err := os.Readlink(filepath.Join(owned, "sessions")); err != nil || target != sourceSessions {
+		t.Fatalf("retired rollout path is invalid: %q %v", target, err)
 	}
 	if _, err := os.Stat(foreign); err != nil {
 		t.Fatalf("foreign directory changed: %v", err)

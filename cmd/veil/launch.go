@@ -167,7 +167,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		if configErr != nil {
 			return configErr
 		}
-		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), endpoint+"/route/"+protectedRoute.ID+"/v1", os.Getenv("OPENAI_API_KEY") != "", childArgs, endpoint, created.Session.ID, routeToken)
+		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), protectedCodexBaseURL(endpoint, protectedRoute.ID), os.Getenv("OPENAI_API_KEY") != "", childArgs, endpoint, created.Session.ID, routeToken)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}
@@ -185,7 +185,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	launch.Environment["no_proxy"] = localBypass
 	args := launch.Args
 	if name == "codex" {
-		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
+		args = protectedCodexArgs(protectedCodexBaseURL(endpoint, protectedRoute.ID), childArgs, os.Getenv("OPENAI_API_KEY") != "")
 	} else if name != "codex-desktop" {
 		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
 		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, routeToken)
@@ -313,7 +313,7 @@ func prepareNestedLaunch(name string, agent domain.AgentInstance, endpoint, pare
 		if !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportHeaders) {
 			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Codex cannot use Route capability transports %q", child.CapabilityTransports)
 		}
-		baseURL := endpoint + "/route/" + routeID + "/v1"
+		baseURL := protectedCodexBaseURL(endpoint, routeID)
 		args = protectedCodexArgs(baseURL, childArgs, hasOpenAIKey)
 	case "claude":
 		if child.Protocol != domain.ProtocolAnthropic || !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportAnthropicAPIKey) {
@@ -578,6 +578,13 @@ func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []st
 		result = append(result, "-c", value)
 	}
 	return append(result, childArgs...)
+}
+
+// protectedCodexBaseURL replaces only the provider origin with the local
+// protected Route. The Route's upstream URL owns its provider-specific path;
+// Codex's endpoint suffix such as /responses remains unchanged.
+func protectedCodexBaseURL(endpoint, routeID string) string {
+	return strings.TrimSuffix(endpoint, "/") + "/route/" + routeID
 }
 
 func validateCodexProtectedArgs(args []string) error {

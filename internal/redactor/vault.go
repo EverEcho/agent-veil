@@ -101,7 +101,7 @@ func (v *Vault) Restore(input string) (string, error) {
 	if possibleTokenOpen.MatchString(completeToken.ReplaceAllString(input, "")) {
 		return "", domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "malformed or incomplete placeholder")
 	}
-	return result.String(), nil
+	return v.restoreHyphenated(result.String())
 }
 
 // RestoreParts restores placeholders that may cross logical protocol fields
@@ -142,7 +142,82 @@ func (v *Vault) RestoreParts(parts []string) ([]string, error) {
 		}
 		result[endSegment] = result[endSegment][endLocal:]
 	}
-	return result, nil
+	return v.restoreHyphenatedParts(result)
+}
+
+func (v *Vault) restoreHyphenated(input string) (string, error) {
+	const startMarker = "[-[-V-E-I-L-_"
+	const endMarker = "]-]"
+	result := input
+	for {
+		start := strings.Index(result, startMarker)
+		if start < 0 {
+			return result, nil
+		}
+		relativeEnd := strings.Index(result[start+len(startMarker):], endMarker)
+		if relativeEnd < 0 {
+			return "", domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "hyphenated placeholder is incomplete")
+		}
+		end := start + len(startMarker) + relativeEnd + len(endMarker)
+		candidate := result[start:end]
+		token := strings.ReplaceAll(candidate, "-", "")
+		original, ok := v.entries[token]
+		if !ok {
+			return "", domain.NewError(domain.ErrUnknownPlaceholder, "restore placeholder", "hyphenated placeholder is not present in this request vault")
+		}
+		restored := strings.Join(strings.Split(string(original), ""), "-")
+		result = result[:start] + restored + result[end:]
+	}
+}
+
+func (v *Vault) restoreHyphenatedParts(parts []string) ([]string, error) {
+	const startMarker = "[-[-V-E-I-L-_"
+	const endMarker = "]-]"
+	type replacement struct {
+		start, end int
+		value      string
+	}
+	combined := strings.Join(parts, "")
+	var replacements []replacement
+	for offset := 0; ; {
+		relativeStart := strings.Index(combined[offset:], startMarker)
+		if relativeStart < 0 {
+			break
+		}
+		start := offset + relativeStart
+		relativeEnd := strings.Index(combined[start+len(startMarker):], endMarker)
+		if relativeEnd < 0 {
+			return nil, domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "hyphenated placeholder is incomplete")
+		}
+		end := start + len(startMarker) + relativeEnd + len(endMarker)
+		token := strings.ReplaceAll(combined[start:end], "-", "")
+		original, ok := v.entries[token]
+		if !ok {
+			return nil, domain.NewError(domain.ErrUnknownPlaceholder, "restore placeholder", "hyphenated placeholder is not present in this request vault")
+		}
+		replacements = append(replacements, replacement{start: start, end: end, value: strings.Join(strings.Split(string(original), ""), "-")})
+		offset = end
+	}
+	boundaries := make([]int, len(parts)+1)
+	for i, part := range parts {
+		boundaries[i+1] = boundaries[i] + len(part)
+	}
+	for i := len(replacements) - 1; i >= 0; i-- {
+		replacement := replacements[i]
+		startSegment, endSegment := segmentAt(boundaries, replacement.start), segmentAt(boundaries, replacement.end-1)
+		startLocal := replacement.start - boundaries[startSegment]
+		endLocal := replacement.end - boundaries[endSegment]
+		if startSegment == endSegment {
+			parts[startSegment] = parts[startSegment][:startLocal] + replacement.value + parts[startSegment][endLocal:]
+			continue
+		}
+		parts[startSegment] = parts[startSegment][:startLocal] + replacement.value
+		for segment := startSegment + 1; segment < endSegment; segment++ {
+			parts[segment] = ""
+		}
+		parts[endSegment] = parts[endSegment][endLocal:]
+	}
+	return parts, nil
 }
 
 func segmentAt(boundaries []int, offset int) int {

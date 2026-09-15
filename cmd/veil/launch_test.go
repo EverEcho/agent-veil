@@ -63,6 +63,12 @@ func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
 	}
 }
 
+func TestProtectedCodexBaseURLDoesNotInventProviderPath(t *testing.T) {
+	if got := protectedCodexBaseURL("http://127.0.0.1:1234/", "route-primary"); got != "http://127.0.0.1:1234/route/route-primary" {
+		t.Fatalf("protected Codex base URL=%q", got)
+	}
+}
+
 func TestProtectedCodexArgsRejectRouteBypasses(t *testing.T) {
 	blocked := [][]string{
 		{"-c", `model_provider="direct"`},

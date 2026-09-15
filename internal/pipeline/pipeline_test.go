@@ -3,8 +3,10 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -21,9 +23,39 @@ func TestRequestIsRedactedAndRecoverable(t *testing.T) {
 	if strings.Contains(string(result.Body), "dev@example.com") || strings.Contains(string(result.Body), "13800138000") {
 		t.Fatalf("sensitive value leaked: %s", result.Body)
 	}
+	if strings.Contains(result.Preview, "dev@example.com") || strings.Contains(result.Preview, "13800138000") || !strings.Contains(result.Preview, "contact *** or ***") {
+		t.Fatalf("unsafe or missing audit preview: %q", result.Preview)
+	}
 	restored, err := vault.Restore(string(result.Body))
 	if err != nil || !strings.Contains(restored, "dev@example.com") {
 		t.Fatalf("restore failed: %v %s", err, restored)
+	}
+}
+
+func TestAuditPreviewIsBoundedAroundLatestProtectedFragment(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	text := strings.Repeat("前文", 120) + " 这是邮箱 dev@example.com ，请帮我处理 " + strings.Repeat("后文", 120)
+	result, err := Process(Context{}, "/v1/responses", "application/json", "", []byte(`{"input":`+strconv.Quote(text)+`}`), detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if utf8.RuneCountInString(result.Preview) > maxAuditPreviewRunes+2 || !strings.Contains(result.Preview, "这是邮箱 ***") || strings.Contains(result.Preview, "dev@example.com") {
+		t.Fatalf("preview=%q", result.Preview)
+	}
+}
+
+func TestEscapedEmailInCodexPromptIsStillRedacted(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	text := `这个是测试邮箱 privacy-test\@example.invalid ，请逐字返回`
+	result, err := Process(Context{}, "/responses", "application/json", "", []byte(`{"input":`+strconv.Quote(text)+`}`), detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result.Body), "privacy-test") || !strings.Contains(string(result.Body), "[[VEIL_PII_EMAIL_") {
+		t.Fatalf("upstream-bound body was not protected: %s", result.Body)
+	}
+	if strings.Contains(result.Preview, "privacy-test") || !strings.Contains(result.Preview, `邮箱 ***`) {
+		t.Fatalf("preview=%q", result.Preview)
 	}
 }
 

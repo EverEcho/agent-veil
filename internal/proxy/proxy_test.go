@@ -14,9 +14,7 @@ import (
 	"time"
 
 	veilauth "github.com/agentveil/agentveil/internal/auth"
-	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
-	"github.com/agentveil/agentveil/internal/pipeline"
 	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/redactor"
 	"github.com/agentveil/agentveil/internal/session"
@@ -161,14 +159,13 @@ func firstVeilPlaceholder(value string) string {
 	return value[start : start+end+2]
 }
 
-func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
+func TestRequestHeadersPassThroughWithoutPrivacyRewriting(t *testing.T) {
 	var providerHeader string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerHeader = r.Header.Get("X-Request-Context")
-		response, _ := json.Marshal(map[string]any{"output_text": providerHeader})
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Echo-Context", providerHeader)
-		_, _ = w.Write(response)
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -186,18 +183,20 @@ func TestRequestHeadersAreRedactedAndResponseBodyCanRestoreThem(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || strings.Contains(providerHeader, "dev@example.com") || !strings.Contains(providerHeader, "[[VEIL_PII_EMAIL_") || !strings.Contains(recorder.Body.String(), "dev@example.com") || recorder.Header().Get("X-Echo-Context") != "contact dev@example.com" {
+	if recorder.Code != http.StatusOK || providerHeader != "contact dev@example.com" || recorder.Header().Get("X-Echo-Context") != providerHeader || recorder.Body.String() != `{"output_text":"safe"}` {
 		t.Fatalf("status=%d provider header=%q response header=%q body=%s", recorder.Code, providerHeader, recorder.Header().Get("X-Echo-Context"), recorder.Body.String())
 	}
-	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact {
+	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow {
 		t.Fatalf("audit=%+v", auditor.events)
 	}
 }
 
-func TestBlockedRequestHeaderNeverReachesProvider(t *testing.T) {
+func TestBlockPolicyDoesNotApplyToTransportHeaders(t *testing.T) {
 	providerCalls := 0
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var providerHeader string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		providerCalls++
+		providerHeader = request.Header.Get("X-Request-Context")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
 	}))
@@ -214,14 +213,20 @@ func TestBlockedRequestHeaderNeverReachesProvider(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrPolicyBlocked {
+	if recorder.Code != http.StatusOK || providerCalls != 1 || providerHeader != "contact dev@example.com" || len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow || auditor.events[0].ErrorCode != "" {
 		t.Fatalf("status=%d calls=%d audit=%+v body=%s", recorder.Code, providerCalls, auditor.events, recorder.Body.String())
 	}
 }
 
-func TestSensitiveRequestHeaderNameFailsClosed(t *testing.T) {
+func TestOpaqueRequestHeaderNamePassesThrough(t *testing.T) {
 	providerCalls := 0
-	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	var providerValue string
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		providerCalls++
+		providerValue = request.Header.Get("4111111111111111")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"output_text":"safe"}`)
+	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
 	manager := session.NewManager()
@@ -235,7 +240,7 @@ func TestSensitiveRequestHeaderNameFailsClosed(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "pii.bank_card" {
+	if recorder.Code != http.StatusOK || providerCalls != 1 || providerValue != "value" || len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow {
 		t.Fatalf("status=%d calls=%d audit=%+v body=%s", recorder.Code, providerCalls, auditor.events, recorder.Body.String())
 	}
 }
@@ -285,13 +290,12 @@ func TestRequestHeaderBoundsFailBeforeProvider(t *testing.T) {
 	}
 }
 
-func TestRequestQueryValuesAreRedactedAndRecoverable(t *testing.T) {
+func TestRequestQueryPassesThroughWithoutPrivacyRewriting(t *testing.T) {
 	var providerQuery string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerQuery = r.URL.Query().Get("context")
-		response, _ := json.Marshal(map[string]any{"output_text": providerQuery})
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(response)
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
 	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
@@ -305,17 +309,23 @@ func TestRequestQueryValuesAreRedactedAndRecoverable(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || strings.Contains(providerQuery, "dev@example.com") || !strings.Contains(providerQuery, "[[VEIL_PII_EMAIL_") || !strings.Contains(recorder.Body.String(), "dev@example.com") {
+	if recorder.Code != http.StatusOK || providerQuery != "contact dev@example.com" || recorder.Body.String() != `{"output_text":"safe"}` {
 		t.Fatalf("status=%d provider query=%q body=%s", recorder.Code, providerQuery, recorder.Body.String())
 	}
-	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact {
+	if len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow {
 		t.Fatalf("audit=%+v", auditor.events)
 	}
 }
 
-func TestSensitiveRequestQueryKeyFailsClosed(t *testing.T) {
+func TestOpaqueRequestQueryKeyPassesThrough(t *testing.T) {
 	providerCalls := 0
-	provider := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { providerCalls++ }))
+	var providerQuery string
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		providerCalls++
+		providerQuery = request.URL.RawQuery
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"output_text":"safe"}`)
+	}))
 	defer provider.Close()
 	upstream, _ := url.Parse(provider.URL)
 	manager := session.NewManager()
@@ -328,23 +338,17 @@ func TestSensitiveRequestQueryKeyFailsClosed(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock {
+	if recorder.Code != http.StatusOK || providerCalls != 1 || providerQuery != "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890=value" || len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow {
 		t.Fatalf("status=%d calls=%d audit=%+v body=%s", recorder.Code, providerCalls, auditor.events, recorder.Body.String())
 	}
 }
 
-func TestRequestQueryValidationAndCredentialException(t *testing.T) {
+func TestRequestQueryValidation(t *testing.T) {
 	if err := validateRequestQuery("unsafe;query=value"); err == nil {
 		t.Fatal("malformed query accepted")
 	}
 	if err := validateRequestQuery("q=" + strings.Repeat("a", maxRequestQueryBytes)); err == nil {
 		t.Fatal("oversized query accepted")
-	}
-	requestURL, _ := url.Parse("https://api.example/v1?key=AIzaABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
-	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
-	result, err := processRequestQuery(pipeline.Context{}, requestURL, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
-	if err != nil || requestURL.Query().Get("key") != "AIzaABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890" || len(result.Findings) != 0 {
-		t.Fatalf("query=%q result=%+v err=%v", requestURL.RawQuery, result, err)
 	}
 }
 
@@ -722,7 +726,7 @@ func TestRouteCapabilityHeadersMustBeUnique(t *testing.T) {
 	}
 }
 
-func TestAuthorizedRequestsEmitMetadataOnlyAudit(t *testing.T) {
+func TestAuthorizedRequestsEmitSanitizedAuditPreview(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output_text":"ok"}`))
@@ -747,7 +751,7 @@ func TestAuthorizedRequestsEmitMetadataOnlyAudit(t *testing.T) {
 	}
 	event := auditor.events[0]
 	encoded, _ := json.Marshal(event)
-	if event.AgentID != "agent-a" || event.SurfaceID != "surface-a" || event.SessionID != created.Session.ID || event.Protocol != domain.ProtocolOpenAIResponses || event.Action != domain.ActionRedact || event.FindingCount != 1 || len(event.FindingTypes) != 1 || event.FindingTypes[0] != "pii.email" || event.ErrorCode != "" || strings.Contains(string(encoded), "dev@example.com") {
+	if event.AgentID != "agent-a" || event.SurfaceID != "surface-a" || event.SessionID != created.Session.ID || event.Protocol != domain.ProtocolOpenAIResponses || event.Action != domain.ActionRedact || event.FindingCount != 1 || len(event.FindingTypes) != 1 || event.FindingTypes[0] != "pii.email" || event.ErrorCode != "" || event.Preview != "***" || strings.Contains(string(encoded), "dev@example.com") {
 		t.Fatalf("unsafe or incomplete event: %s", encoded)
 	}
 }
@@ -935,6 +939,53 @@ func TestUnsupportedMethodFailsBeforeUpstream(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusMethodNotAllowed || recorder.Header().Get("Allow") != http.MethodPost || providerCalls != 0 || len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrUnsupportedMethod {
 		t.Fatalf("status=%d allow=%q calls=%d audit=%+v", recorder.Code, recorder.Header().Get("Allow"), providerCalls, auditor.events)
+	}
+}
+
+func TestOpenAIModelsMetadataPassesThroughForCodexDiscovery(t *testing.T) {
+	var providerMethod, providerPath, providerQuery string
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		providerMethod = request.Method
+		providerPath = request.URL.Path
+		providerQuery = request.URL.RawQuery
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Set-Cookie", "provider_state=discard; Secure; HttpOnly")
+		_, _ = io.WriteString(writer, `{"data":[{"id":"model-a"}],"object":"list"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL)
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodGet, "/route/primary/v1/models?client_version=0.153.4", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerMethod != http.MethodGet || providerPath != "/v1/models" || providerQuery != "client_version=0.153.4" || recorder.Header().Get("Set-Cookie") != "" || recorder.Body.String() != `{"data":[{"id":"model-a"}],"object":"list"}` {
+		t.Fatalf("status=%d method=%q path=%q query=%q headers=%v body=%s", recorder.Code, providerMethod, providerPath, providerQuery, recorder.Header(), recorder.Body.String())
+	}
+}
+
+func TestOpenAIModelsMetadataUsesRouteUpstreamBasePath(t *testing.T) {
+	var providerPath string
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		providerPath = request.URL.Path
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"data":[],"object":"list"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL + "/backend-api/codex")
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, _ := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	request := httptest.NewRequest(http.MethodGet, "/route/primary/models", nil)
+	request.Header.Set(HeaderSession, created.Session.ID)
+	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || providerPath != "/backend-api/codex/models" {
+		t.Fatalf("status=%d path=%q body=%s", recorder.Code, providerPath, recorder.Body.String())
 	}
 }
 
@@ -1470,7 +1521,7 @@ func TestStreamingResponseFindingIsIncludedInAudit(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || strings.Contains(recorder.Body.String(), "ghp_") || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "secret.github_pat" {
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "ghp_") || !strings.Contains(recorder.Body.String(), "[REDACTED]") || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact || auditor.events[0].FindingTypes[0] != "secret.github_pat" {
 		t.Fatalf("status=%d audit=%+v body=%s", recorder.Code, auditor.events, recorder.Body.String())
 	}
 }
@@ -1508,7 +1559,7 @@ func TestCompressedProviderResponsesFailClosedBeforeJSONOrSSEProcessing(t *testi
 	}
 }
 
-func TestProviderResponseHeadersAreBoundedAndScannedBeforeForwarding(t *testing.T) {
+func TestProviderResponseHeadersPassThroughWithinBounds(t *testing.T) {
 	for name, headerValue := range map[string]string{
 		"sensitive": "token=ghp_abcdefghijklmnopqrstuvwxyz",
 		"oversized": strings.Repeat("x", maxResponseHeaderBytes),
@@ -1534,17 +1585,20 @@ func TestProviderResponseHeadersAreBoundedAndScannedBeforeForwarding(t *testing.
 			request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Debug-Token") != "" || strings.Contains(recorder.Body.String(), "ghp_") {
-				t.Fatalf("unsafe response header escaped: status=%d header=%q body=%s", recorder.Code, recorder.Header().Get("X-Debug-Token"), recorder.Body.String())
+			if name == "sensitive" {
+				if recorder.Code != http.StatusOK || recorder.Header().Get("X-Debug-Token") != headerValue || len(auditor.events) != 1 || auditor.events[0].FindingCount != 0 || auditor.events[0].Action != domain.ActionAllow {
+					t.Fatalf("transport header was not passed through: status=%d header=%q audit=%+v body=%s", recorder.Code, recorder.Header().Get("X-Debug-Token"), auditor.events, recorder.Body.String())
+				}
+				return
 			}
-			if name == "sensitive" && (len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "secret.github_pat") {
-				t.Fatalf("response header finding missing from audit: %+v", auditor.events)
+			if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Debug-Token") != "" || len(auditor.events) != 1 || auditor.events[0].ErrorCode != domain.ErrInvalidContract {
+				t.Fatalf("oversized response headers were accepted: status=%d header=%q audit=%+v body=%s", recorder.Code, recorder.Header().Get("X-Debug-Token"), auditor.events, recorder.Body.String())
 			}
 		})
 	}
 }
 
-func TestProviderResponseHeaderRejectsUnknownPlaceholder(t *testing.T) {
+func TestProviderResponseHeaderDoesNotInterpretContentPlaceholders(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Echo-Context", "[[VEIL_EMAIL_0123456789ABCDEF]]")
@@ -1561,7 +1615,7 @@ func TestProviderResponseHeaderRejectsUnknownPlaceholder(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusBadGateway || recorder.Header().Get("X-Echo-Context") != "" || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownPlaceholder)) {
+	if recorder.Code != http.StatusOK || recorder.Header().Get("X-Echo-Context") != "[[VEIL_EMAIL_0123456789ABCDEF]]" || recorder.Body.String() != `{"output_text":"safe"}` {
 		t.Fatalf("status=%d header=%q body=%s", recorder.Code, recorder.Header().Get("X-Echo-Context"), recorder.Body.String())
 	}
 }
@@ -1583,7 +1637,7 @@ func TestProviderResponseBodyFindingIsIncludedInAudit(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || strings.Contains(recorder.Body.String(), "ghp_") || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].FindingTypes[0] != "secret.github_pat" {
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "ghp_") || !strings.Contains(recorder.Body.String(), "[REDACTED]") || len(auditor.events) != 1 || auditor.events[0].FindingCount != 1 || auditor.events[0].Action != domain.ActionRedact || auditor.events[0].FindingTypes[0] != "secret.github_pat" {
 		t.Fatalf("status=%d audit=%+v body=%s", recorder.Code, auditor.events, recorder.Body.String())
 	}
 }
@@ -1695,7 +1749,7 @@ func TestUnknownProviderResponseEnvelopeFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCredentialShapedProviderResponseIsAuditedAsBlocked(t *testing.T) {
+func TestCredentialShapedProviderResponseFollowsRedactPolicy(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"output_text":"sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"}`))
@@ -1712,7 +1766,7 @@ func TestCredentialShapedProviderResponseIsAuditedAsBlocked(t *testing.T) {
 	request.Header.Set(HeaderRouteToken, created.Routes[0].Token)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden || len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionBlock || auditor.events[0].ErrorCode != domain.ErrPolicyBlocked || strings.Contains(recorder.Body.String(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+	if recorder.Code != http.StatusOK || len(auditor.events) != 1 || auditor.events[0].Action != domain.ActionRedact || auditor.events[0].ErrorCode != "" || strings.Contains(recorder.Body.String(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ") || !strings.Contains(recorder.Body.String(), "[REDACTED]") {
 		t.Fatalf("status=%d audit=%+v body=%s", recorder.Code, auditor.events, recorder.Body.String())
 	}
 }
@@ -1837,6 +1891,40 @@ func TestJoinBasePathAvoidsDuplicateProtocolPrefix(t *testing.T) {
 	} {
 		if got := joinBasePath(test.base, test.endpoint); got != test.want {
 			t.Fatalf("joinBasePath(%q, %q)=%q want=%q", test.base, test.endpoint, got, test.want)
+		}
+	}
+}
+
+func TestProtectedTargetPathPreservesCodexEndpointSuffix(t *testing.T) {
+	for _, test := range []struct {
+		base, endpoint, want string
+	}{
+		{"/backend-api/codex", "/responses", "/backend-api/codex/responses"},
+		{"/backend-api/codex", "/models", "/backend-api/codex/models"},
+		{"/v1", "/responses", "/v1/responses"},
+	} {
+		if got := protectedTargetPath(domain.ProtocolOpenAIResponses, test.base, test.endpoint); got != test.want {
+			t.Fatalf("protectedTargetPath(%q, %q)=%q want=%q", test.base, test.endpoint, got, test.want)
+		}
+	}
+}
+
+func TestSniffResponseContentTypeReplaysUnmodifiedBody(t *testing.T) {
+	for _, test := range []struct {
+		body, want string
+	}{
+		{`{"output_text":"ok"}`, "application/json"},
+		{"data: {\"type\":\"response.completed\"}\n\n", "text/event-stream"},
+		{"opaque", ""},
+	} {
+		response := &http.Response{Body: io.NopCloser(strings.NewReader(test.body))}
+		got, err := sniffResponseContentType(response)
+		if err != nil || got != test.want {
+			t.Fatalf("sniffResponseContentType(%q)=%q error=%v want=%q", test.body, got, err, test.want)
+		}
+		replayed, err := io.ReadAll(response.Body)
+		if err != nil || string(replayed) != test.body {
+			t.Fatalf("replayed body=%q error=%v want=%q", replayed, err, test.body)
 		}
 	}
 }

@@ -1,0 +1,13 @@
+.timeline-item .audit-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.audit-preview b {
+  margin-right: 6px;
+}

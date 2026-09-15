@@ -24,7 +24,7 @@
 | Codex API Key 与 ChatGPT 登录链路的凭据边界 | 已落地（当前范围） | API Key 仅通过 Agent 自身环境读取并由受保护路由引用；无 API Key 时使用 Codex 现有登录能力，Core 不迁移、不存储长期凭据。两条路径都只向子进程下发短期 Session/Route capability。新的登录传输出现时重新进入未验证状态。 |
 | `ASK/本次允许` 的一致行为 | 已落地 | 交互 Session 在 Core 内暂停并创建一次性审批，只接受 `allow/redact/block`；Dashboard 与 `veil approvals` 使用同一版本化 API。取消等同阻断，超时阻断，非交互 Session 将 `ASK` 直接按 `BLOCK` 执行。Finding 只暴露位置和分类元数据，不暴露原文。 |
 | 默认 PII 策略与 Action | 已落地（可配置） | 默认 Action 为 `REDACT`，`secret.private_key` 显式为 `BLOCK`。用户可通过同一 Policy Document 在 Dashboard 或 `veil policy` 覆盖；重复 Scope、无效 Action、原始工作区路径和未知字段均拒绝。误报反馈只保留本地有界元数据，不自动弱化策略。 |
-| 审计保留期与工作区路径 | 已落地 | 默认保留 30 天，可用正时长配置覆盖；文件最大 64 MiB 并优先压缩最旧事件。工作区使用 `sha256:` 截断哈希引用，不持久化原始路径。CLI、Dashboard 和诊断导出均只读取元数据。 |
+| 审计保留期与工作区路径 | 已落地 | 默认保留 30 天，可用正时长配置覆盖；文件最大 64 MiB 并优先压缩最旧事件。工作区使用 `sha256:` 截断哈希引用，不持久化原始路径。CLI、Dashboard 和诊断导出只读取元数据及全部命中值替换为 `***` 的有界上下文摘要。 |
 | 本地 HTTP Upstream | 已落地 | 远端默认只允许 HTTPS；HTTP 仅允许明确识别的 loopback 主机（`localhost` 或数字 loopback 地址），且必须来自 Protection Plan 的固定 Upstream。UI 将 Local 与 Protected 分开表达，不把明文或本地跳转宣传为内容保护。 |
 | 本地语义模型的体积、许可证、中文基准和下载方式 | 未完成 | Core 只接受不超过 512 MiB 的签名模型并支持流式安装、校验、启停和回滚；具体模型、许可证、中文基准、硬件分档和可信下载源仍需产品与发布决策，在此之前不内置或自动下载模型。 |
 

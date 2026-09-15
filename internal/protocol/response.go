@@ -113,11 +113,7 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		extractChatResponse(document)
 	case domain.ProtocolOpenAIResponses:
 		if object, ok := root.(map[string]any); ok {
-			if value, ok := object["delta"].(string); ok {
-				document.Fields = append(document.Fields, Field{Path: "/delta", Text: value, path: []any{"delta"}})
-			} else {
-				extractResponseInput(document, object["delta"], []any{"delta"}, 0)
-			}
+			extractResponsesStream(document, object)
 		}
 	case domain.ProtocolAnthropic:
 		if object, ok := root.(map[string]any); ok {
@@ -137,6 +133,31 @@ func ParseStreamEvent(protocol domain.Protocol, data []byte) (*Document, error) 
 		return nil, document.extractionErr
 	}
 	return document, nil
+}
+
+func extractResponsesStream(document *Document, object map[string]any) {
+	typeName, _ := object["type"].(string)
+	if value, ok := object["delta"].(string); ok {
+		document.Fields = append(document.Fields, Field{Path: "/delta", Text: value, path: []any{"delta"}})
+	} else {
+		extractResponseInput(document, object["delta"], []any{"delta"}, 0)
+	}
+	switch typeName {
+	case "response.output_text.done":
+		addString(document, object, "text", nil)
+	case "response.content_part.added", "response.content_part.done":
+		if part, ok := object["part"].(map[string]any); ok {
+			if partType, _ := part["type"].(string); partType == "output_text" {
+				addString(document, part, "text", []any{"part"})
+			}
+		}
+	case "response.output_item.added", "response.output_item.done":
+		extractResponseInput(document, object["item"], []any{"item"}, 0)
+	case "response.completed", "response.failed", "response.incomplete":
+		if response, ok := object["response"].(map[string]any); ok {
+			extractResponseInput(document, response["output"], []any{"response", "output"}, 0)
+		}
+	}
 }
 
 func validStreamEnvelope(protocolType domain.Protocol, root any) bool {

@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -255,18 +255,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, string(domain.ErrInvalidContract))
 		return
 	}
-	if !routeAllowsMethod(route.Protocol, r.Method) {
+	transparentMetadata := isTransparentMetadataRequest(route.Protocol, r.Method, endpoint)
+	if !transparentMetadata && !routeAllowsMethod(route.Protocol, r.Method) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnsupportedMethod
 		w.Header().Set("Allow", allowedMethods(route.Protocol))
 		fail(w, http.StatusMethodNotAllowed, string(domain.ErrUnsupportedMethod))
 		return
 	}
-	if _, err := protocol.ResolveEndpoint(route.Protocol, endpoint); err != nil {
-		auditEvent.Action = domain.ActionBlock
-		auditEvent.ErrorCode = domain.ErrUnknownProtocol
-		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
-		return
+	if !transparentMetadata {
+		if _, err := protocol.ResolveEndpoint(route.Protocol, endpoint); err != nil {
+			auditEvent.Action = domain.ActionBlock
+			auditEvent.ErrorCode = domain.ErrUnknownProtocol
+			fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+			return
+		}
 	}
 	mcpVersion := ""
 	if route.Protocol == domain.ProtocolMCPStreamable {
@@ -358,22 +361,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if authStrategy.Type == "" {
 		authStrategy.Type = domain.AuthPassthrough
 	}
-	headerResult, err := processRequestHeaders(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.Header, h.scanner, route.Policy, vault)
-	processed.Findings = append(processed.Findings, headerResult.Findings...)
-	processed.Actions = append(processed.Actions, headerResult.Actions...)
-	if err == nil {
-		var queryResult pipeline.TextResult
-		queryResult, err = processRequestQuery(pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}, upstreamRequest.URL, h.scanner, route.Policy, vault)
-		processed.Findings = append(processed.Findings, queryResult.Findings...)
-		processed.Actions = append(processed.Actions, queryResult.Actions...)
-	}
-	applyAuditResult(&auditEvent, processed)
-	if err != nil {
-		auditEvent.Action = domain.ActionBlock
-		auditEvent.ErrorCode = errorCodeValue(err)
-		fail(w, http.StatusForbidden, errorCode(err))
-		return
-	}
+	// HTTP metadata is part of the provider/client transport contract. Rewriting
+	// account, feature, trace, or version headers breaks otherwise valid Codex
+	// requests. Privacy processing is deliberately limited to protocol content
+	// extracted from request/response bodies and stream events.
 	if err := route.AuthApplier.Apply(upstreamRequest, authStrategy); err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
@@ -411,11 +402,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ChatGPT Codex backend) still attach defensive cookies to API responses.
 	// Drop them instead of failing an otherwise inspectable response.
 	response.Header.Del("Set-Cookie")
-	responseHeaderResult, err := processResponseHeaders(response.Header, h.scanner, vault)
-	processed.Findings = append(processed.Findings, responseHeaderResult.Findings...)
-	processed.Actions = append(processed.Actions, responseHeaderResult.Actions...)
-	applyAuditResult(&auditEvent, processed)
-	if err != nil {
+	if err := validateResponseHeaderBounds(response.Header); err != nil {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusBadGateway, errorCode(err))
@@ -435,8 +422,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
 		return
 	}
+	if strings.TrimSpace(responseContentType) == "" {
+		responseContentType, err = sniffResponseContentType(response)
+		if err != nil {
+			auditEvent.Action = domain.ActionBlock
+			auditEvent.ErrorCode = "UPSTREAM_FAILURE"
+			fail(w, http.StatusBadGateway, "UPSTREAM_FAILURE")
+			return
+		}
+	}
 	if protocol.MediaTypeIs(responseContentType, "text/event-stream") {
-		streamResult, err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol)
+		responseContext := pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}
+		streamResult, err := h.streamResponse(w, response, vault, route.MaxResponseBytes, processed.Protocol, responseContext, route.Policy)
 		processed.Findings = append(processed.Findings, streamResult.Findings...)
 		processed.Actions = append(processed.Actions, streamResult.Actions...)
 		applyAuditResult(&auditEvent, processed)
@@ -460,13 +457,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(response.StatusCode)
 		return
 	}
-	responseResult, err := pipeline.ProcessResponseDetailed(processed.Protocol, responseContentType, responseBody, h.scanner, vault)
-	processed.Findings = append(processed.Findings, responseResult.Findings...)
-	for range responseResult.Findings {
-		processed.Actions = append(processed.Actions, domain.ActionBlock)
+	if transparentMetadata {
+		copyHeaders(w.Header(), response.Header)
+		w.Header().Del("Content-Length")
+		secureResponseHeaders(w.Header())
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write(responseBody)
+		return
 	}
+	responseContext := pipeline.Context{AgentID: route.AgentID, Workspace: route.Workspace, Provider: route.Upstream.Hostname(), SurfaceID: surfaceID, Interactive: interactive, RequestContext: requestContext, Approver: route.Approver}
+	responseResult, err := pipeline.ProcessResponseDetailedWithPolicy(responseContext, processed.Protocol, responseContentType, responseBody, h.scanner, route.Policy, vault)
+	processed.Findings = append(processed.Findings, responseResult.Findings...)
+	processed.Actions = append(processed.Actions, responseResult.Actions...)
 	applyAuditResult(&auditEvent, processed)
 	if err != nil {
+		logProxyProtocolFailure(processed.Protocol, response.StatusCode, responseContentType, err)
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = errorCodeValue(err)
 		fail(w, http.StatusForbidden, errorCode(err))
@@ -477,6 +482,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	secureResponseHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(responseResult.Body)
+}
+
+type replayReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// sniffResponseContentType classifies only a missing upstream Content-Type.
+// The consumed prefix is replayed byte-for-byte, so the provider payload and
+// response headers remain unchanged on the client-facing transport.
+func sniffResponseContentType(response *http.Response) (string, error) {
+	prefix := make([]byte, 512)
+	read, err := response.Body.Read(prefix)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	originalBody := response.Body
+	response.Body = replayReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(prefix[:read]), originalBody),
+		Closer: originalBody,
+	}
+	trimmed := bytes.TrimSpace(prefix[:read])
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return "application/json", nil
+	}
+	for _, marker := range [][]byte{[]byte("data:"), []byte("event:"), []byte("id:"), []byte("retry:"), []byte(":")} {
+		if bytes.HasPrefix(trimmed, marker) {
+			return "text/event-stream", nil
+		}
+	}
+	return "", nil
 }
 
 func joinBasePath(basePath, endpoint string) string {
@@ -514,7 +553,7 @@ func protectedTargetPath(protocolType domain.Protocol, basePath, endpoint string
 	return joinBasePath(basePath, endpoint)
 }
 
-func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol) (pipeline.TextResult, error) {
+func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response, vault *redactor.Vault, maxBytes int64, protocolType domain.Protocol, ctx pipeline.Context, engine policy.Engine) (pipeline.TextResult, error) {
 	var result pipeline.TextResult
 	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		fail(w, http.StatusInternalServerError, "STREAM_DEADLINE_FAILURE")
@@ -524,7 +563,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 	if maxBytes < maxEventBytes {
 		maxEventBytes = maxBytes
 	}
-	processor, err := pipeline.NewSSEProcessor(protocolType, h.scanner, vault, int(maxEventBytes), 512)
+	processor, err := pipeline.NewSSEProcessorWithPolicy(ctx, protocolType, h.scanner, engine, vault, int(maxEventBytes), 512)
 	if err != nil {
 		fail(w, http.StatusForbidden, errorCode(err))
 		return result, err
@@ -567,6 +606,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 			}
 			processed, processErr := processor.Push(buffer[:read])
 			if processErr != nil {
+				logProxyProtocolFailure(protocolType, response.StatusCode, response.Header.Get("Content-Type"), processErr)
 				failBeforeWrite(http.StatusForbidden, errorCode(processErr))
 				return processor.Result(), processErr
 			}
@@ -584,6 +624,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, response *http.Response,
 	}
 	tail, err := processor.Close()
 	if err != nil {
+		logProxyProtocolFailure(protocolType, response.StatusCode, response.Header.Get("Content-Type"), err)
 		failBeforeWrite(http.StatusForbidden, errorCode(err))
 		return processor.Result(), err
 	}
@@ -625,6 +666,14 @@ func splitCapabilityPath(endpoint string) (string, string, bool) {
 
 func routeAllowsMethod(protocolType domain.Protocol, method string) bool {
 	return method == http.MethodPost || protocolType == domain.ProtocolMCPStreamable && (method == http.MethodGet || method == http.MethodDelete) || protocolType == domain.ProtocolMCPLegacySSE && method == http.MethodGet
+}
+
+func isTransparentMetadataRequest(protocolType domain.Protocol, method, endpoint string) bool {
+	if protocolType != domain.ProtocolOpenAIResponses || method != http.MethodGet {
+		return false
+	}
+	cleanEndpoint := strings.TrimSuffix(endpoint, "/")
+	return cleanEndpoint == "/models" || cleanEndpoint == "/v1/models"
 }
 
 func allowedMethods(protocolType domain.Protocol) string {
@@ -714,6 +763,25 @@ func validateRequestHeaderBounds(headers http.Header) error {
 	return nil
 }
 
+func validateResponseHeaderBounds(headers http.Header) error {
+	valueCount := 0
+	totalBytes := 0
+	for key, values := range headers {
+		valueCount += len(values)
+		totalBytes += len(key)
+		if valueCount > maxResponseHeaders {
+			return domain.NewError(domain.ErrInvalidContract, "validate response headers", "provider response has too many headers")
+		}
+		for _, value := range values {
+			totalBytes += len(value)
+			if totalBytes > maxResponseHeaderBytes {
+				return domain.NewError(domain.ErrInvalidContract, "validate response headers", "provider response headers exceed their size limit")
+			}
+		}
+	}
+	return nil
+}
+
 func validateRequestQuery(rawQuery string) error {
 	if len(rawQuery) > maxRequestQueryBytes {
 		return domain.NewError(domain.ErrInvalidContract, "scan request query", "request query exceeds its size limit")
@@ -730,130 +798,6 @@ func validateRequestQuery(rawQuery string) error {
 		}
 	}
 	return nil
-}
-
-func processRequestHeaders(ctx pipeline.Context, headers http.Header, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
-	var aggregate pipeline.TextResult
-	keys := make([]string, 0, len(headers))
-	for key := range headers {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for keyIndex, key := range keys {
-		if isProviderCredentialHeader(key) {
-			continue
-		}
-		canonicalKey := http.CanonicalHeaderKey(key)
-		keyResult, err := pipeline.ProcessText(ctx, "/request/headers/key/"+strconv.Itoa(keyIndex), canonicalKey, scanner, engine, vault)
-		aggregate.Findings = append(aggregate.Findings, keyResult.Findings...)
-		aggregate.Actions = append(aggregate.Actions, keyResult.Actions...)
-		if err != nil {
-			return aggregate, err
-		}
-		for _, action := range keyResult.Actions {
-			if action != domain.ActionAllow {
-				return aggregate, domain.NewError(domain.ErrPolicyBlocked, "scan request headers", "sensitive header names cannot be safely rewritten")
-			}
-		}
-		values := headers[key]
-		for index, value := range values {
-			processed, err := pipeline.ProcessText(ctx, "/request/headers/value/"+strconv.Itoa(keyIndex)+"/"+strconv.Itoa(index), value, scanner, engine, vault)
-			aggregate.Findings = append(aggregate.Findings, processed.Findings...)
-			aggregate.Actions = append(aggregate.Actions, processed.Actions...)
-			if err != nil {
-				return aggregate, err
-			}
-			headers[key][index] = processed.Text
-		}
-	}
-	return aggregate, nil
-}
-
-func processRequestQuery(ctx pipeline.Context, requestURL *url.URL, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (pipeline.TextResult, error) {
-	var aggregate pipeline.TextResult
-	values, err := url.ParseQuery(requestURL.RawQuery)
-	if err != nil {
-		return aggregate, domain.NewError(domain.ErrInvalidContract, "scan request query", "request query is malformed")
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for keyIndex, key := range keys {
-		if strings.EqualFold(key, "key") {
-			continue
-		}
-		keyResult, err := pipeline.ProcessText(ctx, "/request/query/key/"+strconv.Itoa(keyIndex), key, scanner, engine, vault)
-		aggregate.Findings = append(aggregate.Findings, keyResult.Findings...)
-		aggregate.Actions = append(aggregate.Actions, keyResult.Actions...)
-		if err != nil {
-			return aggregate, err
-		}
-		for _, action := range keyResult.Actions {
-			if action != domain.ActionAllow {
-				return aggregate, domain.NewError(domain.ErrPolicyBlocked, "scan request query", "sensitive query keys cannot be safely rewritten")
-			}
-		}
-		for valueIndex, value := range values[key] {
-			valueResult, err := pipeline.ProcessText(ctx, "/request/query/value/"+strconv.Itoa(keyIndex)+"/"+strconv.Itoa(valueIndex), value, scanner, engine, vault)
-			aggregate.Findings = append(aggregate.Findings, valueResult.Findings...)
-			aggregate.Actions = append(aggregate.Actions, valueResult.Actions...)
-			if err != nil {
-				return aggregate, err
-			}
-			values[key][valueIndex] = valueResult.Text
-		}
-	}
-	requestURL.RawQuery = values.Encode()
-	return aggregate, nil
-}
-
-func isProviderCredentialHeader(key string) bool {
-	switch http.CanonicalHeaderKey(key) {
-	case "Authorization", "X-Api-Key", "X-Goog-Api-Key", "X-Amz-Security-Token", "X-Amz-Date", "X-Amz-Content-Sha256":
-		return true
-	}
-	return false
-}
-
-func processResponseHeaders(headers http.Header, scanner detector.ContentScanner, vault *redactor.Vault) (pipeline.TextResult, error) {
-	var result pipeline.TextResult
-	if scanner == nil {
-		return result, domain.NewError(domain.ErrDetectorFailure, "scan response headers", "content scanner is unavailable")
-	}
-	valueCount := 0
-	totalBytes := 0
-	for key, values := range headers {
-		valueCount += len(values)
-		totalBytes += len(key)
-		if valueCount > maxResponseHeaders {
-			return result, domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response has too many headers")
-		}
-		for index, value := range values {
-			totalBytes += len(value)
-			if totalBytes > maxResponseHeaderBytes {
-				return result, domain.NewError(domain.ErrInvalidContract, "scan response headers", "provider response headers exceed their size limit")
-			}
-			matches, err := detector.ScanContent(scanner, "/response/headers/"+http.CanonicalHeaderKey(key), key+": "+value)
-			if err != nil {
-				return result, domain.NewError(domain.ErrDetectorFailure, "scan response headers", "provider response header scan failed")
-			}
-			if len(matches) != 0 {
-				for _, match := range matches {
-					result.Findings = append(result.Findings, match.Finding)
-					result.Actions = append(result.Actions, domain.ActionBlock)
-				}
-				return result, domain.NewError(domain.ErrPolicyBlocked, "scan response headers", "provider response header contains sensitive content")
-			}
-			restored, err := vault.Restore(value)
-			if err != nil {
-				return result, err
-			}
-			headers[key][index] = restored
-		}
-	}
-	return result, nil
 }
 
 func uniqueHeaderValue(header http.Header, name string) (string, bool) {
@@ -896,6 +840,15 @@ func errorCode(err error) string {
 
 func errorCodeValue(err error) domain.ErrorCode { return domain.ErrorCode(errorCode(err)) }
 
+func logProxyProtocolFailure(protocolType domain.Protocol, upstreamStatus int, contentType string, err error) {
+	var veil *domain.VeilError
+	if errors.As(err, &veil) {
+		log.Printf("AgentVeil response rejected: protocol=%s upstream_status=%d content_type=%q code=%s operation=%s reason=%s", protocolType, upstreamStatus, contentType, veil.Code, veil.Operation, veil.Reason)
+		return
+	}
+	log.Printf("AgentVeil response rejected: protocol=%s upstream_status=%d code=INTERNAL_ERROR", protocolType, upstreamStatus)
+}
+
 func applyAuditResult(event *domain.AuditEvent, result pipeline.Result) {
 	event.FindingCount = 0
 	event.FindingTypes = nil
@@ -903,6 +856,9 @@ func applyAuditResult(event *domain.AuditEvent, result pipeline.Result) {
 	event.Action = domain.ActionAllow
 	if result.Protocol != "" {
 		event.Protocol = result.Protocol
+	}
+	if result.Preview != "" {
+		event.Preview = result.Preview
 	}
 	event.FindingCount = len(result.Findings)
 	seen := map[string]struct{}{}

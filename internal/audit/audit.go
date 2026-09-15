@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
@@ -53,6 +55,9 @@ func validateEvent(event domain.AuditEvent) error {
 	if event.WorkspaceRef != "" && (!strings.HasPrefix(event.WorkspaceRef, "sha256:") || len(event.WorkspaceRef) != len("sha256:")+32 || !lowerHex(event.WorkspaceRef[len("sha256:"):])) {
 		return domain.NewError(domain.ErrInvalidContract, "validate audit", "audit workspace reference is invalid")
 	}
+	if !validPreview(event.Preview) {
+		return domain.NewError(domain.ErrInvalidContract, "validate audit", "audit preview is invalid")
+	}
 	for _, findingType := range event.FindingTypes {
 		if !validMetadataValue(findingType, 128) {
 			return domain.NewError(domain.ErrInvalidContract, "validate audit", "audit finding metadata is invalid")
@@ -62,6 +67,18 @@ func validateEvent(event domain.AuditEvent) error {
 		return domain.NewError(domain.ErrInvalidContract, "validate audit", "audit finding types require a positive count")
 	}
 	return nil
+}
+
+func validPreview(value string) bool {
+	if len(value) > 1024 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
 }
 
 func validMetadataValue(value string, limit int) bool {

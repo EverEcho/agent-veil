@@ -77,3 +77,22 @@ func TestRestorePartsHandlesCrossFieldPlaceholder(t *testing.T) {
 		t.Fatalf("parts=%v err=%v", parts, err)
 	}
 }
+
+func TestRestoreHyphenatedPlaceholderAppliesTransformationLocally(t *testing.T) {
+	v, _ := NewVault([]byte(strings.Repeat("a", 32)), Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	placeholder, _ := v.Store("email", "dev@example.com")
+	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
+	restored, err := v.Restore("answer: " + hyphenated)
+	if err != nil || restored != "answer: d-e-v-@-e-x-a-m-p-l-e-.-c-o-m" {
+		t.Fatalf("restored=%q err=%v", restored, err)
+	}
+	unknown := strings.Join(strings.Split("[[VEIL_EMAIL_0123456789ABCDEF]]", ""), "-")
+	if _, err := v.Restore(unknown); err == nil {
+		t.Fatal("unknown hyphenated placeholder was accepted")
+	}
+	parts := strings.Split(hyphenated, "")
+	restoredParts, err := v.RestoreParts(parts)
+	if err != nil || strings.Join(restoredParts, "") != "d-e-v-@-e-x-a-m-p-l-e-.-c-o-m" {
+		t.Fatalf("cross-part restored=%q err=%v", strings.Join(restoredParts, ""), err)
+	}
+}

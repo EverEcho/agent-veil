@@ -201,13 +201,14 @@ func codexDefaultBaseURL(system System, codexHome string, config codexUserConfig
 		return defaultCodexAPIBaseURL, "Codex authentication mode could not be verified"
 	}
 	var auth struct {
-		Mode string `json:"auth_mode"`
+		Mode         string `json:"auth_mode"`
+		OpenAIAPIKey string `json:"OPENAI_API_KEY"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	if decoder.Decode(&auth) != nil {
 		return defaultCodexAPIBaseURL, "Codex authentication mode could not be verified"
 	}
-	if auth.Mode == "apikey" || auth.Mode == "api_key" {
+	if auth.Mode == "apikey" || auth.Mode == "api_key" || strings.TrimSpace(auth.OpenAIAPIKey) != "" {
 		return defaultCodexAPIBaseURL, ""
 	}
 	if auth.Mode != "chatgpt" {

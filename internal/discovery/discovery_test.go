@@ -211,6 +211,21 @@ func TestCodexDiscoveryUsesChatGPTBackendForChatGPTLogin(t *testing.T) {
 	}
 }
 
+func TestCodexDiscoveryUsesAPIBackendForStoredAPIKeyWithoutAuthMode(t *testing.T) {
+	home := "/home/test"
+	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", files: map[string]string{filepath.Join(home, ".codex", "auth.json"): `{"OPENAI_API_KEY":"sk-stored"}`}}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
+	manifest, err := d.Inspect(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Surfaces[0].Upstream == nil || manifest.Surfaces[0].Upstream.Host != "api.openai.com" || manifest.Surfaces[0].Upstream.Path != "/v1" {
+		t.Fatalf("stored API key was mapped to the wrong upstream: %+v", manifest.Surfaces[0])
+	}
+	if !manifest.Surfaces[0].Rewritable {
+		t.Fatalf("stored API key was treated as an unsafe authentication state: %+v", manifest.Surfaces[0])
+	}
+}
+
 func TestCodexDiscoveryKeepsUnsupportedProviderFeaturesVisibleAsRisk(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", config: "[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\nquery_params = { api-version = \"test\" }"}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
 	manifest, err := d.Inspect(context.Background(), "codex")

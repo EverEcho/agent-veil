@@ -189,6 +189,11 @@ func TestProtocolEndpointsRejectTraversalAndAmbiguity(t *testing.T) {
 	if got, err := ResolveEndpoint(domain.ProtocolMCPStreamable, "/mcp"); err != nil || got != domain.ProtocolMCPStreamable {
 		t.Fatalf("valid MCP endpoint rejected: protocol=%q error=%v", got, err)
 	}
+	for _, endpoint := range []string{"/responses", "/v1/responses"} {
+		if got, err := ResolveEndpoint(domain.ProtocolOpenAIResponses, endpoint); err != nil || got != domain.ProtocolOpenAIResponses {
+			t.Fatalf("valid Responses endpoint %q rejected: protocol=%q error=%v", endpoint, got, err)
+		}
+	}
 }
 
 func TestContentProtectedProtocolsExcludeUnimplementedTransports(t *testing.T) {
@@ -336,7 +341,7 @@ func TestToolPayloadKeysCannotImpersonateIntegrityFields(t *testing.T) {
 		body     string
 	}{
 		{"/v1/chat/completions", `{"messages":[{"role":"assistant","tool_calls":[{"function":{"name":"x","arguments":"{\"thinking\":\"dev@example.com\",\"signature\":\"ghp_abcdefghijklmnopqrstuvwxyz\"}"}}]}]}`},
-		{"/v1/responses", `{"input":[{"type":"function_call","signature":"server-integrity","arguments":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}]}`},
+		{"/v1/responses", `{"input":[{"type":"function_call","signature":"server-integrity","encrypted_content":"sk-examplevalue1234567890","arguments":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}]}`},
 		{"/v1/messages", `{"messages":[{"role":"assistant","content":[{"type":"tool_use","input":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}]}]}`},
 		{"/v1beta/models/gemini-2.5-pro:generateContent", `{"contents":[{"parts":[{"functionCall":{"args":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}}]}]}`},
 		{"/mcp", `{"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{"thinking":"dev@example.com","signature":"ghp_abcdefghijklmnopqrstuvwxyz"}}}`},
@@ -351,8 +356,59 @@ func TestToolPayloadKeysCannotImpersonateIntegrityFields(t *testing.T) {
 			for _, field := range document.Fields {
 				values[field.Text] = true
 			}
-			if !values["dev@example.com"] || !values["ghp_abcdefghijklmnopqrstuvwxyz"] || values["server-integrity"] {
+			if !values["dev@example.com"] || !values["ghp_abcdefghijklmnopqrstuvwxyz"] || test.endpoint == "/v1/responses" && !values["sk-examplevalue1234567890"] || values["server-integrity"] {
 				t.Fatalf("unsafe extraction fields=%+v", document.Fields)
+			}
+		})
+	}
+}
+
+func TestResponsesEncryptedContentIsNeverExtractedOrRewritten(t *testing.T) {
+	const opaque = "ghp_abcdefghijklmnopqrstuvwxyz"
+	tests := []struct {
+		name  string
+		parse func([]byte) (*Document, error)
+		body  string
+	}{
+		{
+			name:  "request reasoning item",
+			parse: func(body []byte) (*Document, error) { return Parse("/v1/responses", "application/json", "", body) },
+			body:  `{"input":[{"type":"reasoning","encrypted_content":"` + opaque + `","summary":[]},{"type":"message","role":"user","content":[{"type":"input_text","text":"dev@example.com"}]}]}`,
+		},
+		{
+			name: "response reasoning item",
+			parse: func(body []byte) (*Document, error) {
+				return ParseResponse(domain.ProtocolOpenAIResponses, "application/json", body)
+			},
+			body: `{"output":[{"type":"reasoning","encrypted_content":"` + opaque + `","summary":[{"type":"summary_text","text":"dev@example.com"}]}]}`,
+		},
+		{
+			name:  "output item done event",
+			parse: func(body []byte) (*Document, error) { return ParseStreamEvent(domain.ProtocolOpenAIResponses, body) },
+			body:  `{"type":"response.output_item.done","item":{"type":"reasoning","encrypted_content":"` + opaque + `","summary":[]}}`,
+		},
+		{
+			name:  "completed event",
+			parse: func(body []byte) (*Document, error) { return ParseStreamEvent(domain.ProtocolOpenAIResponses, body) },
+			body:  `{"type":"response.completed","response":{"output":[{"type":"reasoning","encrypted_content":"` + opaque + `","summary":[]}]}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := test.parse([]byte(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacements := map[string]string{}
+			for _, field := range document.Fields {
+				if field.Text == opaque {
+					t.Fatalf("encrypted content entered scan fields: %+v", document.Fields)
+				}
+				replacements[field.Path] = "[[VEIL_TEST_0123456789ABCDEF]]"
+			}
+			result, err := document.Replace(replacements)
+			if err != nil || !strings.Contains(string(result), opaque) {
+				t.Fatalf("encrypted content changed: body=%s err=%v", result, err)
 			}
 		})
 	}

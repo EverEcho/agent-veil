@@ -24,7 +24,7 @@ const copy = {
     saveOK: '策略已保存', saveFailed: '保存失败，请检查 JSON 内容', diagnosisOK: '诊断文件已导出', diagnosisFailed: '诊断导出失败',
     surfaces: '保护范围', risks: '需要注意', noSurface: '没有可显示的保护范围',
     protectionTruth: '“已发现”不代表“已保护”。只有通过 AgentVeil 启动并建立保护会话后，才会显示为正在保护。',
-    launchDesktop: '受保护地启动 Codex', launchStarting: '正在创建受保护会话…', launchStarted: 'Codex 已从受保护会话启动'
+    launchDesktop: '受保护地启动 Codex', launchStarting: '正在创建受保护会话…', launchStarted: 'Codex 已从受保护会话启动', protectedContent: '处理内容'
   },
   en: {
     overview: ['Overview', 'Home'], tools: ['Auto discovery', 'My tools'], activity: ['On-device history', 'Protection activity'],
@@ -38,7 +38,7 @@ const copy = {
     saveOK: 'Policy saved', saveFailed: 'Save failed. Check the JSON document.', diagnosisOK: 'Diagnostics exported', diagnosisFailed: 'Diagnostics export failed',
     surfaces: 'Protection scope', risks: 'Things to know', noSurface: 'No protection scope is available',
     protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.',
-    launchDesktop: 'Launch protected Codex', launchStarting: 'Creating a protected session…', launchStarted: 'Codex launched in a protected session'
+    launchDesktop: 'Launch protected Codex', launchStarting: 'Creating a protected session…', launchStarted: 'Codex launched in a protected session', protectedContent: 'Protected content'
   }
 };
 
@@ -239,7 +239,7 @@ function renderActivity() {
   $('#approval-list').innerHTML = state.approvals.map(item => `<article class="approval-card"><strong>需要你的确认</strong><p>${escapeHTML(object(item.finding).category || '检测到敏感内容')}</p><div class="row-actions"><button class="button primary" data-decision="redact" data-approval="${escapeHTML(item.id)}">脱敏后继续</button><button class="button" data-decision="allow" data-approval="${escapeHTML(item.id)}">本次放行</button><button class="button" data-decision="block" data-approval="${escapeHTML(item.id)}">阻止</button></div></article>`).join('');
   const list = $('#activity-list');
   if (!state.audit.length) list.innerHTML = `<div class="empty-state"><div class="empty-icon">✓</div><div><strong>${t('noActivity')}</strong><p>${t('noActivityHelp')}</p></div></div>`;
-  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p>发现 ${Number(event.finding_count || 0)} 项 · ${escapeHTML(event.protocol || '本地处理')}</p></div><time>${formatTime(event.timestamp)}</time></article>`).join('');
+  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p>发现 ${Number(event.finding_count || 0)} 项 · ${escapeHTML(event.protocol || '本地处理')}</p>${event.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(event.preview)}</p>` : ''}</div><time>${formatTime(event.timestamp)}</time></article>`).join('');
   const latest = state.audit[state.audit.length - 1];
   $('#overview-activity').innerHTML = latest
     ? `<div class="empty-icon">✓</div><div><strong>${escapeHTML(actionLabel(latest.action))} · ${escapeHTML(latest.agent_id || 'Agent')}</strong><p>${formatTime(latest.timestamp)}，发现 ${Number(latest.finding_count || 0)} 项敏感信息。</p></div>`

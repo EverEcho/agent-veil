@@ -14,6 +14,9 @@ var shellHTML string
 //go:embed assets/styles.css
 var styles string
 
+//go:embed assets/audit.css
+var auditStyles string
+
 //go:embed assets/visibility.css
 var visibilityStyles string
 
@@ -33,6 +36,9 @@ func Serve(w http.ResponseWriter, r *http.Request) bool {
 	case "/styles.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		_, _ = io.WriteString(w, styles)
+	case "/audit.css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = io.WriteString(w, auditStyles)
 	case "/visibility.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		_, _ = io.WriteString(w, visibilityStyles)

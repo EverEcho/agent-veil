@@ -41,6 +41,14 @@ func TestValidatedPIIAndSecrets(t *testing.T) {
 	}
 }
 
+func TestMarkdownEscapedEmailIsDetectedAsOneValue(t *testing.T) {
+	value := `privacy-test\@example.invalid`
+	matches := scan(t, NewDefault(), "这个是我邮箱 "+value+"，请逐字返回")
+	if len(matches) != 1 || matches[0].Finding.Category != "pii.email" || matches[0].Value != value {
+		t.Fatalf("escaped email matches=%+v", matches)
+	}
+}
+
 func TestMergeProtectsEntireOverlappingUnion(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -25,12 +25,14 @@ type Result struct {
 	Findings []domain.Finding
 	Actions  []domain.Action
 	Vault    *redactor.Vault
+	Preview  string
 }
 
 type TextResult struct {
 	Text     string
 	Findings []domain.Finding
 	Actions  []domain.Action
+	Preview  string
 }
 
 func Process(ctx Context, endpoint, contentType, encoding string, body []byte, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault) (Result, error) {
@@ -48,6 +50,11 @@ func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, content
 		processed, processErr := ProcessText(ctx, field.Path, field.Text, scanner, engine, vault)
 		result.Findings = append(result.Findings, processed.Findings...)
 		result.Actions = append(result.Actions, processed.Actions...)
+		if processed.Preview != "" {
+			// Responses input is ordered from older/system context to the newest
+			// user content. Prefer the latest protected fragment for the summary.
+			result.Preview = processed.Preview
+		}
 		if processErr != nil {
 			return result, processErr
 		}
@@ -70,6 +77,7 @@ func ProcessText(ctx Context, path, text string, scanner detector.ContentScanner
 	if err != nil {
 		return result, err
 	}
+	result.Preview = buildAuditPreview(text, matches)
 	sort.Slice(matches, func(i, j int) bool { return matches[i].Finding.Location.Start > matches[j].Finding.Location.Start })
 	for _, match := range matches {
 		decision, err := engine.Decide(policy.Scope{AgentID: ctx.AgentID, Workspace: ctx.Workspace, Provider: ctx.Provider, SurfaceID: ctx.SurfaceID, FindingType: match.Finding.Category}, ctx.Interactive)

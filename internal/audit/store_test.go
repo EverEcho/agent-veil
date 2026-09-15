@@ -40,14 +40,14 @@ func TestStoreUsesPrivatePermissionsRetentionAndLeakScan(t *testing.T) {
 	if err := store.Append(domain.AuditEvent{Timestamp: now.Add(-48 * time.Hour), AgentID: "old", Action: domain.ActionBlock}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Append(domain.AuditEvent{Timestamp: now, AgentID: "current", Action: domain.ActionRedact}); err != nil {
+	if err := store.Append(domain.AuditEvent{Timestamp: now, AgentID: "current", Action: domain.ActionRedact, FindingCount: 1, FindingTypes: []string{"pii.email"}, Preview: "这个是我邮箱 ***，请逐字返回"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Append(domain.AuditEvent{Timestamp: now, AgentID: secret, Action: domain.ActionBlock}); err == nil {
 		t.Fatal("sensitive audit event was persisted")
 	}
 	events, err := store.Recent(now)
-	if err != nil || len(events) != 1 || events[0].AgentID != "current" {
+	if err != nil || len(events) != 1 || events[0].AgentID != "current" || events[0].Preview != "这个是我邮箱 ***，请逐字返回" {
 		t.Fatalf("events=%+v err=%v", events, err)
 	}
 	info, _ := os.Stat(path)

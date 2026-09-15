@@ -163,4 +163,5 @@ type AuditEvent struct {
 	LatencyMS    int64     `json:"latency_ms"`
 	ErrorCode    ErrorCode `json:"error_code,omitempty"`
 	WorkspaceRef string    `json:"workspace_ref,omitempty"`
+	Preview      string    `json:"preview,omitempty"`
 }

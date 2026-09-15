@@ -91,11 +91,7 @@ func (h *Handler) serveLegacySSEGet(w http.ResponseWriter, r *http.Request, rout
 	copyHeaders(upstreamRequest.Header, r.Header)
 	stripLocalCapabilityHeaders(upstreamRequest.Header, route)
 	upstreamRequest.Header.Set("Accept-Encoding", "identity")
-	requestResult, err := processRequestHeaders(legacyPipelineContext(route, interactive, requestContext), upstreamRequest.Header, h.scanner, route.Policy, vault)
-	applyLegacyTextResult(auditEvent, requestResult)
-	if err == nil {
-		err = route.AuthApplier.Apply(upstreamRequest, legacyAuthStrategy(route))
-	}
+	err = route.AuthApplier.Apply(upstreamRequest, legacyAuthStrategy(route))
 	if err != nil {
 		blockLegacyError(w, auditEvent, http.StatusForbidden, err)
 		return
@@ -109,12 +105,12 @@ func (h *Handler) serveLegacySSEGet(w http.ResponseWriter, r *http.Request, rout
 		return
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK || len(response.Header.Values("Set-Cookie")) != 0 {
+	if response.StatusCode != http.StatusOK {
 		blockLegacyRequest(w, auditEvent, http.StatusBadGateway, domain.ErrUnknownProtocol)
 		return
 	}
-	responseResult, err := processResponseHeaders(response.Header, h.scanner, vault)
-	applyLegacyTextResult(auditEvent, responseResult)
+	response.Header.Del("Set-Cookie")
+	err = validateResponseHeaderBounds(response.Header)
 	encoding, uniqueEncoding := uniqueHeaderValue(response.Header, "Content-Encoding")
 	contentType, uniqueContentType := uniqueHeaderValue(response.Header, "Content-Type")
 	if err != nil || !uniqueEncoding || strings.TrimSpace(encoding) != "" && !strings.EqualFold(encoding, "identity") || !uniqueContentType || !protocol.MediaTypeIs(contentType, "text/event-stream") {
@@ -172,13 +168,7 @@ func (h *Handler) serveLegacySSEPost(w http.ResponseWriter, r *http.Request, rou
 	upstreamRequest.Header.Del("Content-Encoding")
 	upstreamRequest.Header.Set("Accept-Encoding", "identity")
 	upstreamRequest.ContentLength = int64(len(processed.Body))
-	headerResult, err := processRequestHeaders(legacyPipelineContext(route, interactive, requestContext), upstreamRequest.Header, h.scanner, route.Policy, binding.Vault)
-	processed.Findings = append(processed.Findings, headerResult.Findings...)
-	processed.Actions = append(processed.Actions, headerResult.Actions...)
-	applyAuditResult(auditEvent, processed)
-	if err == nil {
-		err = route.AuthApplier.Apply(upstreamRequest, legacyAuthStrategy(route))
-	}
+	err = route.AuthApplier.Apply(upstreamRequest, legacyAuthStrategy(route))
 	if err != nil {
 		blockLegacyError(w, auditEvent, http.StatusForbidden, err)
 		return
@@ -191,12 +181,12 @@ func (h *Handler) serveLegacySSEPost(w http.ResponseWriter, r *http.Request, rou
 		return
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 || len(response.Header.Values("Set-Cookie")) != 0 {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		blockLegacyRequest(w, auditEvent, http.StatusBadGateway, domain.ErrUnknownProtocol)
 		return
 	}
-	responseResult, err := processResponseHeaders(response.Header, h.scanner, binding.Vault)
-	applyLegacyTextResult(auditEvent, responseResult)
+	response.Header.Del("Set-Cookie")
+	err = validateResponseHeaderBounds(response.Header)
 	encoding, uniqueEncoding := uniqueHeaderValue(response.Header, "Content-Encoding")
 	if err != nil || !uniqueEncoding || strings.TrimSpace(encoding) != "" && !strings.EqualFold(encoding, "identity") {
 		if err != nil {

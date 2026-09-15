@@ -1,10 +1,12 @@
 package pipeline
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/detector"
 	"github.com/agentveil/agentveil/internal/domain"
+	"github.com/agentveil/agentveil/internal/policy"
 	"github.com/agentveil/agentveil/internal/protocol"
 	"github.com/agentveil/agentveil/internal/redactor"
 	veilstream "github.com/agentveil/agentveil/internal/stream"
@@ -26,6 +28,9 @@ type SSEProcessor struct {
 	lookbehind int
 	pending    []streamDocument
 	findings   []domain.Finding
+	actions    []domain.Action
+	context    Context
+	policy     policy.Engine
 	closed     bool
 }
 
@@ -33,13 +38,15 @@ type SSEProcessor struct {
 // retained by the streaming processor.
 func (p *SSEProcessor) Result() TextResult {
 	result := TextResult{Findings: append([]domain.Finding(nil), p.findings...)}
-	for range result.Findings {
-		result.Actions = append(result.Actions, domain.ActionBlock)
-	}
+	result.Actions = append([]domain.Action(nil), p.actions...)
 	return result
 }
 
 func NewSSEProcessor(protocolType domain.Protocol, scanner detector.ContentScanner, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
+	return NewSSEProcessorWithPolicy(Context{}, protocolType, scanner, policy.Engine{Default: domain.ActionBlock}, vault, maxEventBytes, lookbehind)
+}
+
+func NewSSEProcessorWithPolicy(ctx Context, protocolType domain.Protocol, scanner detector.ContentScanner, engine policy.Engine, vault *redactor.Vault, maxEventBytes, lookbehind int) (*SSEProcessor, error) {
 	if scanner == nil || vault == nil || lookbehind < 128 || lookbehind > veilstream.MaxResponseLookbehindBytes {
 		return nil, domain.NewError(domain.ErrInvalidContract, "create SSE processor", "scanner, vault and a safe lookbehind are required")
 	}
@@ -47,7 +54,7 @@ func NewSSEProcessor(protocolType domain.Protocol, scanner detector.ContentScann
 	if err != nil {
 		return nil, err
 	}
-	return &SSEProcessor{protocol: protocolType, scanner: scanner, vault: vault, decoder: decoder, lookbehind: lookbehind}, nil
+	return &SSEProcessor{protocol: protocolType, scanner: scanner, vault: vault, decoder: decoder, lookbehind: lookbehind, context: ctx, policy: engine}, nil
 }
 
 func (p *SSEProcessor) Push(chunk []byte) ([]byte, error) {
@@ -96,16 +103,6 @@ func (p *SSEProcessor) append(events []veilstream.Event) error {
 func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 	parts, references, eventEnds := p.parts()
 	combined := strings.Join(parts, "")
-	matches, err := detector.ScanContent(p.scanner, "/response-stream", combined)
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) > 0 {
-		for _, match := range matches {
-			p.findings = append(p.findings, match.Finding)
-		}
-		return nil, domain.NewError(domain.ErrPolicyBlocked, "process stream", "provider stream contains credential-shaped content")
-	}
 	emitCount := len(p.pending)
 	if !final {
 		safeText := len(combined) - p.lookbehind
@@ -122,6 +119,38 @@ func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 			emitCount--
 		}
 	}
+	emittedTextEnd := 0
+	if emitCount > 0 {
+		emittedTextEnd = eventEnds[emitCount-1]
+	}
+	matches, err := detector.ScanContent(p.scanner, "/response-stream", combined)
+	if err != nil {
+		return nil, err
+	}
+	redactedParts := append([]string(nil), parts...)
+	boundaries := partBoundaries(parts)
+	if len(matches) > 0 {
+		sort.Slice(matches, func(i, j int) bool { return matches[i].Finding.Location.Start > matches[j].Finding.Location.Start })
+		for _, match := range matches {
+			action, actionErr := decideResponseAction(p.context, p.policy, match.Finding)
+			if actionErr != nil {
+				return nil, actionErr
+			}
+			if action == domain.ActionBlock {
+				p.findings = append(p.findings, match.Finding)
+				p.actions = append(p.actions, action)
+				return nil, domain.NewError(domain.ErrPolicyBlocked, "process stream", "policy blocked provider stream content")
+			}
+			if match.Finding.Location.End > emittedTextEnd {
+				continue
+			}
+			p.findings = append(p.findings, match.Finding)
+			p.actions = append(p.actions, action)
+			if action == domain.ActionRedact {
+				redactParts(redactedParts, boundaries, match.Finding.Location.Start, match.Finding.Location.End)
+			}
+		}
+	}
 	if emitCount == 0 {
 		return nil, nil
 	}
@@ -129,7 +158,7 @@ func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 	for emittedParts < len(references) && references[emittedParts][0] < emitCount {
 		emittedParts++
 	}
-	restored, err := p.vault.RestoreParts(parts[:emittedParts])
+	restored, err := p.vault.RestoreParts(redactedParts[:emittedParts])
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +187,39 @@ func (p *SSEProcessor) flush(final bool) ([]byte, error) {
 	}
 	p.pending = append(p.pending[:0], p.pending[emitCount:]...)
 	return veilstream.Encode(events), nil
+}
+
+func partBoundaries(parts []string) []int {
+	boundaries := make([]int, len(parts)+1)
+	for i, part := range parts {
+		boundaries[i+1] = boundaries[i] + len(part)
+	}
+	return boundaries
+}
+
+func redactParts(parts []string, boundaries []int, start, end int) {
+	startSegment := partAt(boundaries, start)
+	endSegment := partAt(boundaries, end-1)
+	startLocal := start - boundaries[startSegment]
+	endLocal := end - boundaries[endSegment]
+	if startSegment == endSegment {
+		parts[startSegment] = parts[startSegment][:startLocal] + "[REDACTED]" + parts[startSegment][endLocal:]
+		return
+	}
+	parts[startSegment] = parts[startSegment][:startLocal] + "[REDACTED]"
+	for segment := startSegment + 1; segment < endSegment; segment++ {
+		parts[segment] = ""
+	}
+	parts[endSegment] = parts[endSegment][endLocal:]
+}
+
+func partAt(boundaries []int, offset int) int {
+	for i := 1; i < len(boundaries); i++ {
+		if offset < boundaries[i] {
+			return i - 1
+		}
+	}
+	return len(boundaries) - 2
 }
 
 func (p *SSEProcessor) parts() ([]string, [][2]int, []int) {

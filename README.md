@@ -31,14 +31,14 @@ requires confirmed functionality with no known bugs.
   appending the Core's local canonical `/mcp` adapter path; upstream URLs whose
   escaped path cannot be represented losslessly are rejected instead of being
   silently normalized to another endpoint;
-- bounded request-header and query DLP with policy-aware value redaction,
-  fail-closed sensitive key handling, and explicit Provider-auth exceptions;
-  incremental SSE protection with cross-chunk secret detection and placeholder
-  restoration; Provider response headers restore only request-local placeholders,
-  and blocked header, body, and stream findings contribute metadata-only audit
-  records;
-- explicit rejection of request or Provider protocol upgrades and implicit
-  Cookie/Set-Cookie authentication state;
+- transport-transparent bounded request/response headers and query forwarding;
+  privacy rewriting is limited to protocol-defined body content and streaming
+  event content so account, feature, version, and trace metadata retain their
+  client/Provider meaning; incremental SSE protection includes cross-chunk
+  secret detection and placeholder restoration;
+- explicit rejection of request or Provider protocol upgrades and request
+  Cookie authentication state; Provider `Set-Cookie` is discarded and never
+  persisted, replayed, or exposed to the protected client;
 - deterministic and structured PII/secret detection, chunk caching, layered
   policies, session-stable placeholders, request-scoped bounded Vaults, and a
   shared fail-closed panic boundary for replaceable scanners across request,
@@ -53,7 +53,8 @@ requires confirmed functionality with no known bugs.
 - an authenticated local dashboard for discovery, risk-only surface inspection,
   coverage plans, an escaped Routing Graph showing each Surface's protocol,
   policy, fixed Upstream, authentication and network route, nested calls with
-  Route/protocol/policy/lifecycle and retained audit summaries, approvals,
+  Route/protocol/policy/lifecycle and retained audit summaries with bounded,
+  fully masked request context, approvals,
   policy editing, local rule tests with rule ID/detector/confidence explanations
   and per-Finding layered policy previews, and
   audit. `ASK` cards offer one-time allow/redact decisions, an original-free
@@ -77,7 +78,7 @@ requires confirmed functionality with no known bugs.
   trends, call trees, rule tests, and model resources while persisting only the
   locale preference. A plain-language safety
   guide explains every coverage class, request-scoped sensitive-data lifetime,
-  metadata-only retention, and the limits of detection and compliance claims;
+  original-free retention, and the limits of detection and compliance claims;
   policy and signed-manifest editors preserve the original JSON representation
   so Core can reject duplicate keys instead of accepting a browser-normalized
   interpretation; every Dashboard request and response is explicitly pinned to
@@ -360,7 +361,7 @@ invalid actions, malformed scopes, and duplicate scopes before contacting Core.
 Interactive launches can be approved from either the Dashboard or
 `veil approvals`: the CLI lists metadata-only Findings and accepts one-time
 `allow`, `redact`, or `block` decisions. Non-interactive `ASK` remains fail-closed.
-`veil audit` returns only the bounded recent metadata retained by Core and
+`veil audit` returns only bounded recent metadata and fully masked context retained by Core and
 revalidates every event against the privacy-safe audit contract before printing.
 
 `veil nested` is intended for a process already launched inside an AgentVeil

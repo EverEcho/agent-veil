@@ -132,7 +132,7 @@ func ResolveEndpoint(expected domain.Protocol, endpoint string) (domain.Protocol
 	switch cleanEndpoint {
 	case "/v1/chat/completions":
 		protocol = domain.ProtocolOpenAIChat
-	case "/v1/responses":
+	case "/responses", "/v1/responses":
 		protocol = domain.ProtocolOpenAIResponses
 	case "/v1/messages":
 		protocol = domain.ProtocolAnthropic
@@ -340,6 +340,10 @@ func extractResponseInput(d *Document, value any, path []any, depth int) {
 				if responseIntegrityContainer(typeName) {
 					continue
 				}
+			case "encrypted_content":
+				if encryptedContentContainer(typeName) {
+					continue
+				}
 			case "arguments", "input", "output":
 				extractValue(d, child, appendPath(path, key), depth+1)
 				continue
@@ -353,6 +357,15 @@ func extractResponseInput(d *Document, value any, path []any, depth int) {
 func responseIntegrityContainer(typeName string) bool {
 	switch typeName {
 	case "function_call", "custom_tool_call", "reasoning", "thinking", "redacted_thinking":
+		return true
+	default:
+		return false
+	}
+}
+
+func encryptedContentContainer(typeName string) bool {
+	switch typeName {
+	case "reasoning", "compaction":
 		return true
 	default:
 		return false

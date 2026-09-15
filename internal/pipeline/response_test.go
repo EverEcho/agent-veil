@@ -77,6 +77,16 @@ func TestResponseRestoresContentButNeverIntegrityFields(t *testing.T) {
 		t.Fatalf("response=%s", result)
 	}
 }
+
+func TestResponsesEncryptedContentBypassesDLPUnchanged(t *testing.T) {
+	const opaque = "ghp_abcdefghijklmnopqrstuvwxyz"
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
+	body := []byte(`{"output":[{"type":"reasoning","id":"rs_test","encrypted_content":"` + opaque + `","summary":[]}]}`)
+	result, err := ProcessResponseDetailed(domain.ProtocolOpenAIResponses, "application/json", body, detector.NewDefault(), vault)
+	if err != nil || len(result.Findings) != 0 || !strings.Contains(string(result.Body), opaque) {
+		t.Fatalf("encrypted reasoning was inspected or changed: result=%s findings=%+v err=%v", result.Body, result.Findings, err)
+	}
+}
 func TestResponseBlocksNewSecret(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 1, MaxOriginalBytes: 100})
 	result, err := ProcessResponseDetailed(domain.ProtocolOpenAIResponses, "application/json", []byte(`{"output_text":"ghp_abcdefghijklmnopqrstuvwxyz"}`), detector.NewDefault(), vault)
