@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -332,6 +333,18 @@ func TestNestedJSONStringFieldsRoundTripAtLeafLevel(t *testing.T) {
 	}
 	if first["contact"] != "[[VEIL_TEST_0123456789ABCDEF]]" || second["phone"] != "[[VEIL_TEST_0123456789ABCDEF]]" {
 		t.Fatalf("leaf replacements missing: %#v %#v", first, second)
+	}
+}
+
+func TestDocumentWithoutReplacementsPreservesOriginalJSONBytes(t *testing.T) {
+	body := []byte("{\n  \"input\": \"safe :: TOKEN=1\",\n  \"model\": \"gpt\"\n}\n")
+	document, err := Parse("/v1/responses", "application/json", "", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := document.Replace(nil)
+	if err != nil || !bytes.Equal(result, body) {
+		t.Fatalf("unmodified document changed bytes: result=%q err=%v", result, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
@@ -29,6 +30,21 @@ func TestRequestIsRedactedAndRecoverable(t *testing.T) {
 	restored, err := vault.Restore(string(result.Body))
 	if err != nil || !strings.Contains(restored, "dev@example.com") {
 		t.Fatalf("restore failed: %v %s", err, restored)
+	}
+}
+
+func TestAllowedFindingPreservesOriginalRequestBytes(t *testing.T) {
+	body := []byte("{\n  \"input\": \"contact dev@example.com\",\n  \"model\": \"gpt\"\n}\n")
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
+	result, err := Process(Context{}, "/v1/responses", "application/json", "", body, detector.NewDefault(), policy.Engine{Default: domain.ActionAllow}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Findings) != 1 || len(result.Actions) != 1 || result.Actions[0] != domain.ActionAllow {
+		t.Fatalf("allowed finding metadata was lost: %+v", result)
+	}
+	if !bytes.Equal(result.Body, body) {
+		t.Fatalf("allowed request was re-encoded: result=%q", result.Body)
 	}
 }
 
@@ -160,5 +176,39 @@ func TestNestedJSONStringToolArgumentsAreRedactedAndRemainTyped(t *testing.T) {
 	arguments, ok := call["function"].(map[string]any)["arguments"].(string)
 	if !ok || !json.Valid([]byte(arguments)) {
 		t.Fatalf("arguments type or JSON content changed: %#v", call)
+	}
+}
+
+func TestPatchToolTextSurvivesRequestAndResponseRoundTrip(t *testing.T) {
+	patch := "diff --git a/example.env b/example.env\n--- a/example.env\n+++ b/example.env\n@@ -1,3 +1,3 @@\n TOKEN=1\n-CONTACT=old@example.com\n+CONTACT=new@example.com\n CODE=::\n"
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 2048})
+	body, _ := json.Marshal(map[string]any{"input": []any{map[string]any{"type": "function_call_output", "call_id": "call-1", "output": patch}}})
+	request, err := Process(Context{}, "/v1/responses", "application/json", "", body, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(request.Body), "old@example.com") || strings.Contains(string(request.Body), "new@example.com") {
+		t.Fatalf("email was not protected before upstream: %s", request.Body)
+	}
+	if !strings.Contains(string(request.Body), "TOKEN=1") || !strings.Contains(string(request.Body), "CODE=::") {
+		t.Fatalf("source syntax was over-redacted: %s", request.Body)
+	}
+
+	var upstream map[string]any
+	if err := json.Unmarshal(request.Body, &upstream); err != nil {
+		t.Fatal(err)
+	}
+	processedPatch := upstream["input"].([]any)[0].(map[string]any)["output"].(string)
+	responseBody, _ := json.Marshal(map[string]any{"output_text": processedPatch})
+	response, err := ProcessResponseDetailedWithPolicy(Context{}, domain.ProtocolOpenAIResponses, "application/json", responseBody, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(response.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if restored := decoded["output_text"].(string); restored != patch {
+		t.Fatalf("patch changed across protection round trip:\n%s", restored)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/agentveil/agentveil/internal/domain"
 )
@@ -403,8 +404,15 @@ func sensitiveAssignmentValue(value string) bool {
 	if trimmed == "" || strings.HasPrefix(trimmed, "[[VEIL_") || shellReference(trimmed) || strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">") {
 		return false
 	}
+	// One-character and similarly tiny examples are common in source, patches,
+	// and test fixtures (for example TOKEN=1). Treat six characters as the
+	// minimum credible literal so six-digit PINs and short real passwords remain
+	// protected without rewriting assignment syntax used as code examples.
+	if utf8.RuneCountInString(trimmed) < 6 {
+		return false
+	}
 	switch strings.ToLower(trimmed) {
-	case "true", "false", "none", "null", "nil", "disabled", "unset", "redacted", "[redacted]":
+	case "true", "false", "none", "null", "nil", "disabled", "unset", "redacted", "[redacted]", "example", "sample", "dummy", "changeme":
 		return false
 	default:
 		return true
@@ -549,7 +557,18 @@ func validIBAN(value string) bool {
 func validIP(value string) bool { return net.ParseIP(value) != nil }
 func validIPv6(value string) bool {
 	ip := net.ParseIP(value)
-	return ip != nil && ip.To4() == nil
+	if ip == nil || ip.To4() != nil || ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	hexDigits := 0
+	for _, character := range value {
+		if character != ':' {
+			hexDigits++
+		}
+	}
+	// Go correctly accepts very short compressed addresses such as a::b, but
+	// these tokens are much more common as source syntax than network identity.
+	return hexDigits >= 4
 }
 
 func highEntropy(value string) bool {

@@ -58,7 +58,7 @@ func ProcessForProtocol(ctx Context, expected domain.Protocol, endpoint, content
 		if processErr != nil {
 			return result, processErr
 		}
-		if len(processed.Findings) > 0 {
+		if processed.Text != field.Text {
 			replacements[field.Path] = processed.Text
 		}
 	}

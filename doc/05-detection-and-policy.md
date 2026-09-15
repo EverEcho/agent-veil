@@ -54,11 +54,13 @@ Finding 至少包含：规则 ID、类别、严重级别、内容位置、置信
 - OpenAI、Anthropic、Google、GitHub、GitLab、AWS；
 - Slack、Stripe、JWT、Bearer；
 - 完整 PEM Private Key 块（必须包含可解码的头、密钥载荷和对应结尾；源码中的单独示例标记不判为私钥）；
-- 敏感环境变量赋值，包括 `PASSWORD`、`TOKEN`、`SECRET`、`API_KEY`、`ACCESS_KEY`、`AES_KEY/AES_IV`、`SALT` 等后缀；兼容 Markdown 转义的下划线，并跳过变量引用、占位符和布尔/空值哨兵；
+- 敏感环境变量赋值，包括 `PASSWORD`、`TOKEN`、`SECRET`、`API_KEY`、`ACCESS_KEY`、`AES_KEY/AES_IV`、`SALT` 等后缀；兼容 Markdown 转义的下划线，并跳过变量引用、占位符、布尔/空值哨兵、常见示例值和不足 6 个字符的非可信字面量；
 - 数据库连接串；
 - 国内主要云厂商与模型 Provider 的可稳定识别格式。
 
 未知 Token 使用长度、字符集、熵、附近关键词和已知占位符排除共同判断，不能只按熵值阻断所有随机字符串。
+
+IPv6 只有在包含足够地址信息时才作为网络标识处理；`::`、`::1` 和 `a::b` 等非识别性地址或常见源码片段不进入脱敏流程。
 
 ## 6. Capture Group
 

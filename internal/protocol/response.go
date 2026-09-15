@@ -31,7 +31,7 @@ func ParseResponse(protocol domain.Protocol, contentType string, body []byte) (*
 	if !validResponseEnvelope(protocol, root) {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse response", "body does not match the protected protocol envelope")
 	}
-	document := &Document{Protocol: protocol, root: root}
+	document := &Document{Protocol: protocol, root: root, original: append([]byte(nil), body...)}
 	extractProtocolError(document, root)
 	switch protocol {
 	case domain.ProtocolOpenAIChat:

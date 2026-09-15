@@ -23,6 +23,7 @@ type Field struct {
 type Document struct {
 	Protocol      domain.Protocol
 	root          any
+	original      []byte
 	Fields        []Field
 	extractionErr error
 }
@@ -89,7 +90,7 @@ func ParseExpected(expected domain.Protocol, endpoint, contentType, contentEncod
 	if !validRequestEnvelope(protocol, root) {
 		return nil, domain.NewError(domain.ErrUnknownProtocol, "parse request", "body does not match the protected protocol envelope")
 	}
-	document := &Document{Protocol: protocol, root: root}
+	document := &Document{Protocol: protocol, root: root, original: append([]byte(nil), body...)}
 	switch protocol {
 	case domain.ProtocolOpenAIChat:
 		extractChat(document)
@@ -261,6 +262,9 @@ func extractMCP(d *Document) {
 }
 
 func (d *Document) Replace(replacements map[string]string) ([]byte, error) {
+	if len(replacements) == 0 && d.original != nil {
+		return append([]byte(nil), d.original...), nil
+	}
 	for _, field := range d.Fields {
 		value, ok := replacements[field.Path]
 		if !ok {

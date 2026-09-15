@@ -191,6 +191,18 @@ func TestSensitiveEnvironmentAssignmentsDoNotDependOnEntropy(t *testing.T) {
 	}
 }
 
+func TestSensitiveEnvironmentAssignmentsIgnoreTinyAndExampleValues(t *testing.T) {
+	text := "TOKEN=1\nPASSWORD=x\nAPI_KEY=abc\nAUTH=dummy\nSECRET=example\nACCESS_KEY=sample\nSALT=changeme"
+	if matches := scan(t, NewDefault(), text); len(matches) != 0 {
+		t.Fatalf("non-credible assignment values were treated as secrets: %+v", matches)
+	}
+	for _, text := range []string{"TOKEN=123456", "PASSWORD=abc123", "API_KEY=short-key"} {
+		if matches := scan(t, NewDefault(), text); len(matches) != 1 || matches[0].Finding.Category != "secret.assignment" {
+			t.Fatalf("credible short secret %q was missed: %+v", text, matches)
+		}
+	}
+}
+
 func TestEntropyContextDoesNotCrossEnvironmentLines(t *testing.T) {
 	text := "SERVICE_SECRET=SyntheticSecretValue987654321\nBASE_URL=https://service.example.invalid/a/long/path"
 	matches := scan(t, NewDefault(), text)
@@ -374,14 +386,17 @@ func TestInternationalStructuredPIIValidators(t *testing.T) {
 	for category, want := range map[string]int{
 		"pii.us.ssn": 1,
 		"pii.iban":   1,
-		"pii.ipv6":   2,
+		"pii.ipv6":   1,
 	} {
 		if got := categories[category]; got != want {
 			t.Fatalf("category %s count=%d want=%d matches=%+v", category, got, want, matches)
 		}
 	}
-	if len(matches) != 4 {
+	if len(matches) != 3 {
 		t.Fatalf("unexpected additional matches: %+v", matches)
+	}
+	if matches := scan(t, scanner, "code :: a::b localhost ::1 unspecified ::"); len(matches) != 0 {
+		t.Fatalf("source syntax or non-identifying IPv6 literals were detected: %+v", matches)
 	}
 
 	invalid := scan(t, scanner, "000-12-3456 666-12-3456 900-12-3456 123-00-3456 123-45-0000 GB83WEST12345698765432")
