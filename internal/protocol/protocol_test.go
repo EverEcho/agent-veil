@@ -496,6 +496,8 @@ func FuzzParseNeverAcceptsMalformedTrailingData(f *testing.F) {
 
 func FuzzExpectedProtocolEndpointCannotTraverse(f *testing.F) {
 	for _, seed := range []string{
+		"/responses",
+		"/responses/",
 		"/v1/responses",
 		"/v1/responses/",
 		"/v1/../responses",
@@ -512,7 +514,12 @@ func FuzzExpectedProtocolEndpointCannotTraverse(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if resolved != domain.ProtocolOpenAIResponses || endpoint != "/v1/responses" && endpoint != "/v1/responses/" {
+		if resolved != domain.ProtocolOpenAIResponses {
+			t.Fatalf("expected Responses protocol, got %q", resolved)
+		}
+		switch endpoint {
+		case "/responses", "/responses/", "/v1/responses", "/v1/responses/":
+		default:
 			t.Fatal("expected-protocol route accepted a non-canonical or traversal-bearing endpoint")
 		}
 	})
