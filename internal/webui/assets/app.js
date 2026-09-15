@@ -256,9 +256,7 @@ function renderHealth() {
   $('#sidebar-dot').className = `status-dot ${good ? 'good' : 'bad'}`;
   $('#sidebar-status').textContent = good ? t('connected') : t('degraded');
   $('#protection-badge').className = `protection-badge ${good ? 'good' : 'bad'}`;
-  $('#protection-badge-label').textContent = good ? t('shell.protectionEnabled') : t('shell.protectionUnavailable');
-  $('#live-indicator').className = `live-indicator ${good ? 'good' : 'bad'}`;
-  $('#live-indicator-label').textContent = good ? t('shell.live') : t('shell.waitingForCore');
+  $('#protection-badge-label').textContent = good ? t('shell.coreHealthy') : t('shell.coreDegraded');
   $('#hero-pill').className = `pill ${good ? 'good' : 'bad'}`;
   $('#hero-pill').textContent = good ? t('dashboard.coreOK') : t('dashboard.needsAttention');
   $('#hero-title').textContent = good ? t('dashboard.protectingDevice') : t('dashboard.attentionTitle');
@@ -272,13 +270,21 @@ function sessionCount() {
 }
 
 function renderMetrics() {
+  const compatible = state.tools.filter(tool => tool.status === 'verified').length;
+  const activeSessions = sessionCount();
   $('#metric-installed').textContent = state.tools.length;
-  $('#metric-protected').textContent = state.agents.length;
-  $('#metric-sessions').textContent = sessionCount();
-  $('#metric-actions').textContent = state.approvals.length;
+  $('#metric-protected').textContent = compatible;
+  $('#metric-sessions').textContent = state.agents.length;
+  $('#metric-actions').textContent = activeSessions;
+  const coreHealthy = object(state.health).status === 'ok';
+  $('#live-indicator').className = `live-indicator ${coreHealthy ? activeSessions > 0 ? 'good' : 'idle' : 'bad'}`;
+  $('#live-indicator-label').textContent = coreHealthy
+    ? activeSessions > 0 ? t('shell.activeProtection', {count:activeSessions}) : t('shell.readyForTasks')
+    : t('shell.waitingForCore');
   $('#nav-tool-count').textContent = state.tools.length;
   const next = $('#next-step');
-  if (!state.tools.length) next.innerHTML = `<span class="step-number">!</span><div><strong>${t('noTools')}</strong><p>${t('noToolsHelp')}</p></div>`;
+  if (state.approvals.length) next.innerHTML = `<span class="step-number">!</span><div><strong>${escapeHTML(t('dashboard.approvalsPending', {count:state.approvals.length}))}</strong><p>${escapeHTML(t('dashboard.reviewApprovals'))}</p></div>`;
+  else if (!state.tools.length) next.innerHTML = `<span class="step-number">!</span><div><strong>${t('noTools')}</strong><p>${t('noToolsHelp')}</p></div>`;
   else if (!state.agents.length) next.innerHTML = `<span class="step-number">1</span><div><strong>${escapeHTML(t('dashboard.toolsFound', {count:state.tools.length}))}</strong><p>${escapeHTML(t('dashboard.openTools'))} ${escapeHTML(t('protectionTruth'))}</p></div>`;
   else next.innerHTML = `<span class="step-number">✓</span><div><strong>${escapeHTML(t('dashboard.toolsConfigured', {count:state.agents.length}))}</strong><p>${escapeHTML(t('dashboard.activeSessions', {count:sessionCount()}))}</p></div>`;
 }
@@ -311,7 +317,7 @@ function renderTools() {
     const launchAction = desktopProcess
       ? `<button class="tool-action tool-launch${protectedRunning ? ' is-running' : ''}" data-launch-codex-desktop="${name}" aria-label="${escapeHTML(protectedRunning ? processLabel : t('launchDesktop'))}" title="${escapeHTML(protectedRunning ? processLabel : running === true ? t('process.restartHint') : t('launchDesktop'))}"${protectedRunning ? ' disabled' : ''}>${playIcon}<span>${escapeHTML(protectedRunning ? t('process.running') : running === true ? t('process.restart') : t('launch'))}</span></button>`
       : '';
-    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>${processState}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}" aria-label="${escapeHTML(t('inspect'))}" title="${escapeHTML(t('inspect'))}">${infoIcon}</button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
+    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>${processState}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}">${infoIcon}<span>${escapeHTML(t('tool.viewProtection'))}</span></button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
   }).join('');
   applyDashboardSearch();
   renderOverviewTools();
@@ -336,14 +342,38 @@ function actionLabel(action) {
   return translateValue('actions', action || 'processed');
 }
 
+function findingLabel(value) {
+  return localizedValue(value, 'findingTypes');
+}
+
+function eventReason(event) {
+  const errorCode = String(event.error_code || '');
+  if (errorCode) {
+    const reason = localizedValue(errorCode, 'errorCodes');
+    return reason === errorCode ? errorCode : t('activity.errorReason', {code:errorCode, reason});
+  }
+  const findings = array(event.finding_types);
+  if (event.action === 'block') {
+    return findings.length
+      ? t('activity.blockedBecause', {reason:findingLabel(findings[0]), count:Number(event.finding_count || findings.length)})
+      : t('activity.blockedByPolicy');
+  }
+  if (findings.length) return t('activity.detectedBecause', {reason:findingLabel(findings[0]), count:Number(event.finding_count || findings.length)});
+  return event.protocol || t('activity.localProcessing');
+}
+
+function eventMeta(event) {
+  return `${t('activity.findings', {count:Number(event.finding_count || 0)})} · ${event.protocol || t('activity.localProcessing')}`;
+}
+
 function renderActivity() {
   $('#approval-list').innerHTML = state.approvals.map(item => `<article class="approval-card"><strong>${escapeHTML(t('activity.confirmRequired'))}</strong><p>${escapeHTML(object(item.finding).category || t('activity.sensitiveContent'))}</p><div class="row-actions"><button class="button primary" data-decision="redact" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.redact'))}</button><button class="button" data-decision="allow" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.allow'))}</button><button class="button" data-decision="block" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.block'))}</button></div></article>`).join('');
   const list = $('#activity-list');
   if (!state.audit.length) list.innerHTML = `<div class="empty-state"><div class="empty-icon">✓</div><div><strong>${t('noActivity')}</strong><p>${t('noActivityHelp')}</p></div></div>`;
-  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p>${escapeHTML(t('activity.findings', {count:Number(event.finding_count || 0)}))} · ${escapeHTML(event.protocol || t('activity.localProcessing'))}</p>${event.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(event.preview)}</p>` : ''}</div><time>${formatTime(event.timestamp)}</time></article>`).join('');
+  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item action-${escapeHTML(event.action || 'processed')}"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p class="event-reason">${escapeHTML(eventReason(event))}</p><p class="event-meta">${escapeHTML(eventMeta(event))}</p>${event.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(event.preview)}</p>` : ''}</div><time>${formatTime(event.timestamp)}</time></article>`).join('');
   const latest = state.audit[state.audit.length - 1];
   $('#overview-activity').innerHTML = latest
-    ? `<div class="empty-icon">✓</div><div><strong>${escapeHTML(actionLabel(latest.action))} · ${escapeHTML(latest.agent_id || 'Agent')}</strong><p>${escapeHTML(t('activity.latestSummary', {time:formatTime(latest.timestamp), count:Number(latest.finding_count || 0)}))}</p></div>`
+    ? `<div class="empty-icon">✓</div><div><strong>${escapeHTML(actionLabel(latest.action))} · ${escapeHTML(latest.agent_id || 'Agent')}</strong><p>${escapeHTML(eventReason(latest))}</p><small class="event-meta">${escapeHTML(formatTime(latest.timestamp))} · ${escapeHTML(eventMeta(latest))}</small></div>`
     : `<div class="empty-icon">✓</div><div><strong>${t('noActivity')}</strong><p>${t('noActivityHelp')}</p></div>`;
   applyDashboardSearch();
 }
@@ -449,9 +479,24 @@ async function applyLocale(locale) {
 
 function applyDashboardSearch() {
   const query = ($('#dashboard-search')?.value || '').trim().toLocaleLowerCase(state.locale);
-  $$('.tool-card, .timeline-item, .approval-card').forEach(node => {
-    node.hidden = Boolean(query) && !node.textContent.toLocaleLowerCase(state.locale).includes(query);
-  });
+  const panel = $('#dashboard-search-results'), input = $('#dashboard-search');
+  if (!query) {
+    panel.hidden = true;
+    panel.innerHTML = '';
+    input.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  const includes = value => String(value || '').toLocaleLowerCase(state.locale).includes(query);
+  const tools = state.tools.filter(tool => includes([tool.agent, agentLabel(tool.agent), tool.version, tool.status].join(' '))).slice(0, 6);
+  const events = [...state.audit].reverse().filter(event => includes([
+    event.agent_id, event.action, actionLabel(event.action), event.error_code,
+    eventReason(event), event.protocol, ...array(event.finding_types)
+  ].join(' '))).slice(0, 6);
+  const toolRows = tools.map(tool => `<button class="search-result" data-search-tool="${escapeHTML(tool.agent)}"><span class="search-result-icon">${escapeHTML(tool.agent.slice(0, 1))}</span><span><strong>${escapeHTML(agentLabel(tool.agent))}</strong><small>${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</small></span><span class="search-result-action">${escapeHTML(t('tool.viewProtection'))} →</span></button>`).join('');
+  const eventRows = events.map(event => `<button class="search-result" data-search-event><span class="search-result-icon event">◎</span><span><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><small>${escapeHTML(eventReason(event))}</small></span><time>${escapeHTML(formatTime(event.timestamp))}</time></button>`).join('');
+  panel.innerHTML = `${toolRows ? `<section><h2>${escapeHTML(t('search.apps'))}</h2>${toolRows}</section>` : ''}${eventRows ? `<section><h2>${escapeHTML(t('search.events'))}</h2>${eventRows}</section>` : ''}${!toolRows && !eventRows ? `<div class="search-empty"><strong>${escapeHTML(t('search.noResults'))}</strong><p>${escapeHTML(t('search.noResultsHint'))}</p></div>` : ''}`;
+  panel.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
 }
 
 $('#refresh').onclick = loadAll; $('#scan-tools').onclick = loadAll;
@@ -466,6 +511,10 @@ document.addEventListener('keydown', event => {
     event.preventDefault();
     $('#dashboard-search').focus();
   }
+  if (event.key === 'Escape') {
+    $('#dashboard-search').value = '';
+    applyDashboardSearch();
+  }
 });
 $('#advanced-toggle').onchange = event => { $('#advanced-nav').hidden = !event.currentTarget.checked; if (!event.currentTarget.checked && $('.nav-item.active')?.dataset.page === 'advanced') navigate('settings'); };
 $$('[data-protection-setting]').forEach(input => { input.onchange = () => updateProtectionSetting(input); });
@@ -473,10 +522,12 @@ $('#private-key-action').onchange = event => updatePrivateKeyAction(event.curren
 $('#developer-enabled').onchange = event => updateDeveloperSettings({enabled:event.currentTarget.checked, capture_request_bodies:object(state.developerSettings).capture_request_bodies});
 $('#developer-capture-bodies').onchange = event => updateDeveloperSettings({enabled:true, capture_request_bodies:event.currentTarget.checked});
 document.body.onclick = event => {
-  const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]');
+  const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]'), searchTool = event.target.closest('[data-search-tool]'), searchEvent = event.target.closest('[data-search-event]');
   if (nav) navigate(nav.dataset.page); if (go) navigate(go.dataset.go); if (inspect) inspectTool(inspect.dataset.inspect);
   if (decision) decide(decision.dataset.approval, decision.dataset.decision).catch(() => loadAll());
   if (launchCodex) startProtectedCodexDesktop(launchCodex);
+  if (searchTool) { inspectTool(searchTool.dataset.searchTool); $('#dashboard-search').value = ''; applyDashboardSearch(); }
+  if (searchEvent) { navigate('activity'); $('#dashboard-search').value = ''; applyDashboardSearch(); }
 };
 
 async function startDesktop() {

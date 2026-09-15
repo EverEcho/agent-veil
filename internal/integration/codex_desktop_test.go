@@ -60,7 +60,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := os.WriteFile(agent.Executable, []byte("binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	plan, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,13 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"model_provider = \"openai\"", "127.0.0.1:9191/route/primary/v1/__veil/veil-v1:session-0123456789:", "openai_base_url", "enable_request_compression = false", "features.apps = false"} {
+	for _, required := range []string{"model_provider = \"agentveil\"", "127.0.0.1:9191/route/primary/v1", "supports_websockets = false", "requires_openai_auth = true", "enable_request_compression = false", "features.apps = false", "env_http_headers"} {
 		if !strings.Contains(string(config), required) {
 			t.Fatalf("config missing %q: %s", required, config)
 		}
 	}
-	if strings.Contains(string(config), "agentveil") || strings.Contains(string(config), "model_providers") {
-		t.Fatalf("config persists a temporary custom provider: %s", config)
+	if strings.Contains(string(config), "openai_base_url") {
+		t.Fatalf("config uses the WebSocket-capable built-in provider: %s", config)
 	}
 	if strings.Contains(string(config), "allow_symlinked_codex_home") {
 		t.Fatalf("config weakened symlinked writable-root protection: %s", config)
@@ -124,7 +124,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if artifact, err := os.ReadFile(filepath.Join(home, "visualizations", "protected-artifact")); err != nil || string(artifact) != "protected artifact" {
 		t.Fatalf("protected visualization did not survive retirement: %q %v", artifact, err)
 	}
-	second, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	second, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,10 +158,17 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	}
 }
 
-func TestCodexDesktopConfigUsesBuiltInProviderWithPathCapability(t *testing.T) {
-	config := renderCodexDesktopConfig("http://127.0.0.1:9191/route/primary/v1", "session-0123456789", strings.Repeat("t", 32))
-	if !strings.Contains(config, `model_provider = "openai"`) || !strings.Contains(config, `openai_base_url = "http://127.0.0.1:9191/route/primary/v1/__veil/veil-v1:session-0123456789:`) || strings.Contains(config, "model_providers") || strings.Contains(config, "agentveil") {
-		t.Fatalf("built-in provider configuration is invalid: %s", config)
+func TestCodexDesktopConfigDisablesWebSockets(t *testing.T) {
+	config := renderCodexDesktopConfig("http://127.0.0.1:9191/route/primary/v1", false)
+	if !strings.Contains(config, `model_provider = "agentveil"`) || !strings.Contains(config, `base_url = "http://127.0.0.1:9191/route/primary/v1"`) || !strings.Contains(config, "supports_websockets = false") || !strings.Contains(config, "requires_openai_auth = true") {
+		t.Fatalf("protected provider configuration is invalid: %s", config)
+	}
+}
+
+func TestCodexDesktopAPIKeyConfigDoesNotRequireStoredLogin(t *testing.T) {
+	config := renderCodexDesktopConfig("http://127.0.0.1:9191/route/primary/v1", true)
+	if !strings.Contains(config, `env_key = "OPENAI_API_KEY"`) || strings.Contains(config, "requires_openai_auth") {
+		t.Fatalf("API-key configuration is invalid: %s", config)
 	}
 }
 

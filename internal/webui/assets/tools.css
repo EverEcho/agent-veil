@@ -52,8 +52,8 @@
 }
 
 .tool-info {
-  width: 38px;
-  padding: 0;
+  min-width: 38px;
+  padding: 0 12px;
 }
 
 .tool-launch-result {

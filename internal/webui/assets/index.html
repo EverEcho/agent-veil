@@ -41,8 +41,11 @@
     <main id="main" tabindex="-1">
       <header class="topbar">
         <button id="menu-button" class="icon-button menu-button" aria-label="打开菜单" data-i18n-aria="shell.openMenu">☰</button>
-        <label class="command-search" for="dashboard-search"><span aria-hidden="true">⌕</span><input id="dashboard-search" type="search" autocomplete="off" placeholder="搜索应用或保护记录…" data-i18n-placeholder="shell.searchPlaceholder"><kbd>⌘ K</kbd></label>
-        <div class="top-actions"><span id="channel-badge" class="channel-badge">DEV</span><span id="protection-badge" class="protection-badge"><i></i><span id="protection-badge-label">本机防护已开启</span></span><button id="refresh" class="button quiet" data-i18n="shell.refresh">刷新状态</button></div>
+        <div class="search-shell">
+          <label class="command-search" for="dashboard-search"><span aria-hidden="true">⌕</span><input id="dashboard-search" type="search" autocomplete="off" placeholder="搜索应用或保护记录…" data-i18n-placeholder="shell.searchPlaceholder" aria-controls="dashboard-search-results" aria-expanded="false"><kbd>⌘ K</kbd></label>
+          <div id="dashboard-search-results" class="search-results" role="region" aria-live="polite" hidden></div>
+        </div>
+        <div class="top-actions"><span id="channel-badge" class="channel-badge">DEV</span><span id="protection-badge" class="protection-badge"><i></i><span id="protection-badge-label">Privacy Core</span></span><button id="refresh" class="button quiet" data-i18n="shell.refresh">刷新状态</button></div>
       </header>
 
       <div id="notice" class="notice" hidden role="status"></div>
@@ -53,10 +56,10 @@
           <div class="hero-orbit" aria-hidden="true"><i></i><span class="shield"><b>✓</b></span></div>
         </article>
         <div class="metric-grid">
-          <article class="metric metric-purple"><span class="metric-icon">▦</span><div><span data-i18n="shell.metricInstalled">已发现工具</span><strong id="metric-installed">—</strong><small data-i18n="shell.metricInstalledHint">本机支持的 AI 工具</small></div></article>
-          <article class="metric metric-green"><span class="metric-icon">◇</span><div><span data-i18n="shell.metricProtected">已加入保护</span><strong id="metric-protected">—</strong><small data-i18n="shell.metricProtectedHint">已建立保护配置</small></div></article>
-          <article class="metric metric-blue"><span class="metric-icon">↗</span><div><span data-i18n="shell.metricSessions">正在保护</span><strong id="metric-sessions">—</strong><small data-i18n="shell.metricSessionsHint">当前运行的任务</small></div></article>
-          <article class="metric metric-orange"><span class="metric-icon">!</span><div><span data-i18n="shell.metricActions">需要确认</span><strong id="metric-actions">—</strong><small data-i18n="shell.metricActionsHint">等待你的决定</small></div></article>
+          <article class="metric metric-purple"><span class="metric-icon">①</span><div><span data-i18n="shell.metricInstalled">已发现</span><strong id="metric-installed">—</strong><small data-i18n="shell.metricInstalledHint">本机检测到的 AI 应用</small></div></article>
+          <article class="metric metric-green"><span class="metric-icon">②</span><div><span data-i18n="shell.metricProtected">可接入</span><strong id="metric-protected">—</strong><small data-i18n="shell.metricProtectedHint">版本已验证、可查看保护方案</small></div></article>
+          <article class="metric metric-blue"><span class="metric-icon">③</span><div><span data-i18n="shell.metricSessions">已配置</span><strong id="metric-sessions">—</strong><small data-i18n="shell.metricSessionsHint">已注册保护路由的应用</small></div></article>
+          <article class="metric metric-orange"><span class="metric-icon">④</span><div><span data-i18n="shell.metricActions">活跃任务</span><strong id="metric-actions">—</strong><small data-i18n="shell.metricActionsHint">当前通过 AgentVeil 运行</small></div></article>
         </div>
         <div class="overview-grid">
           <section class="dashboard-panel app-preview-panel">

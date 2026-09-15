@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/agentveil/agentveil/internal/domain"
-	veilproxy "github.com/agentveil/agentveil/internal/proxy"
 )
 
 const codexDesktopMarker = ".agentveil-codex-desktop-launch"
@@ -25,7 +23,7 @@ const maxCodexDesktopHomeEntries = 4096
 
 // PrepareCodexDesktopLaunch creates an isolated Codex home for the official
 // desktop application. The user's Codex configuration is never modified.
-func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, protectedRoot, baseURL string, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
+func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, protectedRoot, baseURL string, hasAPIKey bool, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
 	if agent.Kind != "codex-desktop" {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "agent kind is not Codex Desktop")
 	}
@@ -57,7 +55,7 @@ func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, so
 	if err := linkCodexDesktopState(sourceHome, protectedHome); err != nil {
 		return fail(err)
 	}
-	config := renderCodexDesktopConfig(baseURL, sessionID, routeToken)
+	config := renderCodexDesktopConfig(baseURL, hasAPIKey)
 	if err := writePrivateFile(filepath.Join(protectedHome, "config.toml"), []byte(config)); err != nil {
 		return fail(err)
 	}
@@ -141,13 +139,23 @@ func codexDesktopPrivateOrRuntimeEntry(name string) bool {
 	}
 }
 
-func renderCodexDesktopConfig(baseURL, sessionID, routeToken string) string {
-	capabilityBaseURL := strings.TrimRight(baseURL, "/") + "/__veil/" + url.PathEscape(veilproxy.EncodeCapability(sessionID, routeToken))
-	return fmt.Sprintf(`model_provider = "openai"
-openai_base_url = %q
+func renderCodexDesktopConfig(baseURL string, hasAPIKey bool) string {
+	auth := "requires_openai_auth = true"
+	if hasAPIKey {
+		auth = `env_key = "OPENAI_API_KEY"`
+	}
+	return fmt.Sprintf(`model_provider = "agentveil"
 features.enable_request_compression = false
 features.apps = false
-`, capabilityBaseURL)
+
+[model_providers.agentveil]
+name = "AgentVeil protected Codex Desktop"
+base_url = %q
+wire_api = "responses"
+%s
+supports_websockets = false
+env_http_headers = { "X-Veil-Session" = "VEIL_SESSION_ID", "X-Veil-Route-Token" = "VEIL_PROTECTION_TOKEN" }
+`, baseURL, auth)
 }
 
 func readCodexDesktopAuth(path string) ([]byte, bool, error) {

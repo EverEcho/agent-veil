@@ -36,13 +36,35 @@ func TestDashboardToolCardsExposeInfoAndProtectedDesktopLaunch(t *testing.T) {
 		t.Fatal("app asset was not served")
 	}
 	body := app.Body.String()
-	for _, want := range []string{`class="tool-action tool-info"`, `data-launch-codex-desktop`, `class="tool-card-actions"`, `codex_desktop_running`, `codex_desktop_protected`, `t('process.restart')`, `from './i18n.js'`, `t('tool.description')`} {
+	for _, want := range []string{`class="tool-action tool-info"`, `data-launch-codex-desktop`, `class="tool-card-actions"`, `codex_desktop_running`, `codex_desktop_protected`, `t('process.restart')`, `from './i18n.js'`, `t('tool.description')`, `t('tool.viewProtection')`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("app asset does not contain %q", want)
 		}
 	}
 	if strings.Contains(body, `id="launch-codex-result"`) || strings.Contains(body, `在终端运行 <code>veil run`) {
 		t.Fatal("tool detail still contains launch controls")
+	}
+}
+
+func TestDashboardExposesTruthfulStatusFunnelReasonsAndGroupedSearch(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("dashboard was not served")
+	}
+	for _, want := range []string{`id="dashboard-search-results"`, `aria-controls="dashboard-search-results"`, `data-i18n="shell.metricInstalled"`, `data-i18n="shell.metricActions"`, `>Privacy Core</span>`} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Fatalf("dashboard shell is missing %q", want)
+		}
+	}
+
+	app := httptest.NewRecorder()
+	if !Serve(app, httptest.NewRequest("GET", "/app.js", nil)) {
+		t.Fatal("app asset was not served")
+	}
+	for _, want := range []string{`tool.status === 'verified'`, `state.agents.length`, `sessionCount()`, `event.error_code`, `event.finding_types`, `t('search.apps')`, `data-search-tool`, `data-search-event`} {
+		if !strings.Contains(app.Body.String(), want) {
+			t.Fatalf("dashboard behavior is missing %q", want)
+		}
 	}
 }
 
