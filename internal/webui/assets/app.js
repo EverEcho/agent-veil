@@ -39,6 +39,12 @@ function surfaceLabel(value) {
   return translatedName === raw ? translatePrefix('surfacePrefixes', raw) : translatedName;
 }
 
+function applyStaticTranslations() {
+  $$('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+  $$('[data-i18n-placeholder]').forEach(node => { node.placeholder = t(node.dataset.i18nPlaceholder); });
+  $$('[data-i18n-aria]').forEach(node => { node.setAttribute('aria-label', t(node.dataset.i18nAria)); });
+}
+
 function protectionScopeRows(surfaces, coverage) {
   const surfaceByID = new Map(surfaces.map(surface => [surface.id, surface]));
   const entries = coverage.map(item => ({item, surface: object(surfaceByID.get(item.surface_id))}));
@@ -249,12 +255,16 @@ function renderHealth() {
   const health = object(state.health), good = health.status === 'ok';
   $('#sidebar-dot').className = `status-dot ${good ? 'good' : 'bad'}`;
   $('#sidebar-status').textContent = good ? t('connected') : t('degraded');
+  $('#protection-badge').className = `protection-badge ${good ? 'good' : 'bad'}`;
+  $('#protection-badge-label').textContent = good ? t('shell.protectionEnabled') : t('shell.protectionUnavailable');
+  $('#live-indicator').className = `live-indicator ${good ? 'good' : 'bad'}`;
+  $('#live-indicator-label').textContent = good ? t('shell.live') : t('shell.waitingForCore');
   $('#hero-pill').className = `pill ${good ? 'good' : 'bad'}`;
-  $('#hero-pill').textContent = good ? 'CORE OK' : '需要检查';
-  $('#hero-title').textContent = good ? 'AgentVeil 正在保护这台电脑' : 'AgentVeil 需要你的注意';
+  $('#hero-pill').textContent = good ? t('dashboard.coreOK') : t('dashboard.needsAttention');
+  $('#hero-title').textContent = good ? t('dashboard.protectingDevice') : t('dashboard.attentionTitle');
   $('#hero-copy').textContent = good
-    ? 'Privacy Core 正常运行，所有检测和处理都在本机完成。'
-    : '部分保护能力暂不可用，请导出诊断信息后重新启动 AgentVeil。';
+    ? t('dashboard.healthyCopy')
+    : t('dashboard.degradedCopy');
 }
 
 function sessionCount() {
@@ -269,8 +279,8 @@ function renderMetrics() {
   $('#nav-tool-count').textContent = state.tools.length;
   const next = $('#next-step');
   if (!state.tools.length) next.innerHTML = `<span class="step-number">!</span><div><strong>${t('noTools')}</strong><p>${t('noToolsHelp')}</p></div>`;
-  else if (!state.agents.length) next.innerHTML = `<span class="step-number">1</span><div><strong>已发现 ${state.tools.length} 个工具</strong><p>打开“我的工具”查看保护能力。${t('protectionTruth')}</p></div>`;
-  else next.innerHTML = `<span class="step-number">✓</span><div><strong>${state.agents.length} 个工具已建立保护配置</strong><p>当前有 ${sessionCount()} 个任务正在通过 AgentVeil 运行。</p></div>`;
+  else if (!state.agents.length) next.innerHTML = `<span class="step-number">1</span><div><strong>${escapeHTML(t('dashboard.toolsFound', {count:state.tools.length}))}</strong><p>${escapeHTML(t('dashboard.openTools'))} ${escapeHTML(t('protectionTruth'))}</p></div>`;
+  else next.innerHTML = `<span class="step-number">✓</span><div><strong>${escapeHTML(t('dashboard.toolsConfigured', {count:state.agents.length}))}</strong><p>${escapeHTML(t('dashboard.activeSessions', {count:sessionCount()}))}</p></div>`;
 }
 
 function registeredFor(tool) {
@@ -284,6 +294,7 @@ function renderTools() {
   const grid = $('#tool-grid');
   if (!state.tools.length) {
     grid.innerHTML = `<div class="empty-state"><div class="empty-icon">?</div><div><strong>${t('noTools')}</strong><p>${t('noToolsHelp')}</p></div></div>`;
+    renderOverviewTools();
     return;
   }
   grid.innerHTML = state.tools.map(tool => {
@@ -302,21 +313,39 @@ function renderTools() {
       : '';
     return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>${processState}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}" aria-label="${escapeHTML(t('inspect'))}" title="${escapeHTML(t('inspect'))}">${infoIcon}</button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
   }).join('');
+  applyDashboardSearch();
+  renderOverviewTools();
+}
+
+function renderOverviewTools() {
+  const preview = $('#overview-tools');
+  if (!preview) return;
+  const tools = state.tools.slice(0, 6);
+  if (!tools.length) {
+    preview.innerHTML = `<div class="empty-state compact"><div class="empty-icon">?</div><div><strong>${escapeHTML(t('noTools'))}</strong><p>${escapeHTML(t('noToolsHelp'))}</p></div></div>`;
+    return;
+  }
+  preview.innerHTML = tools.map(tool => {
+    const registered = registeredFor(tool);
+    const status = registered ? t('protected') : tool.status === 'verified' ? t('verified') : t('unverified');
+    return `<button class="overview-tool-row" data-go="tools"><span class="tool-icon">${escapeHTML(tool.agent.slice(0, 1))}</span><span><strong>${escapeHTML(agentLabel(tool.agent))}</strong><small>${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</small></span><span class="pill ${registered ? 'good' : 'neutral'}">${escapeHTML(status)}</span></button>`;
+  }).join('');
 }
 
 function actionLabel(action) {
-  return ({allow:'已放行', redact:'已脱敏', block:'已阻止', ask:'等待确认'}[action] || action || '已处理');
+  return translateValue('actions', action || 'processed');
 }
 
 function renderActivity() {
-  $('#approval-list').innerHTML = state.approvals.map(item => `<article class="approval-card"><strong>需要你的确认</strong><p>${escapeHTML(object(item.finding).category || '检测到敏感内容')}</p><div class="row-actions"><button class="button primary" data-decision="redact" data-approval="${escapeHTML(item.id)}">脱敏后继续</button><button class="button" data-decision="allow" data-approval="${escapeHTML(item.id)}">本次放行</button><button class="button" data-decision="block" data-approval="${escapeHTML(item.id)}">阻止</button></div></article>`).join('');
+  $('#approval-list').innerHTML = state.approvals.map(item => `<article class="approval-card"><strong>${escapeHTML(t('activity.confirmRequired'))}</strong><p>${escapeHTML(object(item.finding).category || t('activity.sensitiveContent'))}</p><div class="row-actions"><button class="button primary" data-decision="redact" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.redact'))}</button><button class="button" data-decision="allow" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.allow'))}</button><button class="button" data-decision="block" data-approval="${escapeHTML(item.id)}">${escapeHTML(t('activity.block'))}</button></div></article>`).join('');
   const list = $('#activity-list');
   if (!state.audit.length) list.innerHTML = `<div class="empty-state"><div class="empty-icon">✓</div><div><strong>${t('noActivity')}</strong><p>${t('noActivityHelp')}</p></div></div>`;
-  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p>发现 ${Number(event.finding_count || 0)} 项 · ${escapeHTML(event.protocol || '本地处理')}</p>${event.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(event.preview)}</p>` : ''}</div><time>${formatTime(event.timestamp)}</time></article>`).join('');
+  else list.innerHTML = [...state.audit].reverse().slice(0,100).map(event => `<article class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHTML(actionLabel(event.action))} · ${escapeHTML(event.agent_id || 'Agent')}</strong><p>${escapeHTML(t('activity.findings', {count:Number(event.finding_count || 0)}))} · ${escapeHTML(event.protocol || t('activity.localProcessing'))}</p>${event.preview ? `<p class="audit-preview"><b>${escapeHTML(t('protectedContent'))}：</b>${escapeHTML(event.preview)}</p>` : ''}</div><time>${formatTime(event.timestamp)}</time></article>`).join('');
   const latest = state.audit[state.audit.length - 1];
   $('#overview-activity').innerHTML = latest
-    ? `<div class="empty-icon">✓</div><div><strong>${escapeHTML(actionLabel(latest.action))} · ${escapeHTML(latest.agent_id || 'Agent')}</strong><p>${formatTime(latest.timestamp)}，发现 ${Number(latest.finding_count || 0)} 项敏感信息。</p></div>`
+    ? `<div class="empty-icon">✓</div><div><strong>${escapeHTML(actionLabel(latest.action))} · ${escapeHTML(latest.agent_id || 'Agent')}</strong><p>${escapeHTML(t('activity.latestSummary', {time:formatTime(latest.timestamp), count:Number(latest.finding_count || 0)}))}</p></div>`
     : `<div class="empty-icon">✓</div><div><strong>${t('noActivity')}</strong><p>${t('noActivityHelp')}</p></div>`;
+  applyDashboardSearch();
 }
 
 function formatTime(value) {
@@ -403,7 +432,6 @@ async function downloadDiagnostics() {
 function navigate(page) {
   $$('.page').forEach(node => { node.hidden = node.id !== `page-${page}`; node.classList.toggle('active-page', !node.hidden); });
   $$('.nav-item').forEach(node => node.classList.toggle('active', node.dataset.page === page));
-  const labels = t(page); $('#page-eyebrow').textContent = labels[0]; $('#page-title').textContent = labels[1];
   $('.sidebar').classList.remove('open');
   if (page === 'advanced') loadAdvanced();
 }
@@ -415,7 +443,15 @@ function configureRefresh() {
 
 async function applyLocale(locale) {
   state.locale = await setLocale(locale);
+  applyStaticTranslations();
   renderAll(); const active = $('.nav-item.active')?.dataset.page || 'overview'; navigate(active);
+}
+
+function applyDashboardSearch() {
+  const query = ($('#dashboard-search')?.value || '').trim().toLocaleLowerCase(state.locale);
+  $$('.tool-card, .timeline-item, .approval-card').forEach(node => {
+    node.hidden = Boolean(query) && !node.textContent.toLocaleLowerCase(state.locale).includes(query);
+  });
 }
 
 $('#refresh').onclick = loadAll; $('#scan-tools').onclick = loadAll;
@@ -424,6 +460,13 @@ $('#dialog-close').onclick = () => $('#tool-dialog').close();
 $('#menu-button').onclick = () => $('.sidebar').classList.toggle('open');
 $('#locale').value = state.locale; $('#locale').onchange = event => applyLocale(event.currentTarget.value).catch(() => { event.currentTarget.value = state.locale; });
 $('#auto-refresh').onchange = configureRefresh;
+$('#dashboard-search').oninput = applyDashboardSearch;
+document.addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    $('#dashboard-search').focus();
+  }
+});
 $('#advanced-toggle').onchange = event => { $('#advanced-nav').hidden = !event.currentTarget.checked; if (!event.currentTarget.checked && $('.nav-item.active')?.dataset.page === 'advanced') navigate('settings'); };
 $$('[data-protection-setting]').forEach(input => { input.onchange = () => updateProtectionSetting(input); });
 $('#private-key-action').onchange = event => updatePrivateKeyAction(event.currentTarget);

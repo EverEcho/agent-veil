@@ -90,17 +90,3 @@
   margin-top: 0;
   align-self: auto;
 }
-
-@media (prefers-color-scheme: dark) {
-  .tool-action {
-    background: #1d2535;
-    border-color: #323d52;
-    color: #aab4c7;
-  }
-
-  .tool-action:hover {
-    background: #252e40;
-    border-color: #514c9c;
-    color: #b8b3ff;
-  }
-}

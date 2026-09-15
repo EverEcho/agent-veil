@@ -3,6 +3,7 @@ package webui
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -100,6 +101,42 @@ func TestDashboardExposesOptInDeveloperTraces(t *testing.T) {
 	for _, want := range []string{"/v1/developer-settings", "/v1/developer-traces", "renderDeveloperSettings", "request_before", "finding.match_bytes"} {
 		if !strings.Contains(app.Body.String(), want) {
 			t.Fatalf("developer trace UI is missing %q", want)
+		}
+	}
+}
+
+func TestDashboardStaticCopyUsesAvailableLocaleKeys(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("dashboard was not served")
+	}
+	matcher := regexp.MustCompile(`data-i18n(?:-placeholder|-aria)?="([^"]+)"`)
+	matches := matcher.FindAllStringSubmatch(page.Body.String(), -1)
+	if len(matches) == 0 {
+		t.Fatal("dashboard does not expose localizable static copy")
+	}
+	for _, path := range []string{"/locales/zh-CN.json", "/locales/en.json"} {
+		resource := httptest.NewRecorder()
+		if !Serve(resource, httptest.NewRequest("GET", path, nil)) {
+			t.Fatalf("locale %s was not served", path)
+		}
+		var messages map[string]any
+		if err := json.Unmarshal(resource.Body.Bytes(), &messages); err != nil {
+			t.Fatalf("locale %s is invalid JSON: %v", path, err)
+		}
+		for _, match := range matches {
+			var value any = messages
+			for _, segment := range strings.Split(match[1], ".") {
+				object, ok := value.(map[string]any)
+				if !ok {
+					value = nil
+					break
+				}
+				value = object[segment]
+			}
+			if text, ok := value.(string); !ok || text == "" {
+				t.Errorf("locale %s is missing static copy key %q", path, match[1])
+			}
 		}
 	}
 }

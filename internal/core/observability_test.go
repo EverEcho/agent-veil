@@ -53,7 +53,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'self'") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "base-uri 'none'") {
 		t.Fatalf("dashboard CSP=%q", csp)
 	}
-	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "我的工具", "保护记录", "隐私保护", "敏感环境变量", "疑似未知密钥", "data-protection-setting=\"contact\"", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/tools.css\"", "href=\"/visibility.css\""} {
+	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "应用接入", "保护记录", "隐私保护", "敏感环境变量", "疑似未知密钥", "data-protection-setting=\"contact\"", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/tools.css\"", "href=\"/visibility.css\""} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("dashboard shell is missing %q", required)
 		}
