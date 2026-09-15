@@ -8,7 +8,9 @@ use std::io::Read;
 use std::time::Duration;
 use tauri::State;
 
-use crate::core_supervisor::{credentials, ready, SharedRuntime, RELEASE_CHANNEL};
+use crate::core_supervisor::{
+    credentials, launch_protected_codex, ready, SharedRuntime, RELEASE_CHANNEL,
+};
 
 pub(crate) const API_VERSION: &str = "v1";
 const MAX_REQUEST_BYTES: usize = 1 << 20;
@@ -74,6 +76,18 @@ pub(crate) fn desktop_info(runtime: State<'_, SharedRuntime>) -> DesktopInfo {
         ready: ready(&runtime),
         channel: RELEASE_CHANNEL,
     }
+}
+
+#[tauri::command]
+pub(crate) async fn launch_codex_desktop(
+    app: tauri::AppHandle,
+    runtime: State<'_, SharedRuntime>,
+) -> Result<Value, String> {
+    let runtime = runtime.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || launch_protected_codex(&app, &runtime))
+        .await
+        .map_err(|_| "Codex 桌面启动任务异常退出".to_owned())??;
+    Ok(serde_json::json!({"status": "started"}))
 }
 
 #[tauri::command]

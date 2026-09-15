@@ -152,6 +152,28 @@ func TestCodexDiscoveryUsesEffectiveMCPInventory(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopDiscoveryIsIndependentAndListsAppTools(t *testing.T) {
+	d := Discoverer{
+		System: fakeSystem{version: "codex-cli 0.154.0", mcpInventory: "[]"},
+		Verified: map[string]map[string]struct{}{
+			"codex-desktop": {"0.154.0": {}},
+		},
+	}
+	manifest, err := d.Inspect(context.Background(), "codex-desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Agent.Kind != "codex-desktop" || manifest.Agent.ID != "codex-desktop-local" || manifest.Agent.Version != "0.154.0" {
+		t.Fatalf("desktop identity was not kept separate from the CLI: %+v", manifest.Agent)
+	}
+	if len(manifest.Surfaces) != 2 || manifest.Surfaces[0].Type != domain.SurfaceModelPrimary || manifest.Surfaces[1].Type != domain.SurfaceMCPStdio || manifest.Surfaces[1].Protocol != domain.ProtocolLocalStdio {
+		t.Fatalf("desktop surfaces=%+v", manifest.Surfaces)
+	}
+	if manifest.Surfaces[1].Name != "Codex Desktop App tools" || manifest.Surfaces[1].Rewritable {
+		t.Fatalf("desktop App tools were overstated: %+v", manifest.Surfaces[1])
+	}
+}
+
 func TestCodexDiscoveryFailsClosedWhenEffectiveMCPInventoryIsUnavailable(t *testing.T) {
 	d := Discoverer{System: fakeSystem{version: "codex-cli 0.153.4", mcpErr: errors.New("inventory unavailable")}, Verified: map[string]map[string]struct{}{"codex": {"0.153.4": {}}}}
 	manifest, err := d.Inspect(context.Background(), "codex")

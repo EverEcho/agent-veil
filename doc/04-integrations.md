@@ -14,7 +14,7 @@ Integration 不实现检测、策略、Vault 或流式恢复。相同协议必�
 
 | 模式 | 场景 | 完整产品要求 |
 |---|---|---|
-| Launch | CLI Agent，由 AgentVeil 启动子进程并注入临时配置 | 完整支持 |
+| Launch | CLI 或桌面 Agent，由 AgentVeil 启动子进程并注入临时配置 | 完整支持 |
 | Attach | 已运行且支持动态配置的 Agent | 完整支持并可撤销接管 |
 | Managed | 常驻 Gateway，通过插件、Provider Bridge 或配置 API 接入 | 完整支持健康检查与重连 |
 | Native | 开源 Agent 通过 Provider/Plugin 直接注册 Surface | 优先集成方式 |
@@ -37,6 +37,8 @@ Integration 不实现检测、策略、Vault 或流式恢复。相同协议必�
 - 关闭可能绕过 HTTP 检查的 WebSocket 与请求压缩能力；
 - 拒绝会覆盖 provider、base URL、WebSocket 或 compression 的冲突参数；
 - 兼容 OpenAI API Key 与 ChatGPT/Codex 登录链路需分别做端到端验证。
+- Codex Desktop 作为独立 Integration 识别其内置 `codex app-server` 版本；macOS 使用 AgentVeil 私有的会话级 `CODEX_HOME` 启动官方 App，退出后清理，不修改 `~/.codex`；
+- 已运行的 Codex Desktop 不做伪 Attach。必须先退出，再从 AgentVeil 受保护启动；App Tools、MCP 与 Shell 子进程仍逐项展示其独立出口边界。
 
 ### Claude Code
 

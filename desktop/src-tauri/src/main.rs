@@ -16,6 +16,7 @@ fn main() {
         .manage(runtime.clone())
         .invoke_handler(tauri::generate_handler![
             bridge::desktop_info,
+            bridge::launch_codex_desktop,
             bridge::core_request
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {

@@ -406,12 +406,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
 		return
 	}
-	if len(response.Header.Values("Set-Cookie")) != 0 {
-		auditEvent.Action = domain.ActionBlock
-		auditEvent.ErrorCode = domain.ErrUnknownProtocol
-		fail(w, http.StatusBadGateway, string(domain.ErrUnknownProtocol))
-		return
-	}
+	// Provider cookies are not part of model API authentication and must never
+	// become ambient client state. Some legitimate gateways (including the
+	// ChatGPT Codex backend) still attach defensive cookies to API responses.
+	// Drop them instead of failing an otherwise inspectable response.
+	response.Header.Del("Set-Cookie")
 	responseHeaderResult, err := processResponseHeaders(response.Header, h.scanner, vault)
 	processed.Findings = append(processed.Findings, responseHeaderResult.Findings...)
 	processed.Actions = append(processed.Actions, responseHeaderResult.Actions...)

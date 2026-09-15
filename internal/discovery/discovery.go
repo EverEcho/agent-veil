@@ -33,7 +33,7 @@ const agentVersionOutputDrainGrace = 25 * time.Millisecond
 const maxConcurrentVersionProbes = 4
 const maxAgentConfigPathBytes = 4096
 
-var SupportedAgents = []string{"codex", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
+var SupportedAgents = []string{"codex", "codex-desktop", "claude", "hermes", "openclaw", "opencode", "cursor", "zed", "cline"}
 
 type DetectionStatus string
 
@@ -59,7 +59,20 @@ type System interface {
 }
 type OSSystem struct{}
 
-func (OSSystem) LookPath(name string) (string, error) { return exec.LookPath(name) }
+func (OSSystem) LookPath(name string) (string, error) {
+	if name == "codex-desktop" {
+		if runtime.GOOS != "darwin" {
+			return "", exec.ErrNotFound
+		}
+		path := "/Applications/ChatGPT.app/Contents/Resources/codex"
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return "", exec.ErrNotFound
+		}
+		return path, nil
+	}
+	return exec.LookPath(name)
+}
 func (OSSystem) Version(ctx context.Context, executable string) (string, error) {
 	if ctx == nil {
 		return "", domain.NewError(domain.ErrInvalidContract, "read agent version", "context is required")
@@ -252,7 +265,7 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		return domain.AgentManifest{}, domain.NewError(domain.ErrInvalidContract, "discover agent", "user configuration directory is unavailable or unsafe")
 	}
 	switch name {
-	case "codex":
+	case "codex", "codex-desktop":
 		codexHome := filepath.Join(home, ".codex")
 		if configuredHome, ok := d.System.LookupEnv("CODEX_HOME"); ok && configuredHome != "" {
 			var valid bool
@@ -265,6 +278,9 @@ func (d Discoverer) Inspect(ctx context.Context, name string) (domain.AgentManif
 		config.Slots, err = inspectCodex(ctx, d.System, executable, codexHome, config.ConfigSource)
 		if err != nil {
 			return domain.AgentManifest{}, err
+		}
+		if name == "codex-desktop" {
+			config.LocalMCP = append(config.LocalMCP, "Codex Desktop App tools")
 		}
 	case "claude":
 		config.ConfigSource = filepath.Join(home, ".claude", "settings.json")

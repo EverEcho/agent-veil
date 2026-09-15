@@ -143,7 +143,10 @@ func ResetHermesLaunchRoot(root string) error {
 			continue
 		}
 		if !strings.HasPrefix(entry.Name(), "agentveil-hermes-") {
-			return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "launch root contains an unknown entry")
+			// A marked root can contain data left by an older AgentVeil layout or
+			// by a user. Unknown entries are outside this cleanup contract: keep
+			// them and continue recovering known, owned Hermes sessions.
+			continue
 		}
 		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
 			return domain.NewError(domain.ErrInvalidContract, "reset Hermes launch root", "stale launch directory could not be removed")

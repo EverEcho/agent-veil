@@ -555,7 +555,7 @@ func TestProxyDoesNotPersistOrReplayCallerCookieJarState(t *testing.T) {
 	}
 }
 
-func TestProxyRejectsImplicitCookieAuthenticationState(t *testing.T) {
+func TestProxyRejectsRequestCookiesAndDropsProviderCookies(t *testing.T) {
 	for _, test := range []struct {
 		name           string
 		requestCookie  bool
@@ -564,7 +564,7 @@ func TestProxyRejectsImplicitCookieAuthenticationState(t *testing.T) {
 		wantCalls      int
 	}{
 		{name: "request cookie", requestCookie: true, wantStatus: http.StatusForbidden},
-		{name: "provider cookie", responseCookie: true, wantStatus: http.StatusBadGateway, wantCalls: 1},
+		{name: "provider cookie", responseCookie: true, wantStatus: http.StatusOK, wantCalls: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			providerCalls := 0
@@ -593,8 +593,11 @@ func TestProxyRejectsImplicitCookieAuthenticationState(t *testing.T) {
 			}
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
-			if recorder.Code != test.wantStatus || providerCalls != test.wantCalls || !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) || recorder.Header().Get("Set-Cookie") != "" {
+			if recorder.Code != test.wantStatus || providerCalls != test.wantCalls || recorder.Header().Get("Set-Cookie") != "" {
 				t.Fatalf("status=%d provider calls=%d headers=%v body=%s", recorder.Code, providerCalls, recorder.Header(), recorder.Body.String())
+			}
+			if test.requestCookie && !strings.Contains(recorder.Body.String(), string(domain.ErrUnknownProtocol)) {
+				t.Fatalf("request cookie failure body=%s", recorder.Body.String())
 			}
 		})
 	}

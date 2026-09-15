@@ -24,6 +24,7 @@ pub(crate) const RELEASE_CHANNEL: &str = match option_env!("AGENTVEIL_CHANNEL") 
 #[derive(Default)]
 pub(crate) struct CoreRuntime {
     child: Option<Child>,
+    launches: Vec<Child>,
     endpoint: String,
     token: String,
     sessions: usize,
@@ -50,6 +51,10 @@ pub(crate) fn credentials(runtime: &SharedRuntime) -> Result<(String, String), S
 
 pub(crate) fn stop_owned(runtime: &SharedRuntime) {
     if let Ok(mut value) = runtime.lock() {
+        for mut launch in value.launches.drain(..) {
+            let _ = launch.kill();
+            let _ = launch.wait();
+        }
         if let Some(mut child) = value.child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -139,7 +144,40 @@ fn open_private_log(dir: &Path) -> Result<File, String> {
     Ok(file)
 }
 
-fn core_executable(app: &AppHandle) -> Result<PathBuf, String> {
+fn open_private_launch_log(dir: &Path) -> Result<(PathBuf, File), String> {
+    let path = dir.join("codex-desktop-launch.log");
+    let mut options = OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(&path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok((path, file))
+}
+
+fn launch_failure_detail(path: &Path) -> Option<String> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.len() == 0 || metadata.len() > 64 * 1024 {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("veil: ").unwrap_or(line).to_owned())
+}
+
+pub(crate) fn core_executable(app: &AppHandle) -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os("VEIL_CORE_EXECUTABLE") {
         let path = PathBuf::from(value);
         return path
@@ -157,6 +195,58 @@ fn core_executable(app: &AppHandle) -> Result<PathBuf, String> {
         .resource_dir()
         .map_err(|e| e.to_string())
         .map(|p| p.join("resources").join(name))
+}
+
+pub(crate) fn launch_protected_codex(
+    app: &AppHandle,
+    runtime: &SharedRuntime,
+) -> Result<(), String> {
+    let (endpoint, token) = credentials(runtime)?;
+    if endpoint.is_empty() || token.is_empty() {
+        return Err("Privacy Core 尚未就绪".into());
+    }
+    {
+        let mut value = runtime.lock().map_err(|_| "Core 运行状态不可用")?;
+        let mut running = Vec::with_capacity(value.launches.len());
+        for mut launch in value.launches.drain(..) {
+            match launch.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => running.push(launch),
+            }
+        }
+        value.launches = running;
+        if !value.launches.is_empty() {
+            return Err("已有一个由 AgentVeil 启动的 Codex 桌面会话".into());
+        }
+    }
+    let executable = core_executable(app)?;
+    if !executable.is_file() {
+        return Err(format!("未找到 Privacy Core：{}", executable.display()));
+    }
+    let dir = config_dir()?;
+    let (launch_log_path, log) = open_private_launch_log(&dir)?;
+    let stderr = log.try_clone().map_err(|e| e.to_string())?;
+    let mut child = Command::new(executable)
+        .args(["run", "codex-desktop"])
+        .env("VEIL_CORE_ENDPOINT", endpoint)
+        .env("VEIL_ADMIN_TOKEN", token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|e| format!("启动 Codex 桌面保护器失败：{e}"))?;
+    thread::sleep(Duration::from_millis(350));
+    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+        let detail = launch_failure_detail(&launch_log_path)
+            .unwrap_or_else(|| format!("启动器已退出（{status}）"));
+        return Err(format!("Codex 桌面版启动失败：{detail}"));
+    }
+    runtime
+        .lock()
+        .map_err(|_| "Core 运行状态不可用")?
+        .launches
+        .push(child);
+    Ok(())
 }
 
 fn probe(

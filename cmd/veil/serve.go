@@ -50,6 +50,9 @@ func serve() (resultErr error) {
 	if err := integration.ResetHermesLaunchRoot(filepath.Join(configDir, "launches")); err != nil {
 		return fmt.Errorf("recover stale Hermes launch resources: %w", err)
 	}
+	if err := integration.ResetCodexDesktopLaunchRoot(filepath.Join(configDir, "codex-desktop-launches")); err != nil {
+		return fmt.Errorf("recover stale Codex Desktop launch resources: %w", err)
+	}
 	manager := session.NewManager()
 	server, err := core.New(manager, token)
 	if err != nil {

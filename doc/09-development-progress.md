@@ -22,8 +22,8 @@
 | Privacy Core 与本地管理面 | Core、Session、Route Capability、管理 API、健康检查、单实例、恢复与桌面 Supervisor | 自动化测试覆盖认证、生命周期、并发、撤销和崩溃状态 | 安装升级期间的 Core 迁移编排 | 系统重启、强制退出和桌面进程故障注入 | 运行生命周期已接入桌面，安装升级未闭环 |
 | 协议感知数据面 | OpenAI Chat、Responses、Anthropic、Gemini、MCP HTTP、Streamable HTTP、legacy SSE | 协议金样、流分片、错误格式和模拟 Provider 边界 | Browser、OAuth、文件传输、WebSocket 专用适配器 | 真实 Provider 与真实 Agent 端到端 | 主要模型与远程 MCP 已完成 |
 | 检测、策略与 Vault | 确定性规则、熵检测、分层策略、ASK、Placeholder、响应恢复 | Detector、Policy、Vault、响应 DLP 和隐私安全产物测试 | 正式本地语义模型运行时 | 中文模型基准、误报率、召回率和硬件档位 | 确定性链路完成，语义能力未产品化 |
-| Agent 发现 | 八类目标 Agent 的配置发现与 Surface 枚举 | 配置 fixture 与未知版本降级测试 | 动态、IDE Host、Workspace 等缺失配置入口 | 各目标 Agent 精确版本实机核对 | 发现较广，完整性仍待实机确认 |
-| Protected Launch | Linux Codex、Claude、Hermes 与 macOS Codex 启动和临时配置注入 | 指定版本 launch smoke 和崩溃清理 | 其他 Agent 与其他平台 Protected Launch | 真实请求、复杂配置和长期运行 | 当前覆盖指定版本和明确 Surface |
+| Agent 发现 | 九类目标 Integration（含独立 Codex Desktop）的配置发现与 Surface 枚举 | 配置 fixture 与未知版本降级测试 | 动态、IDE Host、Workspace 等缺失配置入口 | 各目标 Agent 精确版本实机核对 | 发现较广，完整性仍待实机确认 |
+| Protected Launch | Linux Codex、Claude、Hermes、macOS Codex CLI，以及 macOS Codex Desktop 的隔离 `CODEX_HOME`、官方 App 启动入口和崩溃清理 | 指定版本 launch smoke、Codex Desktop 内置 0.154.0 配置解析和隔离目录自动化 | 其他 Agent 与其他平台 Protected Launch | Codex Desktop 真实 Provider 请求、App Tools 出口、复杂配置和长期运行 | 当前只声明指定版本的主模型 Surface；已运行桌面 App 必须退出后重启 |
 | Attach | 通用 Attach SDK、短期 Route 能力轮换、租约、失败恢复与撤销 | Core 集成自动化 | 各目标 Agent 动态配置适配器 | 所有目标 Agent Attach 实机 | 通用安全生命周期已完成，Agent 适配待接入 |
 | Managed、Native、Nested | Managed Manifest Monitor、Native SDK、lease/heartbeat、父子 Session | 自动化集成与调用树测试 | OpenClaw Gateway、ACP、Provider Plugin 等产品集成 | 真实 Managed/Native Agent | 通用底座完成，产品集成不足 |
 | MCP | HTTP、Streamable HTTP、legacy SSE 双端点保护、stdio Local 建模 | 请求/响应/流、能力绑定、Vault、撤销和 Provider 边界 | stdio 子进程跨平台连接前阻断 | 真实远程 MCP、重连和长连接运行 | 远程 MCP 核心数据面完成 |
@@ -102,6 +102,7 @@
 | Agent | 已开发 | 已验证 | 待开发 | 待验证 |
 |---|---|---|---|---|
 | Codex | 按实际选中 Provider 解析 API Key、ChatGPT 登录上游和自定义 Base URL；通过 CLI 最终生效清单枚举配置与插件提供的 MCP；Linux/macOS 默认 OpenAI/ChatGPT 主模型 Protected Launch | Linux 0.153.4 API Key/ChatGPT 与 macOS 0.153.4 ChatGPT `--help` launch smoke；自定义 Provider 和远程 MCP 保守降级测试 | Codex 远程 MCP 改写、自定义 Header/Query/Signer、跨平台进程出口强制 | 真实 Provider 请求、其他版本和 Windows |
+| Codex Desktop | 独立发现官方 App 内置 app-server；AgentVeil 私有会话级 `CODEX_HOME`；复制登录状态但不修改原配置；GUI 受保护启动按钮；退出与崩溃残留清理 | macOS 内置 0.154.0 接受 Provider/WebSocket/压缩配置；Manifest 将主模型与本机 App Tools/MCP 分开 | Windows、GUI 已运行检测跨平台化、App Tools 出口接管、macOS pre-connect 阻断 | 真实 GUI Provider 往返、应用升级、异常退出和长期运行 | 当前只能声明主模型 Route；本机 App Tools、MCP 和 Shell 子进程不是内容保护 |
 | Claude Code | 配置发现、API Key Protected Launch | Linux 2.1.220 `--help` launch smoke | OAuth 能力注入与验证 | OAuth、真实 Anthropic 请求和其他平台 |
 | Hermes | 主模型、辅助、Vision、Fallback、Delegation、远程 MCP 配置改写 | Linux 0.20.6 多 Surface 和 legacy SSE 自动化 | 更多 Provider 与特殊 transport | 真实复杂配置、远程 MCP 和长期运行 |
 | OpenClaw | 模型、MCP、ACP、Browser、Web Tool Surface 发现 | 配置 fixture | Provider Bridge、Gateway、Plugin 和 Protected 接入 | 真实版本与嵌套运行 |

@@ -33,11 +33,25 @@ type protectedEgressBinding struct {
 }
 
 func runProtected(ctx context.Context, name string, childArgs []string, interactive bool) (resultErr error) {
-	if name != "codex" && name != "claude" && name != "hermes" {
+	if name != "codex" && name != "codex-desktop" && name != "claude" && name != "hermes" {
 		return fmt.Errorf("protected launch for %s is not verified", name)
 	}
-	if name == "codex" {
+	if name == "codex" || name == "codex-desktop" {
 		if err := validateCodexProtectedArgs(childArgs); err != nil {
+			return err
+		}
+	}
+	var desktopExecutable string
+	if name == "codex-desktop" {
+		if len(childArgs) != 0 {
+			return errors.New("Codex Desktop protected launch does not accept child arguments")
+		}
+		var err error
+		desktopExecutable, err = codexDesktopExecutable()
+		if err != nil {
+			return err
+		}
+		if err := ensureCodexDesktopStopped(desktopExecutable); err != nil {
 			return err
 		}
 	}
@@ -144,6 +158,16 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		}
 		launchRoot := filepath.Join(userConfigDir, "agentveil", "launches")
 		launch, err = integration.PrepareHermesLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken, filepath.Dir(configPath), launchRoot, rewritten, runtimeEnvironment)
+	} else if name == "codex-desktop" {
+		configPath, pathErr := codexManifestConfigPath(manifest)
+		if pathErr != nil {
+			return pathErr
+		}
+		configDir, configErr := os.UserConfigDir()
+		if configErr != nil {
+			return configErr
+		}
+		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), endpoint+"/route/"+protectedRoute.ID+"/v1", os.Getenv("OPENAI_API_KEY") != "", childArgs, endpoint, created.Session.ID, routeToken)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}
@@ -162,7 +186,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	args := launch.Args
 	if name == "codex" {
 		args = protectedCodexArgs(endpoint+"/route/"+protectedRoute.ID+"/v1", childArgs, os.Getenv("OPENAI_API_KEY") != "")
-	} else {
+	} else if name != "codex-desktop" {
 		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
 		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, routeToken)
 	}
@@ -351,6 +375,24 @@ func hermesManifestConfigPath(manifest domain.AgentManifest) (string, error) {
 	}
 	if path == "" || filepath.Base(path) != "config.yaml" {
 		return "", errors.New("Hermes manifest does not identify config.yaml")
+	}
+	return path, nil
+}
+
+func codexManifestConfigPath(manifest domain.AgentManifest) (string, error) {
+	var path string
+	for _, surface := range manifest.Surfaces {
+		if surface.ConfigSource == "" || !filepath.IsAbs(surface.ConfigSource) || strings.ContainsRune(surface.ConfigSource, 0) {
+			return "", errors.New("Codex Desktop manifest contains an invalid configuration source")
+		}
+		if path == "" {
+			path = surface.ConfigSource
+		} else if path != surface.ConfigSource {
+			return "", errors.New("Codex Desktop manifest contains ambiguous configuration sources")
+		}
+	}
+	if path == "" || filepath.Base(path) != "config.toml" {
+		return "", errors.New("Codex Desktop manifest does not identify config.toml")
 	}
 	return path, nil
 }

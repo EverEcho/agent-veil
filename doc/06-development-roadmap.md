@@ -207,6 +207,8 @@
 - 为无法显式接管的闭源客户端提供 allowlist HTTPS MITM；
 - 实现本地 CA 的生成、安全存储、安装、轮换、吊销与完整卸载；
 - 限制可拦截域名、进程、协议和 Session，禁止成为通用 MITM；
+- 将透明模式作为用户显式选择的备选方案，默认关闭；UI 必须先展示 CA、进程、域名、HTTP/3/QUIC 与证书固定风险，再请求系统权限；
+- 按顺序完成受限 CONNECT 数据面、与现有 Protocol Adapter 的单检查点接入、macOS/Windows 信任库、pre-connect 进程阻断和真实客户端验收；
 - 观察 Agent Process Tree 与 Descendants 的实际网络连接；
 - 将 Expected Route 与 Unexpected Egress 对比并告警；
 - 在平台能力允许时提供进程级阻断规则；

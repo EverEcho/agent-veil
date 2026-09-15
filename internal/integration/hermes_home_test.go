@@ -210,6 +210,26 @@ func TestResetHermesLaunchRootRemovesBoundedOwnedResidue(t *testing.T) {
 	}
 }
 
+func TestResetHermesLaunchRootPreservesUnknownEntriesInOwnedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "launches")
+	if err := ensureHermesLaunchRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	unknown := filepath.Join(root, "codex-desktop")
+	if err := os.Mkdir(unknown, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unknown, "keep"), []byte("foreign"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetHermesLaunchRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(filepath.Join(unknown, "keep")); err != nil || string(content) != "foreign" {
+		t.Fatalf("unknown entry changed: %q error=%v", content, err)
+	}
+}
+
 func TestResetHermesLaunchRootNeverClaimsOrDeletesUnknownData(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "launches")
 	if err := os.Mkdir(root, 0o700); err != nil {

@@ -43,6 +43,20 @@ func TestMatrixIsExplicitAndPlatformScoped(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopCompatibilityIsDarwinLaunchOnly(t *testing.T) {
+	records := ForAgent("codex-desktop", "0.154.0", "darwin")
+	if len(records) != 1 {
+		t.Fatalf("Codex Desktop records=%+v", records)
+	}
+	record := records[0]
+	if record.Mode != domain.ModeLaunch || record.Surface != domain.SurfaceModelPrimary || record.Protocol != domain.ProtocolOpenAIResponses || record.Coverage != domain.CoverageProtected || record.Verification != VerificationLaunchSmoke {
+		t.Fatalf("Codex Desktop compatibility=%+v", record)
+	}
+	if len(ForAgent("codex-desktop", "0.154.0", "linux")) != 0 {
+		t.Fatal("Codex Desktop compatibility leaked outside macOS")
+	}
+}
+
 func TestValidationRejectsUnsupportedProtectedProtocol(t *testing.T) {
 	invalid := Record{Agent: "agent", Version: "1.0.0", Platform: "linux", Mode: domain.ModeLaunch, Surface: domain.SurfaceMCPHTTP, Protocol: domain.ProtocolLocalStdio, Auth: domain.AuthPassthrough, Coverage: domain.CoverageProtected, Verification: VerificationLaunchSmoke, Notes: "not a remotely inspected protocol"}
 	if err := Validate([]Record{invalid}); err == nil {

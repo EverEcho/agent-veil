@@ -194,7 +194,7 @@ func parseNestedRun(args []string) (string, []string, error) {
 
 func parseProtectedRun(args []string) (string, []string, bool, error) {
 	if len(args) == 0 {
-		return "", nil, false, errors.New("usage: veil run <codex|claude|hermes> [--interactive] [-- agent arguments]")
+		return "", nil, false, errors.New("usage: veil run <codex|codex-desktop|claude|hermes> [--interactive] [-- agent arguments]")
 	}
 	name := args[0]
 	childArgs := append([]string(nil), args[1:]...)

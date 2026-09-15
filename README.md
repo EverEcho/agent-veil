@@ -129,7 +129,7 @@ requires confirmed functionality with no known bugs.
   method/path/query-preserving redirect revalidation, and preserved custom
   Gateway base paths; Provider routes neither persist nor replay caller CookieJar
   credentials;
-- version-gated Codex API-key/ChatGPT-login, Claude Code API-key, and Hermes discovery/protected launch, plus
+- version-gated Codex API-key/ChatGPT-login, macOS Codex Desktop isolated-home launch, Claude Code API-key, and Hermes discovery/protected launch, plus
   a discovery-only Cursor compatibility record; protected children receive
   only fresh Session/parent/route capabilities and never inherit the Core
   management token;
@@ -329,6 +329,7 @@ go run ./cmd/veil inspect cline
 go run ./cmd/veil inspect cursor
 go run ./cmd/veil run codex -- --help
 go run ./cmd/veil run codex --interactive -- exec "review this change"
+go run ./cmd/veil run codex-desktop
 go run ./cmd/veil run hermes -- --help
 go run ./cmd/veil nested codex -- exec "review delegated work"
 ```

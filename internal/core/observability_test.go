@@ -67,7 +67,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	}{
 		{path: "/styles.css", contentType: "text/css; charset=utf-8", required: []string{".app-shell", ".tool-grid", "prefers-reduced-motion"}},
 		{path: "/visibility.css", contentType: "text/css; charset=utf-8", required: []string{"[hidden]", "!important"}},
-		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "已保护", "仅观察", "受保护启动烟测", "未知连接或协议按安全策略阻断", "保护边界：主模型连接，不是整个进程的网络防火墙", "可以保护已列出的连接"}},
+		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "保护范围", "AI 对话", "本地工具（", "当前保护什么", "可以开始保护"}},
 		{path: "/platform.js", contentType: "text/javascript; charset=utf-8", required: []string{"core_request", "browser-sessions/exchange", "credentials:'same-origin'", "X-AgentVeil-API-Version"}},
 	} {
 		recorder := httptest.NewRecorder()
@@ -80,6 +80,13 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 			if !strings.Contains(recorder.Body.String(), required) {
 				t.Fatalf("asset %s is missing %q", asset.path, required)
 			}
+		}
+	}
+	app := httptest.NewRecorder()
+	s.dashboard(app, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	for _, developerCopy := range []string{"兼容性证据", "受保护启动烟测", "保护边界：主模型连接", "可检查的连接"} {
+		if strings.Contains(app.Body.String(), developerCopy) {
+			t.Fatalf("dashboard still exposes developer copy %q", developerCopy)
 		}
 	}
 }

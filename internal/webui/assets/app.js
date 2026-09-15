@@ -1,4 +1,4 @@
-import {desktopInfo, exchangeBrowserTicket, isDesktop, requestCore} from './platform.js';
+import {desktopInfo, exchangeBrowserTicket, isDesktop, launchCodexDesktop, requestCore} from './platform.js';
 
 const state = {
   health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
@@ -17,13 +17,14 @@ const copy = {
     settings: ['偏好与诊断', '设置'], advanced: ['谨慎操作', '高级功能'],
     connected: '保护服务正常', degraded: '保护服务需要检查', offline: '无法连接保护服务',
     noTools: '没有发现支持的 AI 工具', noToolsHelp: '确认工具已安装，并从系统菜单重新启动 AgentVeil。',
-    verified: '已识别，可检查', unverified: '已发现，兼容性待确认', versionUnknown: '已发现，版本未知',
-    protected: '已加入保护', notProtected: '尚未加入保护', inspect: '查看保护能力',
+    verified: '支持保护', unverified: '暂不支持此版本', versionUnknown: '暂不支持此版本',
+    protected: '已加入保护', notProtected: '尚未加入保护', inspect: '查看详情',
     noActivity: '暂无保护记录', noActivityHelp: '启动受保护的 AI 工具后，安全处理摘要会显示在这里。',
     loadPartial: '部分信息暂时无法读取，其他模块仍可正常使用。', authFailed: '本机会话无效，或 Privacy Core 尚未启动。',
     saveOK: '策略已保存', saveFailed: '保存失败，请检查 JSON 内容', diagnosisOK: '诊断文件已导出', diagnosisFailed: '诊断导出失败',
-    surfaces: '可检查的连接', risks: '需要了解', noSurface: '没有可显示的连接信息',
-    protectionTruth: '“已发现”不代表“已保护”。只有通过 AgentVeil 启动并建立保护会话后，才会显示为正在保护。'
+    surfaces: '保护范围', risks: '需要注意', noSurface: '没有可显示的保护范围',
+    protectionTruth: '“已发现”不代表“已保护”。只有通过 AgentVeil 启动并建立保护会话后，才会显示为正在保护。',
+    launchDesktop: '受保护地启动 Codex', launchStarting: '正在创建受保护会话…', launchStarted: 'Codex 已从受保护会话启动'
   },
   en: {
     overview: ['Overview', 'Home'], tools: ['Auto discovery', 'My tools'], activity: ['On-device history', 'Protection activity'],
@@ -35,15 +36,20 @@ const copy = {
     noActivity: 'No protection activity yet', noActivityHelp: 'Safe summaries appear here after a protected AI tool runs.',
     loadPartial: 'Some information is temporarily unavailable. Other sections remain usable.', authFailed: 'The local session is invalid or Privacy Core is not running.',
     saveOK: 'Policy saved', saveFailed: 'Save failed. Check the JSON document.', diagnosisOK: 'Diagnostics exported', diagnosisFailed: 'Diagnostics export failed',
-    surfaces: 'Inspectable connections', risks: 'Things to know', noSurface: 'No connection details are available',
-    protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.'
+    surfaces: 'Protection scope', risks: 'Things to know', noSurface: 'No protection scope is available',
+    protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.',
+    launchDesktop: 'Launch protected Codex', launchStarting: 'Creating a protected session…', launchStarted: 'Codex launched in a protected session'
   }
 };
 
 function t(key) { return (copy[state.locale] || copy['zh-CN'])[key] || key; }
+function agentLabel(value) {
+  if (value === 'codex-desktop') return state.locale === 'zh-CN' ? 'Codex 桌面版' : 'Codex Desktop';
+  return value;
+}
 
 const zhCoverage = {
-  protected: '已保护', local: '仅本机', partial: '部分保护', observed: '仅观察', unprotected: '未保护'
+  protected: '已保护', local: '本机运行', partial: '部分保护', observed: '仅观察', unprotected: '未保护'
 };
 
 const zhReasons = {
@@ -104,20 +110,33 @@ function surfaceLabel(value) {
   return raw;
 }
 
-function platformLabel(value) {
-  return localizedValue(value, {darwin: 'macOS', linux: 'Linux', windows: 'Windows'});
-}
-
-function verificationLabel(value) {
-  return localizedValue(value, {launch_smoke: '受保护启动烟测', discovery_only: '仅发现验证'});
-}
-
-function compatibilityNote(record) {
-  if (state.locale !== 'zh-CN') return String(record.notes || '');
-  if (record.verification === 'launch_smoke' && record.coverage === 'protected') {
-    return `${record.agent || 'Agent'} ${record.version || ''} 已在 ${platformLabel(record.platform)} 完成受保护启动烟测；真实模型请求仍需单独验证。`;
+function protectionScopeRows(surfaces, coverage) {
+  const surfaceByID = new Map(surfaces.map(surface => [surface.id, surface]));
+  const entries = coverage.map(item => ({item, surface: object(surfaceByID.get(item.surface_id))}));
+  const local = entries.filter(({surface}) => surface.type === 'mcp_stdio');
+  const network = entries.filter(({surface}) => surface.type !== 'mcp_stdio');
+  const rows = network.map(({item, surface}) => {
+    const model = ['model_primary', 'model_auxiliary', 'model_fallback', 'vision'].includes(surface.type);
+    const name = model
+      ? state.locale === 'zh-CN' ? 'AI 对话' : 'AI conversations'
+      : surfaceLabel(surface.name || item.surface_id);
+    const description = model
+      ? item.status === 'protected'
+        ? state.locale === 'zh-CN' ? '发送给 AI 的内容和 AI 返回的内容，会先经过本机隐私检查。' : 'Messages sent to and returned by the AI pass through on-device privacy checks.'
+        : state.locale === 'zh-CN' ? '这部分内容目前还不能安全接入 AgentVeil。' : 'This content cannot yet be safely routed through AgentVeil.'
+      : reasonLabel(item.reason || object(surface.metadata).reason || '');
+    return {status:item.status, name, description};
+  });
+  if (local.length) {
+    rows.push({
+      status:'local',
+      name: state.locale === 'zh-CN' ? `本地工具（${local.length} 个）` : `Local tools (${local.length})`,
+      description: state.locale === 'zh-CN'
+        ? '这些工具在你的电脑上运行；如果它们自己联网，当前不会经过 AgentVeil。'
+        : 'These tools run on your computer. Their own network requests do not currently pass through AgentVeil.'
+    });
   }
-  return '当前仅完成工具发现验证，尚未证明该连接可以安全接管。';
+  return rows;
 }
 
 async function api(path, options = {}) {
@@ -208,7 +227,7 @@ function renderTools() {
   grid.innerHTML = state.tools.map(tool => {
     const registered = registeredFor(tool), verified = tool.status === 'verified';
     const label = registered ? t('protected') : tool.status === 'version_unknown' ? t('versionUnknown') : verified ? t('verified') : t('unverified');
-    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(tool.agent)}</h3><p class="version">版本 ${escapeHTML(tool.version || '未知')}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span><br><br>${registered ? 'AgentVeil 已保存该工具的保护配置。' : t('protectionTruth')}</p><button class="button ${verified ? 'primary' : ''}" data-inspect="${escapeHTML(tool.agent)}">${t('inspect')}</button></article>`;
+    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">版本 ${escapeHTML(tool.version || '未知')}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span></p><button class="button ${verified ? 'primary' : ''}" data-inspect="${escapeHTML(tool.agent)}">${t('inspect')}</button></article>`;
   }).join('');
 }
 
@@ -236,17 +255,31 @@ async function inspectTool(name) {
   const dialog = $('#tool-dialog'), detail = $('#tool-detail');
   detail.innerHTML = '<p class="muted">正在检查保护能力…</p>'; dialog.showModal();
   try {
-    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), surfaces = array(manifest.surfaces), coverage = array(plan.coverage), risks = array(plan.risks), compatibility = array(result.compatibility), summary = object(plan.summary);
-    const surfaceByID = new Map(surfaces.map(surface => [surface.id, surface]));
+    const result = await api(`/v1/discovery/${encodeURIComponent(name)}`), manifest = object(result.manifest), plan = object(result.protection_plan), agent = object(manifest.agent), surfaces = array(manifest.surfaces), coverage = array(plan.coverage), risks = array(plan.risks), summary = object(plan.summary);
     const fullyProtected = Number(summary.protected || 0) > 0 && Number(summary.partial || 0) === 0 && Number(summary.observed || 0) === 0 && Number(summary.unprotected || 0) === 0;
     const localMCP = surfaces.filter(surface => surface.type === 'mcp_stdio').length;
-    const scopeNotice = name === 'codex' ? `<div class="notice protection-note"><strong>保护边界：主模型连接，不是整个进程的网络防火墙</strong><p>直接运行 <code>codex</code> 不受保护；必须使用 <code>veil run codex</code>。${localMCP ? `当前还有 ${localMCP} 个本机 stdio MCP，其子进程独立联网不会经过主模型代理。` : ''} Shell 命令、插件或其他未枚举出口的独立联网不在这条主模型路线内。</p></div>` : '';
+    const scopeRows = protectionScopeRows(surfaces, coverage);
+    const scopeNotice = name === 'codex' || name === 'codex-desktop' ? `<div class="notice protection-note"><strong>当前保护什么</strong><p>AgentVeil 会检查你发给 Codex 的内容，以及 Codex 返回的内容。${localMCP ? 'Codex 使用的本地工具，以及这些工具自己发起的网络请求，暂不在保护范围内。' : ''}${name === 'codex-desktop' ? ' 启动前请先退出当前运行的 Codex。' : ' 请通过 AgentVeil 启动 Codex 才能生效。'}</p></div>` : '';
+    const launchAction = name === 'codex-desktop' && isDesktop ? `<button class="button primary" data-launch-codex-desktop>${escapeHTML(t('launchDesktop'))}</button><span id="launch-codex-result" class="inline-result"></span>` : `<p>在终端运行 <code>veil run ${escapeHTML(name)}</code>，原配置不会被改写。</p>`;
     const operation = fullyProtected
-      ? `<div class="next-step"><span class="step-number">✓</span><div><strong>可以保护已列出的连接</strong><p>在终端运行 <code>veil run ${escapeHTML(name)}</code>，原配置不会被改写。</p></div></div>`
+      ? `<div class="next-step"><span class="step-number">✓</span><div><strong>可以开始保护</strong>${launchAction}</div></div>`
       : `<div class="error-box protection-note"><strong>当前只能检查，不能安全接管</strong><p>存在 Observed、Partial 或 Unprotected 的必需连接，AgentVeil 不会静默绕过它们。</p></div>`;
-    const evidence = compatibility.length ? `<h3>兼容性证据</h3><div class="coverage-list">${compatibility.map(record => `<div class="coverage-row"><span class="pill ${record.coverage === 'protected' ? 'good' : 'warning'}">${escapeHTML(coverageLabel(record.coverage))}</span><strong> ${escapeHTML(platformLabel(record.platform))} · ${escapeHTML(verificationLabel(record.verification))}</strong><p>${escapeHTML(compatibilityNote(record))}</p></div>`).join('')}</div>` : '<p class="muted">当前版本与平台没有可声明为“已保护”的验证证据。</p>';
-    detail.innerHTML = `<p class="eyebrow">保护能力</p><h2>${escapeHTML(agent.kind || name)} <span class="muted">${escapeHTML(agent.version || '')}</span></h2><p class="muted">检查只读取配置，不会启动、关闭或接管这个工具。</p>${scopeNotice}<h3>${t('surfaces')}</h3><div class="coverage-list">${coverage.map(item => { const surface = object(surfaceByID.get(item.surface_id)), metadata = object(surface.metadata), reasons = [item.reason, metadata.reason].filter(Boolean).map(reasonLabel); return `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(coverageLabel(item.status))}</span><strong> ${escapeHTML(surfaceLabel(surface.name || item.surface_id))}</strong><p>${escapeHTML(reasons.join('；') || '暂无说明')}</p></div>`; }).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(riskLabel(risk.title || risk.code || '兼容性提示'))}</strong><p>${escapeHTML(reasonLabel(risk.message || risk.action || risk.impact || ''))}</p></div>`).join('')}</div>` : ''}${evidence}${operation}`;
+    detail.innerHTML = `<p class="eyebrow">保护能力</p><h2>${escapeHTML(agentLabel(agent.kind || name))} <span class="muted">${escapeHTML(agent.version || '')}</span></h2><p class="muted">查看不会启动或修改这个工具。</p>${scopeNotice}<h3>${t('surfaces')}</h3><div class="coverage-list">${scopeRows.map(item => `<div class="coverage-row"><span class="pill ${item.status === 'protected' ? 'good' : item.status === 'unprotected' ? 'bad' : 'warning'}">${escapeHTML(coverageLabel(item.status))}</span><strong> ${escapeHTML(item.name)}</strong><p>${escapeHTML(item.description)}</p></div>`).join('') || `<p class="muted">${t('noSurface')}</p>`}</div>${risks.length ? `<h3>${t('risks')}</h3><div class="coverage-list">${risks.map(risk => `<div class="coverage-row"><strong>${escapeHTML(riskLabel(risk.title || risk.code || '保护提示'))}</strong><p>${escapeHTML(reasonLabel(risk.message || risk.action || risk.impact || ''))}</p></div>`).join('')}</div>` : ''}${operation}`;
   } catch (error) { const message = typeof error === 'string' ? error : error?.message; detail.innerHTML = `<div class="error-box"><strong>无法检查这个工具</strong><p>${escapeHTML(message || '未修改任何原配置。')}</p></div>`; }
+}
+
+async function startProtectedCodexDesktop(button) {
+  const result = $('#launch-codex-result');
+  button.disabled = true;
+  if (result) result.textContent = t('launchStarting');
+  try {
+    await launchCodexDesktop();
+    if (result) { result.textContent = t('launchStarted'); result.className = 'inline-result success'; }
+    await loadAll();
+  } catch (error) {
+    if (result) { result.textContent = error?.message || String(error); result.className = 'inline-result failure'; }
+    button.disabled = false;
+  }
 }
 
 async function decide(id, action) {
@@ -314,9 +347,10 @@ $('#locale').value = state.locale; $('#locale').onchange = event => applyLocale(
 $('#auto-refresh').onchange = configureRefresh;
 $('#advanced-toggle').onchange = event => { $('#advanced-nav').hidden = !event.currentTarget.checked; if (!event.currentTarget.checked && $('.nav-item.active')?.dataset.page === 'advanced') navigate('settings'); };
 document.body.onclick = event => {
-  const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]');
+  const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]');
   if (nav) navigate(nav.dataset.page); if (go) navigate(go.dataset.go); if (inspect) inspectTool(inspect.dataset.inspect);
   if (decision) decide(decision.dataset.approval, decision.dataset.decision).catch(() => loadAll());
+  if (launchCodex) startProtectedCodexDesktop(launchCodex);
 };
 
 document.documentElement.dataset.agentveilUiReady = 'true';

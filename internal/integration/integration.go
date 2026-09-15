@@ -145,7 +145,7 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 			}
 		}
 	}
-	if agent.Kind == "codex" {
+	if agent.Kind == "codex" || agent.Kind == "codex-desktop" {
 		for _, arg := range args {
 			normalized := strings.ToLower(strings.TrimSpace(arg))
 			if normalized == "-p" || normalized == "--profile" || strings.HasPrefix(normalized, "--profile=") || normalized == "--oss" || normalized == "--local-provider" || strings.HasPrefix(normalized, "--local-provider=") || normalized == "--remote" || strings.HasPrefix(normalized, "--remote=") || normalized == "--remote-auth-token-env" || strings.HasPrefix(normalized, "--remote-auth-token-env=") {
@@ -158,7 +158,7 @@ func PrepareLaunch(agent domain.AgentInstance, args []string, coreEndpoint, sess
 		environment["VEIL_PARENT_SESSION"] = parentID
 	}
 	switch agent.Kind {
-	case "codex":
+	case "codex", "codex-desktop":
 		environment["OPENAI_BASE_URL"] = coreEndpoint
 		environment["CODEX_DISABLE_WEBSOCKET"] = "1"
 		environment["CODEX_DISABLE_COMPRESSION"] = "1"

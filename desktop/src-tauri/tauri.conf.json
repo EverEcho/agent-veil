@@ -6,7 +6,7 @@
   "build": { "frontendDist": "../../internal/webui/assets" },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "label": "main", "title": "AgentVeil", "width": 1180, "height": 800, "minWidth": 820, "minHeight": 600, "center": true }],
+    "windows": [{ "label": "main", "title": "AgentVeil", "url": "index.html?agentveil-runtime=desktop", "width": 1180, "height": 800, "minWidth": 820, "minHeight": 600, "center": true }],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" }
   },
   "bundle": {
