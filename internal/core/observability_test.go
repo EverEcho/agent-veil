@@ -51,7 +51,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'self'") || !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "base-uri 'none'") {
 		t.Fatalf("dashboard CSP=%q", csp)
 	}
-	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "我的工具", "保护记录", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/visibility.css\""} {
+	for _, required := range []string{"lang=\"zh-CN\"", "需要本机浏览器会话", "veil web", "我的工具", "保护记录", "隐私保护", "敏感环境变量", "疑似未知密钥", "data-protection-setting=\"contact\"", "高级功能", "src=\"/app.js\"", "href=\"/styles.css\"", "href=\"/visibility.css\""} {
 		if !strings.Contains(index.Body.String(), required) {
 			t.Fatalf("dashboard shell is missing %q", required)
 		}
@@ -67,7 +67,7 @@ func TestDashboardUsesSharedBeginnerUIWithoutProtectedData(t *testing.T) {
 	}{
 		{path: "/styles.css", contentType: "text/css; charset=utf-8", required: []string{".app-shell", ".tool-grid", "prefers-reduced-motion"}},
 		{path: "/visibility.css", contentType: "text/css; charset=utf-8", required: []string{"[hidden]", "!important"}},
-		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "保护范围", "AI 对话", "本地工具（", "当前保护什么", "可以开始保护"}},
+		{path: "/app.js", contentType: "text/javascript; charset=utf-8", required: []string{"/v1/discovery", "/v1/policy", "protectionSettingGroups", "secret.assignment", "secret.high_entropy", "Promise.all", "Array.isArray", "requestCore", "startBrowserSession", "downloadDiagnostics", "保护范围", "AI 对话", "本地工具（", "当前保护什么", "可以开始保护"}},
 		{path: "/platform.js", contentType: "text/javascript; charset=utf-8", required: []string{"core_request", "browser-sessions/exchange", "credentials:'same-origin'", "X-AgentVeil-API-Version"}},
 	} {
 		recorder := httptest.NewRecorder()

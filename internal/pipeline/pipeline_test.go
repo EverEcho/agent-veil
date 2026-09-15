@@ -59,6 +59,39 @@ func TestEscapedEmailInCodexPromptIsStillRedacted(t *testing.T) {
 	}
 }
 
+func TestEnvironmentBlockRedactsValuesWithoutDamagingVariableNames(t *testing.T) {
+	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 2048})
+	values := []string{
+		"0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+		"f1e2d3c4b5a69788796a5b4c3d2e1f00",
+		"SyntheticCloudSecret9x7v5t3r1p",
+	}
+	text := strings.Join([]string{
+		"env=dev",
+		"USER\\_AES\\_IV=" + values[0],
+		"USER\\_AES\\_KEY=" + values[1],
+		"ALIYUN\\_OSS\\_ACCESS\\_KEY\\_SECRET=" + values[2],
+		"BASE\\_URL=https://service.example.invalid/v1",
+	}, "\n")
+	result, err := ProcessText(Context{}, "/input", text, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range values {
+		if strings.Contains(result.Text, value) || strings.Contains(result.Preview, value) {
+			t.Fatalf("environment secret leaked: text=%q preview=%q", result.Text, result.Preview)
+		}
+	}
+	for _, name := range []string{"USER\\_AES\\_IV=", "USER\\_AES\\_KEY=", "ALIYUN\\_OSS\\_ACCESS\\_KEY\\_SECRET="} {
+		if !strings.Contains(result.Text, name+"[[VEIL_SECRET_ASSIGNMENT_") {
+			t.Fatalf("variable name or assignment syntax changed: %q", result.Text)
+		}
+	}
+	if !strings.Contains(result.Text, "env=dev") || !strings.Contains(result.Text, "BASE\\_URL=https://service.example.invalid/v1") {
+		t.Fatalf("ordinary environment configuration changed: %q", result.Text)
+	}
+}
+
 func TestTextIsRedactedWithoutRemovingHeaderSemantics(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 10, MaxOriginalBytes: 1024})
 	original := "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJlMTIzNDU2"

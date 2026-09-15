@@ -11,3 +11,18 @@
 .audit-preview b {
   margin-right: 6px;
 }
+
+.settings-safety-note {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 11px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.switch input:disabled + span {
+  cursor: not-allowed;
+  opacity: .55;
+}

@@ -78,14 +78,16 @@ func TestRestorePartsHandlesCrossFieldPlaceholder(t *testing.T) {
 	}
 }
 
-func TestRestoreRejectsTransformedPlaceholder(t *testing.T) {
+func TestRestoreLeavesTransformedPlaceholderOpaque(t *testing.T) {
 	v, _ := NewVault([]byte(strings.Repeat("a", 32)), Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	placeholder, _ := v.Store("email", "privacy-test@example.invalid")
 	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
-	if _, err := v.Restore("answer: " + hyphenated); err == nil {
-		t.Fatal("transformed placeholder was restored")
+	restored, err := v.Restore("answer: " + hyphenated)
+	if err != nil || restored != "answer: "+hyphenated || strings.Contains(restored, "privacy-test") {
+		t.Fatalf("transformed placeholder changed: restored=%q err=%v", restored, err)
 	}
-	if _, err := v.RestoreParts(strings.Split(hyphenated, "")); err == nil {
-		t.Fatal("cross-part transformed placeholder was restored")
+	restoredParts, err := v.RestoreParts(strings.Split(hyphenated, ""))
+	if err != nil || strings.Join(restoredParts, "") != hyphenated || strings.Contains(strings.Join(restoredParts, ""), "privacy-test") {
+		t.Fatalf("cross-part transformed placeholder changed: restored=%q err=%v", strings.Join(restoredParts, ""), err)
 	}
 }

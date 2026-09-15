@@ -42,7 +42,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := os.WriteFile(agent.Executable, []byte("binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	plan, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +54,13 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"127.0.0.1:9191/route/primary/v1", "supports_websockets = false", "enable_request_compression = false", "features.apps = false", "env_http_headers"} {
+	for _, required := range []string{"model_provider = \"openai\"", "127.0.0.1:9191/route/primary/v1/__veil/veil-v1:session-0123456789:", "openai_base_url", "enable_request_compression = false", "features.apps = false"} {
 		if !strings.Contains(string(config), required) {
 			t.Fatalf("config missing %q: %s", required, config)
 		}
+	}
+	if strings.Contains(string(config), "agentveil") || strings.Contains(string(config), "model_providers") {
+		t.Fatalf("config persists a temporary custom provider: %s", config)
 	}
 	sourceHistory, err := os.Stat(filepath.Join(source, "thread_history_1.sqlite"))
 	if err != nil {
@@ -99,10 +102,10 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	}
 }
 
-func TestCodexDesktopAPIKeyConfigDoesNotRequireStoredLogin(t *testing.T) {
-	config := renderCodexDesktopConfig("http://127.0.0.1:9191/route/primary/v1", true)
-	if !strings.Contains(config, `env_key = "OPENAI_API_KEY"`) || strings.Contains(config, "requires_openai_auth") {
-		t.Fatalf("API-key configuration is invalid: %s", config)
+func TestCodexDesktopConfigUsesBuiltInProviderWithPathCapability(t *testing.T) {
+	config := renderCodexDesktopConfig("http://127.0.0.1:9191/route/primary/v1", "session-0123456789", strings.Repeat("t", 32))
+	if !strings.Contains(config, `model_provider = "openai"`) || !strings.Contains(config, `openai_base_url = "http://127.0.0.1:9191/route/primary/v1/__veil/veil-v1:session-0123456789:`) || strings.Contains(config, "model_providers") || strings.Contains(config, "agentveil") {
+		t.Fatalf("built-in provider configuration is invalid: %s", config)
 	}
 }
 

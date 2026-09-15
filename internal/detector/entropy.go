@@ -10,7 +10,7 @@ import (
 const entropyContextBytes = 48
 
 var (
-	entropyCandidatePattern = regexp.MustCompile(`[A-Za-z0-9_~+./=-]{20,}`)
+	entropyCandidatePattern = regexp.MustCompile(`[A-Za-z0-9_~+./-]{20,}={0,2}`)
 	entropyContextTerms     = []string{"api_key", "api-key", "apikey", "client_secret", "client-secret", "clientsecret", "access_token", "access-token", "accesstoken", "secret", "token", "password", "credential", "authorization", "auth"}
 )
 
@@ -28,9 +28,15 @@ func scanEntropyCandidates(path, text string) []Match {
 		if contextStart < 0 {
 			contextStart = 0
 		}
+		if newline := strings.LastIndexAny(text[contextStart:location[0]], "\r\n"); newline >= 0 {
+			contextStart += newline + 1
+		}
 		contextEnd := location[1] + entropyContextBytes
 		if contextEnd > len(text) {
 			contextEnd = len(text)
+		}
+		if newline := strings.IndexAny(text[location[1]:contextEnd], "\r\n"); newline >= 0 {
+			contextEnd = location[1] + newline
 		}
 		context := text[contextStart:location[0]] + text[location[1]:contextEnd]
 		if !hasEntropyContext(context) {

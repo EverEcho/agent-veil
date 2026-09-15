@@ -13,7 +13,7 @@ func TestDashboardServesAuditPreviewStyles(t *testing.T) {
 	}
 
 	stylesheet := httptest.NewRecorder()
-	if !Serve(stylesheet, httptest.NewRequest("GET", "/audit.css", nil)) || stylesheet.Header().Get("Content-Type") != "text/css; charset=utf-8" || !strings.Contains(stylesheet.Body.String(), ".audit-preview") {
+	if !Serve(stylesheet, httptest.NewRequest("GET", "/audit.css", nil)) || stylesheet.Header().Get("Content-Type") != "text/css; charset=utf-8" || !strings.Contains(stylesheet.Body.String(), ".audit-preview") || !strings.Contains(stylesheet.Body.String(), ".settings-safety-note") {
 		t.Fatalf("audit preview stylesheet was not served: headers=%v body=%s", stylesheet.Header(), stylesheet.Body.String())
 	}
 }

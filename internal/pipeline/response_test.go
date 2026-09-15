@@ -58,7 +58,7 @@ func TestNonStreamingResponseProtocolMatrixRestoresPlaceholders(t *testing.T) {
 	}
 }
 
-func TestNonStreamingResponseRejectsTransformedPlaceholder(t *testing.T) {
+func TestNonStreamingResponseLeavesTransformedPlaceholderOpaque(t *testing.T) {
 	vault, err := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	if err != nil {
 		t.Fatal(err)
@@ -74,11 +74,8 @@ func TestNonStreamingResponseRejectsTransformedPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := ProcessResponse(domain.ProtocolOpenAIResponses, "application/json", body, detector.NewDefault(), vault)
-	if err == nil {
-		t.Fatalf("transformed placeholder was accepted: %s", result)
-	}
-	if strings.Contains(string(result), "1-3-1") {
-		t.Fatalf("transformed original leaked into response: %s", result)
+	if err != nil || !strings.Contains(string(result), hyphenated) || strings.Contains(string(result), "1-3-1") {
+		t.Fatalf("transformed placeholder was not passed through opaquely: result=%s err=%v", result, err)
 	}
 }
 

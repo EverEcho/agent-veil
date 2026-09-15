@@ -140,6 +140,73 @@ func TestContextualSecretsPreserveSyntax(t *testing.T) {
 	}
 }
 
+func TestSensitiveEnvironmentAssignmentsIncludingMarkdownEscapes(t *testing.T) {
+	values := []string{
+		"0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+		"f1e2d3c4b5a69788796a5b4c3d2e1f00",
+		"SyntheticCloudSecret9x7v5t3r1p",
+		"tk-synthetic-provider-key-9876543210",
+	}
+	text := strings.Join([]string{
+		"USER\\_AES\\_IV=" + values[0],
+		"USER\\_AES\\_KEY=" + values[1],
+		"ALIYUN\\_OSS\\_ACCESS\\_KEY\\_SECRET=" + values[2],
+		"OPENAI\\_API\\_KEY=" + values[3],
+	}, "\n")
+	matches := scan(t, NewDefault(), text)
+	if len(matches) != len(values) {
+		t.Fatalf("environment matches=%+v", matches)
+	}
+	for index, match := range matches {
+		if match.Finding.Category != "secret.assignment" || match.Value != values[index] {
+			t.Fatalf("environment match[%d]=%+v", index, match)
+		}
+	}
+}
+
+func TestSensitiveEnvironmentAssignmentsAvoidOrdinaryConfiguration(t *testing.T) {
+	text := strings.Join([]string{
+		"ENV=dev",
+		"BASE_URL=https://service.example.invalid/v1",
+		"BUCKET_NAME=sample-assets",
+		"CACHE_KEY=user-profile",
+		"PRIMARY_KEY=id",
+		"ENABLE_QUEUE=true",
+	}, "\n")
+	if matches := scan(t, NewDefault(), text); len(matches) != 0 {
+		t.Fatalf("ordinary configuration was treated as secret: %+v", matches)
+	}
+}
+
+func TestSensitiveEnvironmentAssignmentsDoNotDependOnEntropy(t *testing.T) {
+	matches := scan(t, NewDefault(), "DB_PASSWORD=abc123\nSERVICE_TOKEN=short-key")
+	if len(matches) != 2 || matches[0].Value != "abc123" || matches[1].Value != "short-key" {
+		t.Fatalf("low-entropy assigned secrets were missed: %+v", matches)
+	}
+	if matches := scan(t, NewDefault(), "SERVICE_TOKEN=${SERVICE_TOKEN}\nDIRECT_TOKEN=$DIRECT_TOKEN\nCOMMAND_SECRET=$(secret-tool lookup service sample)\nOPTIONAL_SECRET=<占位符>\nAUTH=false\nPASSWORD=[REDACTED]"); len(matches) != 0 {
+		t.Fatalf("secret references or sentinel values were redacted: %+v", matches)
+	}
+	if matches := scan(t, NewDefault(), "PASSWORD=$2b$12$syntheticbcryptvalue"); len(matches) != 1 || matches[0].Value != "$2b$12$syntheticbcryptvalue" {
+		t.Fatalf("literal dollar-prefixed secret was skipped: %+v", matches)
+	}
+}
+
+func TestEntropyContextDoesNotCrossEnvironmentLines(t *testing.T) {
+	text := "SERVICE_SECRET=SyntheticSecretValue987654321\nBASE_URL=https://service.example.invalid/a/long/path"
+	matches := scan(t, NewDefault(), text)
+	if len(matches) != 1 || matches[0].Finding.Category != "secret.assignment" || matches[0].Value != "SyntheticSecretValue987654321" {
+		t.Fatalf("entropy context crossed an environment line: %+v", matches)
+	}
+}
+
+func TestDatabaseURLWithDriverSuffixIsDetected(t *testing.T) {
+	value := "mysql+pymysql://sample_user:synthetic-pass-9876@db.example.invalid/app"
+	matches := scan(t, NewDefault(), value)
+	if len(matches) != 1 || matches[0].Finding.Category != "secret.database_url" || matches[0].Value != value {
+		t.Fatalf("driver URL matches=%+v", matches)
+	}
+}
+
 func TestCaseInsensitiveBearerPrefixRemainsDetectable(t *testing.T) {
 	matches := scan(t, NewDefault(), "authorization: bEaReR Abcdefghijklmnop123456")
 	if len(matches) != 1 || matches[0].Finding.Category != "secret.bearer" || matches[0].Value != "Abcdefghijklmnop123456" {

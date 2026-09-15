@@ -17,8 +17,6 @@ var (
 	possibleTokenOpen = regexp.MustCompile(`\[\[VEIL_`)
 )
 
-const transformedTokenOpen = "[-[-V-E-I-L-_"
-
 type Limits struct {
 	MaxEntries       int
 	MaxOriginalBytes int
@@ -86,9 +84,6 @@ func (v *Vault) Restore(input string) (string, error) {
 	if v.destroyed {
 		return "", domain.NewError(domain.ErrVaultDestroyed, "restore placeholder", "request vault has been destroyed")
 	}
-	if strings.Contains(input, transformedTokenOpen) {
-		return "", domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "transformed placeholders cannot be restored safely")
-	}
 	indices := completeToken.FindAllStringIndex(input, -1)
 	var result strings.Builder
 	last := 0
@@ -118,9 +113,6 @@ func (v *Vault) RestoreParts(parts []string) ([]string, error) {
 		return nil, domain.NewError(domain.ErrVaultDestroyed, "restore placeholder", "request vault has been destroyed")
 	}
 	combined := strings.Join(parts, "")
-	if strings.Contains(combined, transformedTokenOpen) {
-		return nil, domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "transformed placeholders cannot be restored safely")
-	}
 	indices := completeToken.FindAllStringIndex(combined, -1)
 	if possibleTokenOpen.MatchString(completeToken.ReplaceAllString(combined, "")) {
 		return nil, domain.NewError(domain.ErrMalformedPlaceholder, "restore placeholder", "malformed or incomplete placeholder")

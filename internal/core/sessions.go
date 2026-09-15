@@ -117,7 +117,7 @@ func (s *Server) activeRoute(routeID string) (domain.ProtectedRoute, string, boo
 }
 
 func routeCapabilityTransports(route domain.ProtectedRoute, agentKind string) []string {
-	if agentKind == "hermes" {
+	if agentKind == "hermes" || agentKind == "codex-desktop" {
 		return []string{capabilityTransportHeaders, capabilityTransportPath}
 	}
 	if agentKind == "claude" && route.Auth.Type == domain.AuthAnthropicKey {

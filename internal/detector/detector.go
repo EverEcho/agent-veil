@@ -91,9 +91,9 @@ func NewDefault() *Scanner {
 		{"secret.stripe_key", "secret.stripe_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b`), nil, 0},
 		{"secret.jwt", "secret.jwt", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), nil, 0},
 		{"secret.bearer", "secret.bearer", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)\bBearer[ \t]+([A-Za-z0-9._~+/=-]{16,})`), highEntropy, 1},
-		{"secret.database_url", "secret.database_url", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:@/]+:[^\s@/]+@[^\s]+`), nil, 0},
+		{"secret.database_url", "secret.database_url", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)(?:\+[A-Za-z0-9._-]+)?://[^\s:@/]*:[^\s@/]+@[^\s]+`), nil, 0},
 		{"secret.aws_secret_key", "secret.aws_secret_key", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)\bAWS_SECRET_ACCESS_KEY\s*=\s*["']?([A-Za-z0-9/+=]{40})["']?`), nil, 1},
-		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)(?:password|api_key|token)\s*=\s*["']?([^\s;"']{8,})["']?`), highEntropy, 1},
+		{"secret.assignment", "secret.assignment", domain.SeverityCritical, domain.ActionRedact, regexp.MustCompile(`(?i)\b(?:[A-Z][A-Z0-9]*\\?_)*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|API\\?_KEY|ACCESS\\?_KEY|SECRET\\?_KEY|PRIVATE\\?_KEY|ENCRYPTION\\?_KEY|AES\\?_(?:KEY|IV)|AUTH(?:\\?_TOKEN)?|CREDENTIALS?|SALT)\s*=\s*["']?([^\s;"']+)["']?`), sensitiveAssignmentValue, 1},
 		{"pii.email", "pii.email", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b[A-Za-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+\\?@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`), nil, 0},
 		{"pii.cn.phone", "pii.cn.phone", domain.SeverityHigh, domain.ActionRedact, regexp.MustCompile(`\b1[3-9][0-9]{9}\b`), nil, 0},
 		{"pii.cn.landline", "pii.cn.landline", domain.SeverityMedium, domain.ActionRedact, regexp.MustCompile(`\b0[1-9][0-9]{1,2}-?[0-9]{7,8}\b`), nil, 0},
@@ -382,6 +382,34 @@ func priority(match Match) int {
 	}
 	score += strings.Count(match.Finding.RuleID, ".")
 	return score
+}
+
+func sensitiveAssignmentValue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.HasPrefix(trimmed, "[[VEIL_") || shellReference(trimmed) || strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">") {
+		return false
+	}
+	switch strings.ToLower(trimmed) {
+	case "true", "false", "none", "null", "nil", "disabled", "unset", "redacted", "[redacted]":
+		return false
+	default:
+		return true
+	}
+}
+
+func shellReference(value string) bool {
+	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") || strings.HasPrefix(value, "$(") {
+		return true
+	}
+	if len(value) < 2 || value[0] != '$' || value[1] != '_' && !unicode.IsLetter(rune(value[1])) {
+		return false
+	}
+	for _, character := range value[2:] {
+		if character != '_' && !unicode.IsLetter(character) && !unicode.IsDigit(character) {
+			return false
+		}
+	}
+	return true
 }
 
 func validLuhn(value string) bool {

@@ -54,7 +54,7 @@ Finding 至少包含：规则 ID、类别、严重级别、内容位置、置信
 - OpenAI、Anthropic、Google、GitHub、GitLab、AWS；
 - Slack、Stripe、JWT、Bearer；
 - PEM Private Key；
-- `PASSWORD= / API_KEY= / TOKEN=` 与 Shell export；
+- 敏感环境变量赋值，包括 `PASSWORD`、`TOKEN`、`SECRET`、`API_KEY`、`ACCESS_KEY`、`AES_KEY/AES_IV`、`SALT` 等后缀；兼容 Markdown 转义的下划线，并跳过变量引用、占位符和布尔/空值哨兵；
 - 数据库连接串；
 - 国内主要云厂商与模型 Provider 的可稳定识别格式。
 
@@ -101,6 +101,8 @@ Global -> Agent -> Workspace -> Provider -> Surface -> Finding Type
 
 更具体的规则覆盖更宽泛规则；任何层级的显式 BLOCK 不应被低可信来源自动降级。
 
+面向普通用户的设置开关必须落到同一份 Policy，而不是绕过 Detector：联系方式、身份与财务信息、敏感环境变量、数据库连接凭据、常见服务密钥、疑似未知密钥和网络标识可以分别开启或关闭。开启生成对应 `finding_type: REDACT` 规则，关闭生成 `finding_type: ALLOW` 规则；Agent、Workspace、Provider、Surface 的高级规则继续保留。私钥显式阻断、协议解析与未知协议失败关闭、响应检查、Placeholder/Vault 边界不作为普通设置开关。
+
 示例：
 
 ```yaml
@@ -135,4 +137,4 @@ Provider 响应先检查：
 - 是否有畸形或伪造的 AgentVeil 占位符。
 
 随后才恢复当前请求 Vault 中已知占位符。未知占位符不得猜测或跨 Session 恢复。
-响应发现继续遵循同一 Policy：`redact` 只替换命中的响应内容并保持协议正常结束，显式 `block` 才终止响应。只有完整、未变形且属于当前请求 Vault 的占位符可以恢复；逐字符拆分、插入分隔符或其他变形一律失败关闭，避免恢复后的变形原文进入下一轮上下文并绕过检测。
+响应发现继续遵循同一 Policy：`redact` 只替换命中的响应内容并保持协议正常结束，显式 `block` 才终止响应。只有完整、未变形且属于当前请求 Vault 的占位符可以恢复；逐字符拆分、插入分隔符或其他变形可以作为不透明文本正常透传，但绝不能据此变换或恢复原文。

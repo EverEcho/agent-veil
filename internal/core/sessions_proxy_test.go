@@ -345,6 +345,7 @@ func TestRouteCapabilityTransportMatchesProxyInjectionMode(t *testing.T) {
 		{kind: "claude", auth: domain.AuthAnthropicKey, want: []string{capabilityTransportAnthropicAPIKey}},
 		{kind: "claude", auth: domain.AuthPassthrough, want: []string{capabilityTransportHeaders}},
 		{kind: "hermes", auth: domain.AuthCustom, want: []string{capabilityTransportHeaders, capabilityTransportPath}},
+		{kind: "codex-desktop", auth: domain.AuthPassthrough, want: []string{capabilityTransportHeaders, capabilityTransportPath}},
 	}
 	for _, test := range tests {
 		route := domain.ProtectedRoute{Auth: domain.AuthStrategy{Type: test.auth}}

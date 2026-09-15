@@ -154,11 +154,11 @@ func TestResponsesSSEPreservesEncryptedReasoningUnchanged(t *testing.T) {
 	}
 }
 
-func TestSSEProcessorRejectsTransformedPlaceholderAcrossEvents(t *testing.T) {
+func TestSSEProcessorLeavesTransformedPlaceholderOpaqueAcrossEvents(t *testing.T) {
 	vault, _ := redactor.NewVault([]byte(strings.Repeat("a", 32)), redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100})
 	placeholder, _ := vault.Store("pii.cn.phone", "13100000000")
 	hyphenated := strings.Join(strings.Split(placeholder, ""), "-")
-	processor, _ := NewSSEProcessorWithPolicy(Context{}, domain.ProtocolOpenAIResponses, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault, 4096, 128)
+	processor, _ := NewSSEProcessorWithPolicy(Context{}, domain.ProtocolOpenAIResponses, detector.NewDefault(), policy.Engine{Default: domain.ActionRedact}, vault, 1<<20, 128)
 	var stream bytes.Buffer
 	for _, character := range strings.Split(hyphenated, "") {
 		payload, _ := json.Marshal(map[string]any{"type": "response.output_text.delta", "delta": character})
@@ -167,13 +167,29 @@ func TestSSEProcessorRejectsTransformedPlaceholderAcrossEvents(t *testing.T) {
 	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": map[string]any{"status": "completed"}})
 	stream.WriteString("data: " + string(completed) + "\n\n")
 	output, err := processor.Push(stream.Bytes())
-	if err == nil {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(output), "response.completed") {
 		var tail []byte
 		tail, err = processor.Close()
 		output = append(output, tail...)
 	}
-	if err == nil || strings.Contains(string(output), "1-3-1") {
-		t.Fatalf("transformed placeholder escaped: output=%s err=%v", output, err)
+	var outputText strings.Builder
+	for _, line := range strings.Split(string(output), "\n") {
+		data, found := strings.CutPrefix(line, "data: ")
+		if !found {
+			continue
+		}
+		var event map[string]any
+		if json.Unmarshal([]byte(data), &event) == nil {
+			if delta, ok := event["delta"].(string); ok {
+				outputText.WriteString(delta)
+			}
+		}
+	}
+	if err != nil || outputText.String() != hyphenated || strings.Contains(outputText.String(), "1-3-1") || !strings.Contains(string(output), "response.completed") {
+		t.Fatalf("transformed placeholder was not passed through opaquely: output=%s err=%v", output, err)
 	}
 }
 

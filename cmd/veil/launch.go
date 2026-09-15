@@ -167,7 +167,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		if configErr != nil {
 			return configErr
 		}
-		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), protectedCodexBaseURL(endpoint, protectedRoute.ID), os.Getenv("OPENAI_API_KEY") != "", childArgs, endpoint, created.Session.ID, routeToken)
+		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), protectedCodexBaseURL(endpoint, protectedRoute.ID), childArgs, endpoint, created.Session.ID, routeToken)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}

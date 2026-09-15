@@ -2,7 +2,7 @@ import {desktopInfo, exchangeBrowserTicket, isDesktop, launchCodexDesktop, reque
 
 const state = {
   health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
-  policy: null, rules: null, models: null, browserSession: false, refreshTimer: null, locale: localStorage.getItem('agentveil.locale') || 'zh-CN'
+  policy: null, policySaving: false, rules: null, models: null, browserSession: false, refreshTimer: null, locale: localStorage.getItem('agentveil.locale') || 'zh-CN'
 };
 
 const $ = selector => document.querySelector(selector);
@@ -40,6 +40,16 @@ const copy = {
     protectionTruth: '“Found” does not mean “protected”. A tool is protected only while it is launched through AgentVeil with an active protection session.',
     launchDesktop: 'Launch protected Codex', launchStarting: 'Creating a protected session…', launchStarted: 'Codex launched in a protected session', protectedContent: 'Protected content'
   }
+};
+
+const protectionSettingGroups = {
+  contact: ['pii.email', 'pii.cn.phone', 'pii.cn.landline'],
+  identity: ['pii.cn.id_card', 'pii.cn.license_plate', 'pii.cn.passport', 'pii.cn.uscc', 'pii.us.ssn', 'pii.iban', 'pii.bank_card'],
+  environment: ['secret.assignment'],
+  database: ['secret.database_url'],
+  'known-secrets': ['secret.github_pat', 'secret.openai_key', 'secret.anthropic_key', 'secret.google_key', 'secret.huggingface_token', 'secret.groq_key', 'secret.aws_access_key', 'secret.aws_secret_key', 'secret.alibaba_access_key', 'secret.tencent_secret_id', 'secret.volcengine_access_key', 'secret.slack_token', 'secret.gitlab_pat', 'secret.stripe_key', 'secret.jwt', 'secret.bearer'],
+  'unknown-secrets': ['secret.high_entropy'],
+  network: ['pii.ipv4', 'pii.ipv6', 'pii.mac']
 };
 
 function t(key) { return (copy[state.locale] || copy['zh-CN'])[key] || key; }
@@ -169,7 +179,8 @@ async function loadAll() {
     safeLoad('/v1/agents', value => state.agents = array(value)),
     safeLoad('/v1/approvals', value => state.approvals = array(value)),
     safeLoad('/v1/audit', value => state.audit = array(value)),
-    safeLoad('/v1/call-tree', value => state.calls = object(value))
+    safeLoad('/v1/call-tree', value => state.calls = object(value)),
+    safeLoad('/v1/policy', value => state.policy = object(value))
   ]);
   renderAll();
   const failed = results.filter(result => !result).length;
@@ -180,7 +191,49 @@ async function loadAll() {
 }
 
 function renderAll() {
-  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderAdvancedSummary();
+  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderProtectionSettings(); renderAdvancedSummary();
+}
+
+function globalFindingRule(rule, category) {
+  const scope = object(object(rule).scope);
+  const populated = Object.entries(scope).filter(([, value]) => String(value || '') !== '');
+  return populated.length === 1 && scope.finding_type === category;
+}
+
+function protectionAction(category) {
+  const document = object(state.policy);
+  const rule = array(document.rules).find(candidate => globalFindingRule(candidate, category));
+  return rule ? String(rule.action || '') : String(document.default || '');
+}
+
+function renderProtectionSettings() {
+  $$('[data-protection-setting]').forEach(input => {
+    const categories = protectionSettingGroups[input.dataset.protectionSetting] || [];
+    input.checked = Boolean(state.policy) && categories.length > 0 && categories.every(category => protectionAction(category) !== 'allow');
+    input.disabled = !state.policy || state.policySaving;
+  });
+}
+
+async function updateProtectionSetting(input) {
+  const result = $('#protection-settings-result'), enabled = input.checked;
+  state.policySaving = true; renderProtectionSettings();
+  result.textContent = state.locale === 'zh-CN' ? '正在保存…' : 'Saving…';
+  result.className = 'inline-result';
+  try {
+    const latest = object(await api('/v1/policy'));
+    const categories = protectionSettingGroups[input.dataset.protectionSetting] || [];
+    const retained = array(latest.rules).filter(rule => !categories.some(category => globalFindingRule(rule, category)));
+    latest.rules = retained.concat(categories.map(category => ({scope:{finding_type:category}, action:enabled ? 'redact' : 'allow'})));
+    await api('/v1/policy', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(latest)});
+    state.policy = latest;
+    if (document.activeElement !== $('#policy')) $('#policy').value = JSON.stringify(latest, null, 2);
+    result.textContent = state.locale === 'zh-CN' ? '已保存' : 'Saved';
+    result.className = 'inline-result success';
+  } catch (_) {
+    result.textContent = state.locale === 'zh-CN' ? '保存失败，请重试' : 'Save failed. Please try again.';
+    result.className = 'inline-result failure';
+  }
+  state.policySaving = false; renderProtectionSettings();
 }
 
 function renderHealth() {
@@ -304,8 +357,9 @@ function renderAdvancedSummary() {
 async function savePolicy() {
   const result = $('#policy-result');
   try {
-    const source = $('#policy').value; JSON.parse(source);
+    const source = $('#policy').value, document = JSON.parse(source);
     await api('/v1/policy', {method:'PUT', headers:{'Content-Type':'application/json'}, body:source});
+    state.policy = document; renderProtectionSettings();
     result.textContent = t('saveOK'); result.className = 'inline-result success';
   } catch (_) { result.textContent = t('saveFailed'); result.className = 'inline-result failure'; }
 }
@@ -346,6 +400,7 @@ $('#menu-button').onclick = () => $('.sidebar').classList.toggle('open');
 $('#locale').value = state.locale; $('#locale').onchange = event => applyLocale(event.currentTarget.value);
 $('#auto-refresh').onchange = configureRefresh;
 $('#advanced-toggle').onchange = event => { $('#advanced-nav').hidden = !event.currentTarget.checked; if (!event.currentTarget.checked && $('.nav-item.active')?.dataset.page === 'advanced') navigate('settings'); };
+$$('[data-protection-setting]').forEach(input => { input.onchange = () => updateProtectionSetting(input); });
 document.body.onclick = event => {
   const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]');
   if (nav) navigate(nav.dataset.page); if (go) navigate(go.dataset.go); if (inspect) inspectTool(inspect.dataset.inspect);
