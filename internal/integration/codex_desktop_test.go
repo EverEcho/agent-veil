@@ -44,6 +44,12 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := os.WriteFile(filepath.Join(source, "archived_sessions", "archived.jsonl"), []byte("archived session"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(source, "visualizations"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "visualizations", "source-artifact"), []byte("source artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(source, "ipc"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +80,9 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if strings.Contains(string(config), "agentveil") || strings.Contains(string(config), "model_providers") {
 		t.Fatalf("config persists a temporary custom provider: %s", config)
 	}
+	if strings.Contains(string(config), "allow_symlinked_codex_home") {
+		t.Fatalf("config weakened symlinked writable-root protection: %s", config)
+	}
 	sourceHistory, err := os.Stat(filepath.Join(source, "thread_history_1.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +95,16 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 		if linkedHistory, err := os.Lstat(filepath.Join(home, name)); err != nil || linkedHistory.Mode()&os.ModeSymlink == 0 {
 			t.Fatalf("conversation database state %s must use one canonical symlinked path: %v %v", name, linkedHistory, err)
 		}
+	}
+	visualizations := filepath.Join(home, "visualizations")
+	if info, err := os.Lstat(visualizations); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("sandbox writable visualizations directory was not isolated: %v %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(visualizations, "source-artifact")); !os.IsNotExist(err) {
+		t.Fatalf("source visualization state leaked into isolated home: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(visualizations, "protected-artifact"), []byte("protected artifact"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if linked, err := os.ReadFile(filepath.Join(home, "sessions", "existing.jsonl")); err != nil || string(linked) != "existing session" {
 		t.Fatalf("existing session history is unavailable: %q error=%v", linked, err)
@@ -101,6 +120,19 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	}
 	if payload, err := os.ReadFile(filepath.Join(home, codexDesktopMarker)); err != nil || string(payload) != codexDesktopRetiredMarkerContent {
 		t.Fatalf("rollout redirect marker is missing: %q %v", payload, err)
+	}
+	if artifact, err := os.ReadFile(filepath.Join(home, "visualizations", "protected-artifact")); err != nil || string(artifact) != "protected artifact" {
+		t.Fatalf("protected visualization did not survive retirement: %q %v", artifact, err)
+	}
+	second, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact, err := os.ReadFile(filepath.Join(second.Environment["CODEX_HOME"], "visualizations", "protected-artifact")); err != nil || string(artifact) != "protected artifact" {
+		t.Fatalf("protected visualization did not survive relaunch: %q %v", artifact, err)
+	}
+	if err := second.Cleanup(); err != nil {
+		t.Fatal(err)
 	}
 	if target, err := os.Readlink(filepath.Join(home, "sessions")); err != nil || target != filepath.Join(source, "sessions") {
 		t.Fatalf("conversation path was not retained: %q %v", target, err)

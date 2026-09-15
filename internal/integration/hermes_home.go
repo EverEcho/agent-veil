@@ -65,6 +65,12 @@ func prepareHermesHome(sourceHome, temporaryRoot string, config []byte, protecte
 		}
 		source := filepath.Join(sourceHome, entry.Name())
 		destination := filepath.Join(temporaryHome, entry.Name())
+		if isolatedHomeDirectory(entry.Name()) {
+			if err := ensureIsolatedHomeDirectory(destination); err != nil {
+				return fail()
+			}
+			continue
+		}
 		if entry.Name() == ".env" && len(protectedEnvironment) != 0 {
 			content, readErr := readHermesEnvironment(source)
 			if readErr != nil || writeHermesEnvironment(destination, content, protectedEnvironment) != nil {

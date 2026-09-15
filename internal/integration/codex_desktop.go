@@ -79,10 +79,12 @@ func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, so
 
 // linkCodexDesktopState exposes the user's existing conversations and normal
 // desktop state inside the isolated launch home without sharing configuration
-// or credentials. Every shared entry uses a symlink so Codex and SQLite resolve
+// or credentials. Persistent state uses a symlink so Codex and SQLite resolve
 // one canonical path for database, WAL, shared-memory and lock coordination.
-// Hard-linking a live SQLite database under another path creates a second WAL
-// and lock namespace and can corrupt the shared history database.
+// Directories that tools may register as sandbox writable roots are instead
+// materialized inside the protected home. Hard-linking a live SQLite database
+// under another path creates a second WAL and lock namespace and can corrupt
+// the shared history database.
 func linkCodexDesktopState(sourceHome, temporaryHome string) error {
 	sourceInfo, err := os.Lstat(sourceHome)
 	if err != nil || !sourceInfo.IsDir() || runtime.GOOS != "windows" && sourceInfo.Mode().Perm()&0o022 != 0 {
@@ -94,6 +96,12 @@ func linkCodexDesktopState(sourceHome, temporaryHome string) error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
+		if isolatedHomeDirectory(name) {
+			if err := ensureIsolatedHomeDirectory(filepath.Join(temporaryHome, name)); err != nil {
+				return domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "sandbox writable state could not be isolated")
+			}
+			continue
+		}
 		if codexDesktopPrivateOrRuntimeEntry(name) {
 			continue
 		}
@@ -183,13 +191,53 @@ func initializeCodexDesktopHome(home string) error {
 		return domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "stable home path is invalid")
 	}
 	if _, err := os.Lstat(home); err == nil {
-		if err := removeOwnedCodexDesktopHome(home); err != nil {
+		if err := resetOwnedCodexDesktopHome(home); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
+	} else {
+		return os.Mkdir(home, 0o700)
 	}
-	return os.Mkdir(home, 0o700)
+	return nil
+}
+
+// resetOwnedCodexDesktopHome removes configuration, credentials, links, and
+// runtime state from an owned launch home while retaining safe, real
+// user-artifact directories. Non-directory entries are removed without being
+// followed.
+func resetOwnedCodexDesktopHome(home string) error {
+	if !filepath.IsAbs(home) || filepath.Base(home) == "." {
+		return domain.NewError(domain.ErrInvalidContract, "reset Codex Desktop launch", "temporary home is invalid")
+	}
+	marker := filepath.Join(home, codexDesktopMarker)
+	payload, err := os.ReadFile(marker)
+	if err != nil || string(payload) != codexDesktopActiveMarkerContent && string(payload) != codexDesktopUpgradeMarkerContent && string(payload) != codexDesktopRetiredMarkerContent {
+		return domain.NewError(domain.ErrInvalidContract, "reset Codex Desktop launch", "temporary home ownership could not be verified")
+	}
+	if err := validateCodexDesktopRoot(filepath.Dir(home)); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) > maxCodexDesktopHomeEntries {
+		return domain.NewError(domain.ErrInvalidContract, "reset Codex Desktop launch", "temporary home could not be enumerated safely")
+	}
+	for _, entry := range entries {
+		path := filepath.Join(home, entry.Name())
+		info, infoErr := os.Lstat(path)
+		if infoErr != nil {
+			return domain.NewError(domain.ErrInvalidContract, "reset Codex Desktop launch", "temporary home changed during reset")
+		}
+		if persistentIsolatedHomeDirectory(entry.Name()) && info.IsDir() {
+			if runtime.GOOS == "windows" || info.Mode().Perm()&0o022 == 0 {
+				continue
+			}
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return domain.NewError(domain.ErrInvalidContract, "reset Codex Desktop launch", "temporary home state could not be removed")
+		}
+	}
+	return os.Chmod(home, 0o700)
 }
 
 func removeOwnedCodexDesktopHome(home string) error {
@@ -246,10 +294,7 @@ func retireCodexDesktopHome(home string) error {
 	} else if !errors.Is(archivedErr, os.ErrNotExist) {
 		return domain.NewError(domain.ErrInvalidContract, "retire Codex Desktop launch", "archived conversation path is unavailable or unsafe")
 	}
-	if err := removeOwnedCodexDesktopHome(home); err != nil {
-		return err
-	}
-	if err := os.Mkdir(home, 0o700); err != nil {
+	if err := resetOwnedCodexDesktopHome(home); err != nil {
 		return err
 	}
 	if err := writePrivateFile(filepath.Join(home, codexDesktopMarker), []byte(codexDesktopRetiredMarkerContent)); err != nil {

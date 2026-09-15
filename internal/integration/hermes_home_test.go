@@ -21,6 +21,9 @@ func TestPrepareHermesHomeIsolatesConfigurationAndLinksState(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(source, "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(source, "visualizations"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(source, ".env"), []byte("SECRET=preserved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +60,9 @@ func TestPrepareHermesHomeIsolatesConfigurationAndLinksState(t *testing.T) {
 		if err != nil || linked != filepath.Join(source, name) {
 			t.Fatalf("state link %q=%q err=%v", name, linked, err)
 		}
+	}
+	if info, err := os.Lstat(filepath.Join(home, "visualizations")); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("Hermes sandbox writable directory was not isolated: %v %v", info, err)
 	}
 	original, err := os.ReadFile(filepath.Join(source, "config.yaml"))
 	if err != nil || string(original) != string(originalConfig) {
