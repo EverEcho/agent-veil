@@ -362,7 +362,7 @@ jobs:
           state_path="${smoke_home}/Library/Application Support/agentveil/core.json"
           log_path="${RUNNER_TEMP}/agentveil-core-smoke.log"
           token="$(openssl rand -hex 32)"
-          mkdir -p "$(dirname "${state_path}")"
+          # Core creates its state directory with owner-only permissions.
           HOME="${smoke_home}" VEIL_ADMIN_TOKEN="${token}" \
             "${core_path}" serve >"${log_path}" 2>&1 &
           core_pid=$!
