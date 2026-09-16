@@ -78,6 +78,17 @@ jobs:
             exit 1
           fi
 
+      - name: Install Linux desktop test dependencies
+        if: env.CHANNEL == 'beta' || env.CHANNEL == 'main'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev
+
       - name: Fast development gate
         if: env.CHANNEL == 'dev'
         run: |

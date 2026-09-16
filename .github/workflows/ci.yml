@@ -34,6 +34,15 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Install Linux desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev
       - run: gofmt -w . && git diff --exit-code
       - run: go vet ./...
       - name: Test and scan logs for sensitive canary
