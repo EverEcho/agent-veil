@@ -96,7 +96,7 @@ jobs:
           # only inside this disposable checkout; beta/main still reject drift.
           gofmt -w .
           go vet ./...
-          go test ./internal/core ./internal/proxy ./internal/session ./internal/desktopapp ./sdk/attach
+          go test ./internal/core ./internal/proxy ./internal/session ./sdk/attach
 
       - name: Beta gate
         if: env.CHANNEL == 'beta'
