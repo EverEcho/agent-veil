@@ -60,6 +60,11 @@ and tags, verifies local HEAD exactly matches `origin/main`, then dispatches
 ./release.sh --channel release --version 1.0.0 --publish
 ```
 
+`release.sh` uses `gh workflow run` to start **Package release channel**. After
+the packages pass their channel gate, the workflow publishes the GitHub Release
+and its version tag, then starts the tag's CI release evidence run. Ordinary
+CI runs for pull requests into `main`; merging does not repeat that suite.
+
 The workflow requires `main` and validates the selected channel's quality
 statement and numeric version. Dev
 uses the short critical-package gate, beta runs the complete suite and

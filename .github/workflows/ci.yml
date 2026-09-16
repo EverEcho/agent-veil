@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
+    tags:
+      - 'v*'
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,6 +48,14 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev
+      - name: Install minimum supported Rust
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup override set 1.88.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri -> target
+          shared-key: ci-desktop
       - run: gofmt -w . && git diff --exit-code
       - run: go vet ./...
       - name: Test and scan logs for sensitive canary
@@ -65,6 +78,8 @@ jobs:
         env:
           VEIL_PERFORMANCE_GATE: "1"
         run: go test ./internal/pipeline -run '^TestPureRulePipelineP95Budget$' -count=1 -v
+      - name: Compile Tauri desktop shell
+        run: cargo check --locked --manifest-path desktop/src-tauri/Cargo.toml
       - name: Reproduce documented acceptance evidence
         run: make acceptance-evidence
       - run: go build -trimpath ./cmd/veil
@@ -90,31 +105,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: go build -trimpath -o veil-${GOOS}-${GOARCH} ./cmd/veil
-
-  desktop-compile:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-      - name: Install Linux desktop build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: desktop/src-tauri -> target
-      - name: Install minimum supported Rust
-        run: |
-          rustup toolchain install 1.88.0 --profile minimal
-          rustup override set 1.88.0
-      - name: Compile Tauri desktop shell
-        run: cargo check --locked --manifest-path desktop/src-tauri/Cargo.toml
-      - name: Test the actual Tauri command bridge
-        run: cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 
   reproducible-build:
     runs-on: ubuntu-latest
@@ -204,7 +194,7 @@ jobs:
           upload-release-assets: false
 
   release-evidence:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
     needs: [verify, cross-build, reproducible-build, vulnerability-scan]
     runs-on: ubuntu-latest
     permissions:
