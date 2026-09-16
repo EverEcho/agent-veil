@@ -83,7 +83,7 @@ struct CoreState {
     process_id: u32,
 }
 
-fn config_dir() -> Result<PathBuf, String> {
+pub(crate) fn config_dir() -> Result<PathBuf, String> {
     let base = if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else if cfg!(target_os = "macos") {

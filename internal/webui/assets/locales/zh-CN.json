@@ -2,6 +2,7 @@
   "overview": ["概览", "首页"],
   "tools": ["自动发现", "我的工具"],
   "activity": ["本机记录", "保护记录"],
+  "privacy": ["隐私保护", "脱敏规则"],
   "settings": ["偏好与诊断", "设置"],
   "advanced": ["谨慎操作", "高级功能"],
   "shell": {
@@ -12,7 +13,8 @@
     "navOverview": "防护总览",
     "navTools": "应用接入",
     "navActivity": "审计事件",
-    "navSettings": "脱敏规则",
+    "navPrivacy": "脱敏规则",
+    "navSettings": "设置",
     "navAdvanced": "高级功能",
     "sidebarPromise": "让每一次 AI 请求都更安全、更可控",
     "sidebarPrivacy": "敏感信息只在本机检测与处理",
@@ -53,7 +55,13 @@
     "rescan": "重新扫描",
     "localRecords": "本机记录",
     "activityHeading": "保护记录",
-    "activityDescription": "这里只保留安全的摘要，不保存请求正文和管理凭据。"
+    "activityDescription": "这里只保留安全的摘要，不保存请求正文和管理凭据。",
+    "privacyEyebrow": "本机隐私策略",
+    "privacyHeading": "脱敏规则",
+    "privacyDescription": "选择哪些敏感内容在发送给 AI 前自动处理。",
+    "settingsEyebrow": "应用配置",
+    "settingsHeading": "设置",
+    "settingsDescription": "管理界面、桌面行为、更新、日志和诊断。"
   },
   "settings": {
     "preferences": "使用偏好",
@@ -88,7 +96,17 @@
     "traySetting": "托盘设置",
     "diagnostics": "诊断",
     "diagnosticsHint": "遇到问题时导出不包含请求内容和凭据的诊断文件。",
-    "exportDiagnostics": "导出安全诊断"
+    "exportDiagnostics": "导出安全诊断",
+    "updates": "应用更新",
+    "updateChannel": "更新通道",
+    "updateChannelHint": "只接收所选通道的新版本，不会自动降级。",
+    "currentVersion": "当前版本：{version}（构建通道：{channel}）",
+    "checkUpdate": "检查更新",
+    "downloadUpdate": "下载更新",
+    "installUpdate": "安装并重启",
+    "confirmDownload": "确认下载版本 {version}？",
+    "confirmInstall": "确认安装更新并重启 AgentVeil？",
+    "updateStatus": {"unsupported":"此安装类型请通过系统包管理器手动更新","idle":"尚未检查更新","checking":"正在检查更新…","available":"发现新版本 {version}","up_to_date":"当前已是最新版本","downloading":"正在下载并校验签名…","downloaded":"更新已下载并通过签名校验","installing":"正在安装更新…","error":"更新失败"}
   },
   "advancedPage": {
     "title": "高级功能",
@@ -177,8 +195,6 @@
     "ask": "等待确认",
     "processed": "已处理"
   },
-  "connected": "保护服务正常",
-  "degraded": "保护服务需要检查",
   "offline": "无法连接保护服务",
   "noTools": "没有发现支持的 AI 工具",
   "noToolsHelp": "确认工具已安装，并从系统菜单重新启动 AgentVeil。",
@@ -212,8 +228,8 @@
   "justNow": "刚刚",
   "process": {
     "running": "运行中",
-    "protected": "保护中",
-    "unprotected": "已开启（未保护）",
+    "protected": "已开启",
+    "unprotected": "未保护(点击启动重启保护)",
     "restart": "重启保护",
     "restartHint": "关闭当前未受保护的 Codex，并受保护地重新启动",
     "stopped": "未开启",

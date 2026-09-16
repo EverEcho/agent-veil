@@ -34,6 +34,12 @@ export async function launchCodexDesktop() {
   return invokeDesktop('launch_codex_desktop');
 }
 
+export async function updateInfo() { return invokeDesktop('update_info'); }
+export async function setUpdateChannel(channel) { return invokeDesktop('set_update_channel', {channel}); }
+export async function checkForUpdate() { return invokeDesktop('check_for_update'); }
+export async function downloadUpdate() { return invokeDesktop('download_update'); }
+export async function installUpdate() { return invokeDesktop('install_update'); }
+
 export async function exchangeBrowserTicket(ticket) {
   if (isDesktop || typeof ticket !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('Invalid browser ticket');
   const response = await fetch('/v1/browser-sessions/exchange', {

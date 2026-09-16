@@ -1,10 +1,10 @@
-import {desktopInfo, exchangeBrowserTicket, isDesktop, launchCodexDesktop, requestCore} from './platform.js';
+import {checkForUpdate, desktopInfo, downloadUpdate, exchangeBrowserTicket, installUpdate, isDesktop, launchCodexDesktop, requestCore, setUpdateChannel, updateInfo} from './platform.js';
 import {locale, preferredLocale, setLocale, t, translatePrefix, translateValue} from './i18n.js';
 
 const state = {
   health: null, tools: [], agents: [], approvals: [], audit: [], calls: {},
   policy: null, policySaving: false, rules: null, models: null, desktopInfo: null, browserSession: false, refreshTimer: null, locale: preferredLocale(),
-  developerSettings: null, developerTraces: [], developerSaving: false
+  developerSettings: null, developerTraces: [], developerSaving: false, update: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -123,7 +123,48 @@ async function loadAll() {
 }
 
 function renderAll() {
-  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderProtectionSettings(); renderDeveloperSettings(); renderAdvancedSummary();
+  renderHealth(); renderMetrics(); renderTools(); renderActivity(); renderProtectionSettings(); renderDeveloperSettings(); renderUpdate(); renderAdvancedSummary();
+}
+
+function renderUpdate() {
+  const card = $('#update-card');
+  if (!card) return;
+  card.hidden = !isDesktop;
+  if (!isDesktop) return;
+  const value = object(state.update);
+  const select = $('#update-channel');
+  select.value = value.selected_channel || 'dev';
+  select.disabled = ['checking', 'downloading', 'installing'].includes(value.status);
+  $('#update-version').textContent = t('settings.currentVersion', {version:value.current_version || '—', channel:value.build_channel || '—'});
+  const status = $('#update-status');
+  const key = `settings.updateStatus.${value.status || 'idle'}`;
+  status.textContent = value.error || t(key, {version:value.available_version || ''});
+  status.className = `inline-result${value.status === 'error' ? ' failure' : value.status === 'downloaded' || value.status === 'up_to_date' ? ' success' : ''}`;
+  $('#check-update').disabled = select.disabled || value.supported === false;
+  $('#download-update').hidden = value.status !== 'available';
+  $('#install-update').hidden = value.status !== 'downloaded';
+}
+
+async function refreshUpdate(silent = false) {
+  try {
+    state.update = await (silent ? checkForUpdate() : updateInfo());
+  } catch (error) {
+    if (!silent) state.update = {...object(state.update), status:'error', error:String(error)};
+  }
+  renderUpdate();
+}
+
+async function runUpdateAction(action) {
+  try {
+    if (action === 'download' && !window.confirm(t('settings.confirmDownload', {version:object(state.update).available_version || ''}))) return;
+    if (action === 'install' && !window.confirm(t('settings.confirmInstall'))) return;
+    state.update = {...object(state.update), status:{check:'checking', download:'downloading', install:'installing'}[action], error:null};
+    renderUpdate();
+    state.update = await ({check:checkForUpdate, download:downloadUpdate, install:installUpdate}[action])();
+  } catch (error) {
+    state.update = {...object(state.update), status:'error', error:String(error)};
+  }
+  renderUpdate();
 }
 
 function globalFindingRule(rule, category) {
@@ -253,8 +294,6 @@ async function updateDeveloperSettings(next) {
 
 function renderHealth() {
   const health = object(state.health), good = health.status === 'ok';
-  $('#sidebar-dot').className = `status-dot ${good ? 'good' : 'bad'}`;
-  $('#sidebar-status').textContent = good ? t('connected') : t('degraded');
   $('#protection-badge').className = `protection-badge ${good ? 'good' : 'bad'}`;
   $('#protection-badge-label').textContent = good ? t('shell.coreHealthy') : t('shell.coreDegraded');
   $('#hero-pill').className = `pill ${good ? 'good' : 'bad'}`;
@@ -312,12 +351,15 @@ function renderTools() {
     const protectedRunning = desktopProcess && object(state.desktopInfo).codex_desktop_protected === true;
     const processLabel = protectedRunning ? t('process.protected') : running === true ? t('process.unprotected') : running === false ? t('process.stopped') : t('process.unknown');
     const processState = desktopProcess ? `<span class="pill ${protectedRunning ? 'good' : running === true ? 'warning' : 'neutral'}">${escapeHTML(processLabel)}</span>` : '';
+    const protectionState = `<span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>`;
+    const statePills = desktopProcess && (protectedRunning || running === true) ? processState : protectionState + processState;
     const infoIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><path d="M12 7.25h.01"></path></svg>';
     const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 8 5-8 5z"></path></svg>';
+    const restartIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 6"></path><path d="M19 3v5h-5"></path></svg>';
     const launchAction = desktopProcess
-      ? `<button class="tool-action tool-launch${protectedRunning ? ' is-running' : ''}" data-launch-codex-desktop="${name}" aria-label="${escapeHTML(protectedRunning ? processLabel : t('launchDesktop'))}" title="${escapeHTML(protectedRunning ? processLabel : running === true ? t('process.restartHint') : t('launchDesktop'))}"${protectedRunning ? ' disabled' : ''}>${playIcon}<span>${escapeHTML(protectedRunning ? t('process.running') : running === true ? t('process.restart') : t('launch'))}</span></button>`
+      ? `<button class="tool-action tool-launch${protectedRunning ? ' is-running' : ''}" data-launch-codex-desktop="${name}" aria-label="${escapeHTML(protectedRunning ? processLabel : running === true ? t('process.restart') : t('launchDesktop'))}" title="${escapeHTML(protectedRunning ? processLabel : running === true ? t('process.restartHint') : t('launchDesktop'))}"${protectedRunning ? ' disabled' : ''}>${running === true && !protectedRunning ? restartIcon : playIcon}</button>`
       : '';
-    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state"><span class="pill ${registered ? 'good' : verified ? 'neutral' : 'warning'}">${escapeHTML(label)}</span>${processState}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}">${infoIcon}<span>${escapeHTML(t('tool.viewProtection'))}</span></button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
+    return `<article class="tool-card"><div class="tool-head"><div class="tool-icon">${escapeHTML(tool.agent.slice(0,1))}</div><div><h3>${escapeHTML(agentLabel(tool.agent))}</h3><p class="version">${escapeHTML(t('tool.version', {version:tool.version || t('tool.unknownVersion')}))}</p></div></div><p class="tool-state">${statePills}</p><div class="tool-card-actions">${launchAction}<button class="tool-action tool-info" data-inspect="${name}" aria-label="${escapeHTML(t('tool.viewProtection'))}" title="${escapeHTML(t('tool.viewProtection'))}">${infoIcon}</button></div><span class="tool-launch-result" data-launch-result="${name}" role="status"></span></article>`;
   }).join('');
   applyDashboardSearch();
   renderOverviewTools();
@@ -521,6 +563,14 @@ $$('[data-protection-setting]').forEach(input => { input.onchange = () => update
 $('#private-key-action').onchange = event => updatePrivateKeyAction(event.currentTarget);
 $('#developer-enabled').onchange = event => updateDeveloperSettings({enabled:event.currentTarget.checked, capture_request_bodies:object(state.developerSettings).capture_request_bodies});
 $('#developer-capture-bodies').onchange = event => updateDeveloperSettings({enabled:true, capture_request_bodies:event.currentTarget.checked});
+$('#update-channel').onchange = async event => {
+  try { state.update = await setUpdateChannel(event.currentTarget.value); }
+  catch (error) { state.update = {...object(state.update), status:'error', error:String(error)}; }
+  renderUpdate();
+};
+$('#check-update').onclick = () => runUpdateAction('check');
+$('#download-update').onclick = () => runUpdateAction('download');
+$('#install-update').onclick = () => runUpdateAction('install');
 document.body.onclick = event => {
   const nav = event.target.closest('[data-page]'), go = event.target.closest('[data-go]'), inspect = event.target.closest('[data-inspect]'), decision = event.target.closest('[data-decision]'), launchCodex = event.target.closest('[data-launch-codex-desktop]'), searchTool = event.target.closest('[data-search-tool]'), searchEvent = event.target.closest('[data-search-event]');
   if (nav) navigate(nav.dataset.page); if (go) navigate(go.dataset.go); if (inspect) inspectTool(inspect.dataset.inspect);
@@ -539,7 +589,9 @@ async function startDesktop() {
       state.desktopInfo = info;
       $('#channel-badge').textContent = String(info.channel || 'dev').toUpperCase();
       if (info.desktop && info.ready) {
+        try { state.update = await updateInfo(); } catch (_) {}
         await enter();
+        if (object(state.update).supported !== false) refreshUpdate(true);
         return;
       }
     } catch (_) {}

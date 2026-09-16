@@ -6,7 +6,8 @@ Core-served copy in a browser; desktop installations load the bundled copy
 locally inside the native Tauri window.
 
 The Rust shell owns desktop-only concerns: safe Core adoption/startup,
-close-to-tray behavior, guarded shutdown, single instance, and sign-in startup.
+close-to-tray behavior, guarded shutdown, single instance, sign-in startup, and
+signed updates for the selected `dev`, `beta`, or `release` channel.
 The local page reaches the versioned Core API through a bounded Rust command
 bridge. The bridge owns the management token and exposes only the Dashboard's
 explicit method/path allowlist, so the token is never injected into JavaScript.
@@ -16,7 +17,8 @@ same-origin, HttpOnly browser-session cookie; there is no manual token form.
 
 The crate keeps those boundaries explicit: `core_supervisor.rs` owns the Core
 process, `bridge.rs` owns the authenticated API contract, `tray.rs` owns native
-desktop controls, and `main.rs` is only composition and shutdown wiring.
+desktop controls, `updater.rs` owns update settings and state, and `main.rs` is
+only composition and shutdown wiring.
 
 ## Development
 
