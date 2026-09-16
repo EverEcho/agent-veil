@@ -414,6 +414,9 @@ jobs:
     needs: [package, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
     env:
       CHANNEL: ${{ inputs.channel }}
       VERSION: ${{ inputs.version }}
@@ -429,6 +432,7 @@ jobs:
       - name: Publish immutable release and channel manifest
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -464,4 +468,8 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" --target "${SOURCE_SHA}" \
               --title "AgentVeil ${CHANNEL} update index" \
               --notes "Machine-readable signed updater index for the ${CHANNEL} channel."
+          fi
+          # Tags created with GITHUB_TOKEN do not trigger push workflows.
+          if [ -z "${RELEASE_TOKEN}" ]; then
+            gh workflow run ci.yml --repo "${GITHUB_REPOSITORY}" --ref "${tag}"
           fi
