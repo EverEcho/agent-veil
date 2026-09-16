@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 channel="dev"
+branch="main"
 version=""
 publish=false
 repository="EverEcho/agent-veil"
@@ -23,9 +24,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "${channel}" in
-  dev) branch="dev"; statement="dev-no-fatal" ;;
-  beta) branch="beta"; statement="beta-self-tested-no-known" ;;
-  release) branch="main"; statement="release-fully-verified-no-known" ;;
+  dev) statement="dev-no-fatal" ;;
+  beta) statement="beta-self-tested-no-known" ;;
+  release) statement="release-fully-verified-no-known" ;;
   *) echo "Channel must be dev, beta, or release." >&2; exit 2 ;;
 esac
 

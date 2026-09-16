@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Release channel; run this workflow from the matching branch
+        description: Release channel; run this workflow from main
         required: true
         type: choice
         options: [dev, beta, release]
@@ -66,7 +66,7 @@ jobs:
       - name: Test updater manifest generation
         run: python3 -m unittest scripts/test_generate_update_manifest.py
 
-      - name: Enforce branch and quality policy
+      - name: Enforce main branch and channel quality policy
         shell: bash
         run: |
           expected_branch="$(jq -r --arg channel "${CHANNEL}" '.[$channel].branch // empty' .github/release-channels.json)"
@@ -76,7 +76,7 @@ jobs:
             exit 1
           fi
           if [ "${GITHUB_REF}" != "refs/heads/${expected_branch}" ]; then
-            echo "::error::Channel ${CHANNEL} must be packaged from branch ${expected_branch}, not ${GITHUB_REF}."
+            echo "::error::All release channels must be packaged from branch ${expected_branch}, not ${GITHUB_REF}."
             exit 1
           fi
           git fetch --no-tags origin "refs/heads/${expected_branch}:refs/remotes/origin/${expected_branch}"
@@ -116,7 +116,7 @@ jobs:
         if: env.CHANNEL == 'dev'
         run: |
           # Dev prioritizes producing a testable package. Formatting is applied
-          # only inside this disposable checkout; beta/main still reject drift.
+          # only inside this disposable checkout; beta/release still reject drift.
           gofmt -w .
           go vet ./...
           go test ./internal/core ./internal/proxy ./internal/session ./sdk/attach
