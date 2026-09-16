@@ -5,12 +5,12 @@
     "description": "Fully usable, all functionality confirmed, and no known bugs."
   },
   "beta": {
-    "branch": "beta",
+    "branch": "main",
     "quality_statement": "beta-self-tested-no-known",
     "description": "Self-tested with no known bugs; broader use may still reveal bugs."
   },
   "dev": {
-    "branch": "dev",
+    "branch": "main",
     "quality_statement": "dev-no-fatal",
     "description": "May contain known nonfatal bugs; fatal bugs are not allowed."
   }

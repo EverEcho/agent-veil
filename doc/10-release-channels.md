@@ -1,17 +1,25 @@
 # Release channels and updates
 
-AgentVeil uses three ordered release channels. The public channel name is
-`release`; its Git branch remains `main`.
+AgentVeil uses one long-lived Git branch, `main`, and three release channels.
+Choose the channel manually when packaging. New code enters `main` through a
+pull request; the chosen channel describes the quality of that package.
 
-| Branch | Channel | Required quality |
-| --- | --- | --- |
-| `dev` | `dev` | Known nonfatal bugs are allowed. Fatal bugs are not. |
-| `beta` | `beta` | No known bugs after feature self-test. Wider use may still reveal bugs. |
-| `main` | `release` | Fully usable, all shipped functionality confirmed, and no known bugs. |
+| Channel | Required quality |
+| --- | --- |
+| `dev` | Known nonfatal bugs are allowed. Fatal bugs are not. |
+| `beta` | No known bugs after feature self-test. Wider use may still reveal bugs. |
+| `release` | Fully usable, all shipped functionality confirmed, and no known bugs. |
 
-Promotion is one way: `dev` to `beta` to `release`. Versions are numeric SemVer
-and increase globally across all channels; the same numeric version must not be
-published in more than one channel.
+The same `main` commit can be packaged for any channel when it meets that
+channel's quality requirement. Versions are numeric SemVer and increase globally
+across all channels; the same numeric version must not be published in more than
+one channel.
+
+To package from GitHub Actions, run **Package release channel** manually, select
+the `main` branch, then choose `dev`, `beta`, or `release` and its matching quality
+statement. Set `publish_release` only when the artifacts should also be published
+as a GitHub Release. A dev package can ship after a targeted fix without waiting
+for beta or release quality, but it must still have no fatal bugs.
 
 ## In-app updates
 
@@ -43,16 +51,17 @@ version:
 ```
 
 Pass `--version X.Y.Z` to choose an explicit version. Add `--publish` only when
-ready. Publishing requires a clean checkout on the channel's matching branch,
-fetches the remote branch and tags, verifies local HEAD exactly matches the
-remote, then dispatches `package-channel.yml` with the immutable commit SHA:
+ready. Publishing requires a clean checkout on `main`, fetches the remote branch
+and tags, verifies local HEAD exactly matches `origin/main`, then dispatches
+`package-channel.yml` with the immutable commit SHA:
 
 ```bash
 ./release.sh --channel beta --version 0.2.0 --publish
 ./release.sh --channel release --version 1.0.0 --publish
 ```
 
-The workflow validates the branch, quality statement, and numeric version. Dev
+The workflow requires `main` and validates the selected channel's quality
+statement and numeric version. Dev
 uses the short critical-package gate, beta runs the complete suite and
 acceptance evidence, and release additionally runs the race detector. It builds
 six Core targets plus Linux x64, Windows x64, macOS Intel, and macOS Apple
