@@ -20,6 +20,19 @@ func TestDashboardServesAuditPreviewStyles(t *testing.T) {
 	}
 }
 
+func TestDashboardUsesFixedDesktopShellWithPageScrolling(t *testing.T) {
+	stylesheet := httptest.NewRecorder()
+	if !Serve(stylesheet, httptest.NewRequest("GET", "/styles.css", nil)) {
+		t.Fatal("dashboard stylesheet was not served")
+	}
+	body := stylesheet.Body.String()
+	for _, want := range []string{`html { min-width: 320px; height: 100%; overflow: hidden;`, `.app-shell { height: 100%; overflow: hidden; }`, `main { max-width: 1560px; height: 100%;`, `.page { min-height: 0; padding-bottom: 40px; flex: 1;`, `overscroll-behavior: contain`, `scrollbar-gutter: stable`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("desktop shell scrolling contract is missing %q", want)
+		}
+	}
+}
+
 func TestDashboardToolCardsExposeInfoAndProtectedDesktopLaunch(t *testing.T) {
 	page := httptest.NewRecorder()
 	if !Serve(page, httptest.NewRequest("GET", "/", nil)) || !strings.Contains(page.Body.String(), `href="/tools.css"`) {
@@ -36,13 +49,53 @@ func TestDashboardToolCardsExposeInfoAndProtectedDesktopLaunch(t *testing.T) {
 		t.Fatal("app asset was not served")
 	}
 	body := app.Body.String()
-	for _, want := range []string{`class="tool-action tool-info"`, `data-launch-codex-desktop`, `class="tool-card-actions"`, `codex_desktop_running`, `codex_desktop_protected`, `t('process.restart')`, `from './i18n.js'`, `t('tool.description')`, `t('tool.viewProtection')`} {
+	for _, want := range []string{`class="tool-action tool-info"`, `data-launch-codex-desktop`, `class="tool-card-actions"`, `aria-label="${escapeHTML(t('tool.viewProtection'))}"`, `const restartIcon`, `const statePills = desktopProcess && (protectedRunning || running === true) ? processState : protectionState + processState`, `codex_desktop_running`, `codex_desktop_protected`, `t('process.restart')`, `from './i18n.js'`, `t('tool.description')`, `t('tool.viewProtection')`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("app asset does not contain %q", want)
 		}
 	}
+	if strings.Contains(body, `${infoIcon}<span>`) || strings.Contains(body, `${playIcon}<span>`) {
+		t.Fatal("tool card icon actions still render visible text labels")
+	}
 	if strings.Contains(body, `id="launch-codex-result"`) || strings.Contains(body, `在终端运行 <code>veil run`) {
 		t.Fatal("tool detail still contains launch controls")
+	}
+}
+
+func TestDashboardExposesSignedDesktopUpdateControls(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) || !strings.Contains(page.Body.String(), `id="update-channel"`) || !strings.Contains(page.Body.String(), `id="install-update"`) {
+		t.Fatal("dashboard does not expose desktop update controls")
+	}
+	platform := httptest.NewRecorder()
+	if !Serve(platform, httptest.NewRequest("GET", "/platform.js", nil)) || !strings.Contains(platform.Body.String(), "check_for_update") || !strings.Contains(platform.Body.String(), "install_update") {
+		t.Fatal("desktop bridge does not expose update commands")
+	}
+}
+
+func TestDashboardSeparatesPrivacyRulesFromGeneralSettings(t *testing.T) {
+	page := httptest.NewRecorder()
+	if !Serve(page, httptest.NewRequest("GET", "/", nil)) {
+		t.Fatal("dashboard was not served")
+	}
+	body := page.Body.String()
+	privacyStart := strings.Index(body, `id="page-privacy"`)
+	settingsStart := strings.Index(body, `id="page-settings"`)
+	advancedStart := strings.Index(body, `id="page-advanced"`)
+	if privacyStart < 0 || settingsStart <= privacyStart || advancedStart <= settingsStart {
+		t.Fatal("privacy and settings pages are not independently defined")
+	}
+	privacy := body[privacyStart:settingsStart]
+	settings := body[settingsStart:advancedStart]
+	for _, want := range []string{`data-protection-setting="contact"`, `data-protection-setting="known-secrets"`, `id="private-key-action"`} {
+		if !strings.Contains(privacy, want) {
+			t.Fatalf("privacy page is missing %q", want)
+		}
+	}
+	for _, misplaced := range []string{`id="locale"`, `id="auto-refresh"`, `id="update-card"`, `id="developer-enabled"`, `id="download-diagnostics"`} {
+		if strings.Contains(privacy, misplaced) || !strings.Contains(settings, misplaced) {
+			t.Fatalf("general setting %q is not isolated to the settings page", misplaced)
+		}
 	}
 }
 
@@ -55,6 +108,9 @@ func TestDashboardExposesTruthfulStatusFunnelReasonsAndGroupedSearch(t *testing.
 		if !strings.Contains(page.Body.String(), want) {
 			t.Fatalf("dashboard shell is missing %q", want)
 		}
+	}
+	if strings.Contains(page.Body.String(), `id="sidebar-status"`) || strings.Contains(page.Body.String(), `id="sidebar-dot"`) {
+		t.Fatal("dashboard still duplicates Core health in the sidebar")
 	}
 
 	app := httptest.NewRecorder()

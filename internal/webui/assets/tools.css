@@ -1,8 +1,5 @@
 .tool-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: auto;
+  display: contents;
 }
 
 .tool-card .tool-state {
@@ -12,7 +9,9 @@
 }
 
 .tool-action {
-  height: 38px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: 1px solid #dce2ec;
   border-radius: 10px;
   background: #f5f7fa;
@@ -20,7 +19,6 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
   font-weight: 720;
   transition: border-color .18s, background .18s, color .18s, transform .18s;
 }
@@ -38,8 +36,8 @@
 }
 
 .tool-action svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -48,17 +46,26 @@
 }
 
 .tool-launch {
-  padding: 0 13px;
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
 }
 
 .tool-info {
-  min-width: 38px;
-  padding: 0 12px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  color: #71809b;
+  background: transparent;
+  border-color: transparent;
 }
 
 .tool-launch-result {
   display: block;
-  margin-top: 9px;
+  margin-top: auto;
+  padding: 9px 42px 0 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
@@ -87,6 +94,5 @@
 }
 
 .tool-card > .tool-card-actions .tool-action {
-  margin-top: 0;
-  align-self: auto;
+  margin: 0;
 }

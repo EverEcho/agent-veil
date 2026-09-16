@@ -18,6 +18,7 @@ serde_json = "1"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2.11.0"
 url = "2"
 
 [profile.release]
@@ -27,7 +28,7 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
-# Dev packages favor turnaround time. Beta and main continue to use the fully
+# Dev packages favor turnaround time. Beta and release continue to use the fully
 # optimized release profile above.
 [profile.dev-package]
 inherits = "release"

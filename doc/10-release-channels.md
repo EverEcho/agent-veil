@@ -1,60 +1,65 @@
-# Release channels
+# Release channels and updates
 
-AgentVeil uses three ordered release channels. A package's channel describes its
-evidence level; it is not only a version suffix.
+AgentVeil uses three ordered release channels. The public channel name is
+`release`; its Git branch remains `main`.
 
 | Branch | Channel | Required quality |
 | --- | --- | --- |
-| `dev` | Development | Known nonfatal bugs are allowed. Fatal bugs are not. |
-| `beta` | Beta | No known bugs after feature self-test. Wider use may still reveal bugs. |
-| `main` | Stable | Fully usable, all shipped functionality confirmed, and no known bugs. |
+| `dev` | `dev` | Known nonfatal bugs are allowed. Fatal bugs are not. |
+| `beta` | `beta` | No known bugs after feature self-test. Wider use may still reveal bugs. |
+| `main` | `release` | Fully usable, all shipped functionality confirmed, and no known bugs. |
 
-Promotion is one way: `dev` to `beta` to `main`. Code is merged forward only
-after the target channel's quality statement is true. A successful build does
-not by itself promote a revision or prove that the statement is true.
+Promotion is one way: `dev` to `beta` to `release`. Versions are numeric SemVer
+and increase globally across all channels; the same numeric version must not be
+published in more than one channel.
 
-## Packaging
+## In-app updates
 
-The `Package release channel` workflow is run manually from GitHub Actions so
-ordinary development pushes do not start duplicate multi-platform builds:
+Desktop users can select `dev`, `beta`, or `release` in Settings. The selection
+is stored locally and defaults to the channel used to build the installed app.
+AgentVeil checks that exact channel at startup and never downgrades. Download and
+installation each require explicit confirmation. Tauri verifies every update
+with the dedicated updater public key before installation.
 
-1. Select **Package release channel** and choose **Run workflow**.
-2. Select the branch matching the requested channel.
-3. Enter a numeric SemVer version such as `0.1.1`, without a leading `v` or
-   channel suffix, and select the exact quality statement for that channel.
-4. Leave **publish_release** off to create only a downloadable workflow
-   artifact, or enable it to create a GitHub Release. Development and beta
-   GitHub Releases are marked as prereleases.
+In-app installation supports macOS Intel/Apple Silicon, Windows x64, and Linux
+x64 AppImage. Debian packages remain a manual update path because an installed
+`.deb` requires the system package manager. The normal installers remain on the
+versioned GitHub Release; each channel also has a stable, machine-readable
+`latest.json` release.
 
-The workflow uses GitHub's job token to publish by default. If repository tag
-or release rules do not allow GitHub Actions to create releases, add a
-fine-grained repository Actions secret named `RELEASE_TOKEN` with **Contents:
-Read and write** permission. The workflow automatically prefers that secret
-when present. Re-running the same version safely replaces its existing assets.
+Updater signing is separate from Apple notarization and Windows code signing.
+GitHub Actions requires `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. A release build also fails closed without
+the documented Apple distribution credentials.
 
-The workflow rejects branch/channel mismatches. Development runs use a short
-compile, vet, and critical-package test gate. Beta runs execute the full test
-suite and acceptance evidence. Main runs additionally use the race detector.
-All channels package six headless Core targets, a Linux amd64 desktop shell,
-and self-contained desktop bundles for Linux amd64, Windows amd64, macOS Intel,
-and macOS Apple Silicon, plus compatibility metadata, channel metadata, and
-SHA-256 checksums. Each Tauri desktop bundle contains its matching Core
-executable as a private application resource.
+## Local release command
 
-Development and beta macOS apps fall back to ad-hoc signing when Apple secrets
-are absent. To produce a Gatekeeper-trusted and notarized download, configure:
+On macOS or Linux, preview the next version based on locally known tags without
+changing anything. Publish mode fetches remote tags before resolving an omitted
+version:
 
-- `APPLE_CERTIFICATE`: base64-encoded Developer ID Application `.p12` file;
-- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12`;
-- `APPLE_ID`: Apple account email;
-- `APPLE_PASSWORD`: Apple app-specific password;
-- `APPLE_TEAM_ID`: Apple Developer team ID;
-- optionally `APPLE_SIGNING_IDENTITY` when the `.p12` contains multiple signing
-  identities.
+```bash
+./release.sh --channel dev
+```
 
-When the certificate is present, the workflow rejects incomplete notarization
-credentials, imports the certificate into a temporary keychain, signs and
-notarizes through Tauri, verifies the stapled ticket, and removes the keychain.
-Main releases fail closed if the certificate is absent. Windows arm64 desktop
-packaging remains pending; the Windows arm64 Core is included in the
-cross-platform Core bundle.
+Pass `--version X.Y.Z` to choose an explicit version. Add `--publish` only when
+ready. Publishing requires a clean checkout on the channel's matching branch,
+fetches the remote branch and tags, verifies local HEAD exactly matches the
+remote, then dispatches `package-channel.yml` with the immutable commit SHA:
+
+```bash
+./release.sh --channel beta --version 0.2.0 --publish
+./release.sh --channel release --version 1.0.0 --publish
+```
+
+The workflow validates the branch, quality statement, and numeric version. Dev
+uses the short critical-package gate, beta runs the complete suite and
+acceptance evidence, and release additionally runs the race detector. It builds
+six Core targets plus Linux x64, Windows x64, macOS Intel, and macOS Apple
+Silicon desktop bundles. Published dev/beta versions are prereleases; release
+uses the plain `vX.Y.Z` tag.
+
+Apple distribution and notarization use `APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`, and
+optionally `APPLE_SIGNING_IDENTITY`. Development and beta macOS packages may use
+ad-hoc signing when these are absent; release may not.

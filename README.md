@@ -60,6 +60,6 @@ veil run codex-desktop
 
 - [文档中心](doc/README.md)：产品、架构、安全、集成、策略、进度与决策；
 - [开发指南](doc/11-development-guide.md)：环境准备、项目结构、启动、构建和测试；
-- [发布渠道](doc/10-release-channels.md)：`dev`、`beta`、`main` 的质量定义与发布规则。
+- [发布渠道](doc/10-release-channels.md)：`dev`、`beta`、`release` 的质量定义、应用内更新与发布规则。
 
 项目仍在持续开发中。正式使用前，请先确认当前版本的兼容范围和未完成边界。

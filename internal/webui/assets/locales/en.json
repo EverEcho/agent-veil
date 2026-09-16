@@ -2,6 +2,7 @@
   "overview": ["Overview", "Home"],
   "tools": ["Auto discovery", "My tools"],
   "activity": ["On-device history", "Protection activity"],
+  "privacy": ["Privacy protection", "Redaction rules"],
   "settings": ["Preferences & diagnostics", "Settings"],
   "advanced": ["Use with care", "Advanced"],
   "shell": {
@@ -12,7 +13,8 @@
     "navOverview": "Protection overview",
     "navTools": "App connections",
     "navActivity": "Audit events",
-    "navSettings": "Redaction rules",
+    "navPrivacy": "Redaction rules",
+    "navSettings": "Settings",
     "navAdvanced": "Advanced",
     "sidebarPromise": "Make every AI request safer and more controllable",
     "sidebarPrivacy": "Sensitive data is inspected and processed on device",
@@ -53,7 +55,13 @@
     "rescan": "Scan again",
     "localRecords": "On-device records",
     "activityHeading": "Protection activity",
-    "activityDescription": "Only safe summaries are retained. Request bodies and admin credentials are not stored."
+    "activityDescription": "Only safe summaries are retained. Request bodies and admin credentials are not stored.",
+    "privacyEyebrow": "On-device privacy policy",
+    "privacyHeading": "Redaction rules",
+    "privacyDescription": "Choose which sensitive content is processed before it is sent to AI.",
+    "settingsEyebrow": "App configuration",
+    "settingsHeading": "Settings",
+    "settingsDescription": "Manage the interface, desktop behavior, updates, logs, and diagnostics."
   },
   "settings": {
     "preferences": "Preferences",
@@ -88,7 +96,17 @@
     "traySetting": "Tray setting",
     "diagnostics": "Diagnostics",
     "diagnosticsHint": "Export a diagnostic file without request content or credentials when troubleshooting.",
-    "exportDiagnostics": "Export safe diagnostics"
+    "exportDiagnostics": "Export safe diagnostics",
+    "updates": "App updates",
+    "updateChannel": "Update channel",
+    "updateChannelHint": "Receive newer versions from this channel only; downgrades are never automatic.",
+    "currentVersion": "Current version: {version} (build channel: {channel})",
+    "checkUpdate": "Check for updates",
+    "downloadUpdate": "Download update",
+    "installUpdate": "Install and restart",
+    "confirmDownload": "Download version {version}?",
+    "confirmInstall": "Install the update and restart AgentVeil?",
+    "updateStatus": {"unsupported":"Update this package with the system package manager","idle":"Updates have not been checked","checking":"Checking for updates…","available":"Version {version} is available","up_to_date":"You are up to date","downloading":"Downloading and verifying signature…","downloaded":"Update downloaded and signature verified","installing":"Installing update…","error":"Update failed"}
   },
   "advancedPage": {
     "title": "Advanced features",
@@ -177,8 +195,6 @@
     "ask": "Awaiting approval",
     "processed": "Processed"
   },
-  "connected": "Protection service is healthy",
-  "degraded": "Protection service needs attention",
   "offline": "Unable to reach protection service",
   "noTools": "No supported AI tools found",
   "noToolsHelp": "Make sure a tool is installed, then restart AgentVeil from the system menu.",
@@ -212,8 +228,8 @@
   "justNow": "Just now",
   "process": {
     "running": "Running",
-    "protected": "Protected and running",
-    "unprotected": "Running without protection",
+    "protected": "Running",
+    "unprotected": "Unprotected (click to restart with protection)",
     "restart": "Restart protected",
     "restartHint": "Close the current unprotected Codex and restart it with protection",
     "stopped": "Not running",

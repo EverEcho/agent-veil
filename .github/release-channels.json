@@ -1,7 +1,7 @@
 {
-  "main": {
+  "release": {
     "branch": "main",
-    "quality_statement": "main-fully-verified-no-known",
+    "quality_statement": "release-fully-verified-no-known",
     "description": "Fully usable, all functionality confirmed, and no known bugs."
   },
   "beta": {
