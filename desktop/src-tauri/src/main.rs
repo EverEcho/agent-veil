@@ -8,7 +8,7 @@ mod core_supervisor;
 mod tray;
 mod updater;
 
-use core_supervisor::{new_runtime, refresh_sessions, stop_owned};
+use core_supervisor::{new_runtime, protected_codex_running, refresh_sessions, stop_owned};
 
 fn main() {
     let runtime = new_runtime();
@@ -43,7 +43,7 @@ fn main() {
         .expect("failed to build AgentVeil desktop application");
     app.run(move |_handle, event| {
         if let RunEvent::ExitRequested { api, .. } = event {
-            if refresh_sessions(&runtime) > 0 {
+            if refresh_sessions(&runtime) > 0 || protected_codex_running(&runtime).unwrap_or(true) {
                 api.prevent_exit();
             } else {
                 stop_owned(&runtime);

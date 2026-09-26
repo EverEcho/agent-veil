@@ -21,9 +21,9 @@ const codexDesktopRetiredMarkerContent = "agentveil-codex-desktop-rollout-link-v
 const maxCodexDesktopAuthBytes = 8 << 20
 const maxCodexDesktopHomeEntries = 4096
 
-// PrepareCodexDesktopLaunch creates an isolated Codex home for the official
-// desktop application. The user's Codex configuration is never modified.
-func PrepareCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, protectedRoot, baseURL string, hasAPIKey bool, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
+// prepareLegacyCodexDesktopLaunch is retained only to exercise cleanup of
+// homes created by older Veil versions. New launches use process-local routing.
+func prepareLegacyCodexDesktopLaunch(agent domain.AgentInstance, desktopExecutable, sourceHome, protectedRoot, baseURL string, hasAPIKey bool, args []string, coreEndpoint, sessionID, routeToken string) (LaunchPlan, error) {
 	if agent.Kind != "codex-desktop" {
 		return LaunchPlan{}, domain.NewError(domain.ErrInvalidContract, "prepare Codex Desktop launch", "agent kind is not Codex Desktop")
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,9 +50,6 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		var err error
 		desktopExecutable, err = codexDesktopExecutable()
 		if err != nil {
-			return err
-		}
-		if err := ensureCodexDesktopStopped(desktopExecutable); err != nil {
 			return err
 		}
 	}
@@ -163,11 +161,10 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 		if pathErr != nil {
 			return pathErr
 		}
-		configDir, configErr := os.UserConfigDir()
-		if configErr != nil {
-			return configErr
+		if err := integration.CheckCodexDesktopProcessOverride(desktopExecutable); err != nil {
+			return err
 		}
-		launch, err = integration.PrepareCodexDesktopLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), filepath.Join(configDir, "agentveil", "codex-desktop-launches"), protectedCodexBaseURL(endpoint, protectedRoute.ID), os.Getenv("OPENAI_API_KEY") != "", childArgs, endpoint, created.Session.ID, routeToken)
+		launch, err = integration.PrepareCodexDesktopProcessLaunch(manifest.Agent, desktopExecutable, filepath.Dir(configPath), protectedCodexCapabilityBaseURL(endpoint, protectedRoute.ID, created.Session.ID, routeToken), childArgs, endpoint, created.Session.ID, routeToken)
 	} else {
 		launch, err = integration.PrepareLaunch(manifest.Agent, childArgs, endpoint, created.Session.ID, "", routeToken)
 	}
@@ -185,7 +182,9 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	launch.Environment["no_proxy"] = localBypass
 	args := launch.Args
 	if name == "codex" {
-		args = protectedCodexArgs(protectedCodexBaseURL(endpoint, protectedRoute.ID), childArgs, os.Getenv("OPENAI_API_KEY") != "")
+		baseURL := protectedCodexCapabilityBaseURL(endpoint, protectedRoute.ID, created.Session.ID, routeToken)
+		launch.Environment["OPENAI_BASE_URL"] = baseURL
+		args = protectedCodexArgs(baseURL, childArgs)
 	} else if name != "codex-desktop" {
 		launch.Environment["ANTHROPIC_BASE_URL"] = endpoint + "/route/" + protectedRoute.ID
 		launch.Environment["ANTHROPIC_API_KEY"] = veilproxy.EncodeCapability(created.Session.ID, routeToken)
@@ -195,8 +194,17 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	go maintainIntegrationLease(childContext, cancelChild, endpoint, adminToken, manifest.Agent.ID, registered.Generation, protectedLaunchHeartbeat, protectedLaunchLease, leaseResult)
 	command := exec.CommandContext(childContext, launch.Executable, args...)
 	configureProtectedCommand(command)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	stdoutFilter := newCapabilityOutputWriter(os.Stdout, routeToken)
+	stderrFilter := newCapabilityOutputWriter(os.Stderr, routeToken)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, stdoutFilter, stderrFilter
 	command.Env = protectedChildEnvironment(os.Environ(), launch.Environment)
+	if name == "codex-desktop" {
+		if err := stopCodexDesktopForProtectedLaunch(desktopExecutable); err != nil {
+			cancelChild()
+			<-leaseResult
+			return err
+		}
+	}
 	if err := command.Start(); err != nil {
 		cancelChild()
 		<-leaseResult
@@ -208,10 +216,13 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if err != nil {
 		cancelChild()
 		_ = command.Wait()
+		_ = stdoutFilter.Flush()
+		_ = stderrFilter.Flush()
 		<-leaseResult
 		return fmt.Errorf("start process egress observation: %w", err)
 	}
 	runErr := command.Wait()
+	outputErr := errors.Join(stdoutFilter.Flush(), stderrFilter.Flush())
 
 	if command.Cancel != nil {
 		_ = command.Cancel()
@@ -226,7 +237,7 @@ func runProtected(ctx context.Context, name string, childArgs []string, interact
 	if egressErr != nil {
 		return egressErr
 	}
-	return runErr
+	return errors.Join(runErr, outputErr)
 }
 
 func runNestedProtected(ctx context.Context, name string, childArgs []string) (resultErr error) {
@@ -264,7 +275,7 @@ func runNestedProtected(ctx context.Context, name string, childArgs []string) (r
 			resultErr = fmt.Errorf("revoke nested protection session: %w", cleanupErr)
 		}
 	}()
-	launch, args, err := prepareNestedLaunch(name, manifest.Agent, endpoint, parentSessionID, routeID, child, childArgs, os.Getenv("OPENAI_API_KEY") != "")
+	launch, args, err := prepareNestedLaunch(name, manifest.Agent, endpoint, parentSessionID, routeID, child, childArgs)
 	if err != nil {
 		return err
 	}
@@ -282,19 +293,22 @@ func runNestedProtected(ctx context.Context, name string, childArgs []string) (r
 	}
 	command := exec.CommandContext(ctx, launch.Executable, args...)
 	configureProtectedCommand(command)
-	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	stdoutFilter := newCapabilityOutputWriter(os.Stdout, childRoute.Token)
+	stderrFilter := newCapabilityOutputWriter(os.Stderr, childRoute.Token)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, stdoutFilter, stderrFilter
 	command.Env = protectedChildEnvironment(os.Environ(), launch.Environment)
 	if err := command.Start(); err != nil {
 		return err
 	}
 	runErr := command.Wait()
+	outputErr := errors.Join(stdoutFilter.Flush(), stderrFilter.Flush())
 	if command.Cancel != nil {
 		_ = command.Cancel()
 	}
-	return runErr
+	return errors.Join(runErr, outputErr)
 }
 
-func prepareNestedLaunch(name string, agent domain.AgentInstance, endpoint, parentSessionID, routeID string, child nativesdk.ChildSession, childArgs []string, hasOpenAIKey bool) (integration.LaunchPlan, []string, error) {
+func prepareNestedLaunch(name string, agent domain.AgentInstance, endpoint, parentSessionID, routeID string, child nativesdk.ChildSession, childArgs []string) (integration.LaunchPlan, []string, error) {
 	if len(child.Routes) != 1 || child.Routes[0].RouteID != routeID || child.Routes[0].Token == "" {
 		return integration.LaunchPlan{}, nil, errors.New("Core returned an incomplete nested route capability")
 	}
@@ -310,11 +324,12 @@ func prepareNestedLaunch(name string, agent domain.AgentInstance, endpoint, pare
 		if child.Protocol != domain.ProtocolOpenAIResponses {
 			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Codex requires an OpenAI Responses Route, got %s", child.Protocol)
 		}
-		if !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportHeaders) {
+		if !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportPath) {
 			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Codex cannot use Route capability transports %q", child.CapabilityTransports)
 		}
-		baseURL := protectedCodexBaseURL(endpoint, routeID)
-		args = protectedCodexArgs(baseURL, childArgs, hasOpenAIKey)
+		baseURL := protectedCodexCapabilityBaseURL(endpoint, routeID, child.Session.ID, childRoute.Token)
+		launch.Environment["OPENAI_BASE_URL"] = baseURL
+		args = protectedCodexArgs(baseURL, childArgs)
 	case "claude":
 		if child.Protocol != domain.ProtocolAnthropic || !slices.Contains(child.CapabilityTransports, nativesdk.CapabilityTransportAnthropicAPIKey) {
 			return integration.LaunchPlan{}, nil, fmt.Errorf("nested Claude requires an Anthropic API-key capability Route, got %s/%q", child.Protocol, child.CapabilityTransports)
@@ -338,6 +353,11 @@ func writeLaunchProtectionPlan(writer io.Writer, entry registry.Entry) error {
 	summary := entry.Plan.Summary
 	if _, err := fmt.Fprintf(writer, "AgentVeil protection plan: %s %s — %d protected, %d local, %d partial, %d observed, %d unprotected\n", entry.Manifest.Agent.Kind, entry.Manifest.Agent.Version, summary.Protected, summary.Local, summary.Partial, summary.Observed, summary.Unprotected); err != nil {
 		return err
+	}
+	if entry.Manifest.Agent.Kind == "codex" || entry.Manifest.Agent.Kind == "codex-desktop" {
+		if _, err := fmt.Fprintln(writer, "  Scope: model Responses traffic only; app connections, browser traffic, and hosted tools are outside this route."); err != nil {
+			return err
+		}
 	}
 	for _, coverage := range entry.Plan.Coverage {
 		surface, ok := surfaces[coverage.SurfaceID]
@@ -566,13 +586,8 @@ func localNoProxy(values ...string) string {
 	return strings.Join(ordered, ",")
 }
 
-func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []string {
-	values := []string{`model_provider="agentveil"`, `model_providers.agentveil.name="AgentVeil"`, `model_providers.agentveil.base_url="` + baseURL + `"`, `model_providers.agentveil.wire_api="responses"`, `model_providers.agentveil.supports_websockets=false`, `model_providers.agentveil.env_http_headers={"X-Veil-Session"="VEIL_SESSION_ID","X-Veil-Route-Token"="VEIL_PROTECTION_TOKEN"}`, `features.enable_request_compression=false`, `features.apps=false`}
-	if hasAPIKey {
-		values = append(values, `model_providers.agentveil.env_key="OPENAI_API_KEY"`)
-	} else {
-		values = append(values, `model_providers.agentveil.requires_openai_auth=true`)
-	}
+func protectedCodexArgs(baseURL string, childArgs []string) []string {
+	values := []string{`model_provider="openai"`, "openai_base_url=" + strconv.Quote(baseURL), `features.enable_request_compression=false`, `features.apps=false`}
 	result := make([]string, 0, len(values)*2+len(childArgs))
 	for _, value := range values {
 		result = append(result, "-c", value)
@@ -585,6 +600,10 @@ func protectedCodexArgs(baseURL string, childArgs []string, hasAPIKey bool) []st
 // Codex's endpoint suffix such as /responses remains unchanged.
 func protectedCodexBaseURL(endpoint, routeID string) string {
 	return strings.TrimSuffix(endpoint, "/") + "/route/" + routeID
+}
+
+func protectedCodexCapabilityBaseURL(endpoint, routeID, sessionID, routeToken string) string {
+	return protectedCodexBaseURL(endpoint, routeID) + "/__veil/" + url.PathEscape(veilproxy.EncodeCapability(sessionID, routeToken))
 }
 
 func validateCodexProtectedArgs(args []string) error {
@@ -607,7 +626,7 @@ func validateCodexProtectedArgs(args []string) error {
 		}
 		key, _, exists := strings.Cut(override, "=")
 		key = strings.TrimSpace(key)
-		if exists && (key == "model_provider" || strings.HasPrefix(key, "model_providers.") || key == "features.enable_request_compression" || key == "features.apps") {
+		if exists && (key == "model_provider" || key == "openai_base_url" || key == "profile" || strings.HasPrefix(key, "profiles.") || strings.HasPrefix(key, "model_providers.") || key == "features.enable_request_compression" || key == "features.apps") {
 			return fmt.Errorf("protected Codex launch cannot override %s", key)
 		}
 	}

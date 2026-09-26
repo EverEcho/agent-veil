@@ -7,8 +7,6 @@ use serde_json::Value;
 use std::io::Read;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
-#[cfg(target_os = "macos")]
-use std::thread;
 use std::time::Duration;
 use tauri::State;
 
@@ -48,38 +46,6 @@ fn codex_desktop_running() -> Option<bool> {
             Some(1) => Some(false),
             _ => None,
         })
-}
-
-#[cfg(target_os = "macos")]
-fn stop_unprotected_codex_desktop() -> Result<(), String> {
-    match codex_desktop_running() {
-        Some(false) => return Ok(()),
-        None => return Err("无法安全确认 Codex 桌面客户端是否正在运行".into()),
-        Some(true) => {}
-    }
-    let status = Command::new("/usr/bin/pkill")
-        .args(["-TERM", "-f", CODEX_DESKTOP_PROCESS_PATTERN])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|_| "无法关闭未受保护的 Codex 桌面客户端")?;
-    if !matches!(status.code(), Some(0 | 1)) {
-        return Err("无法关闭未受保护的 Codex 桌面客户端".into());
-    }
-    for _ in 0..50 {
-        match codex_desktop_running() {
-            Some(false) => return Ok(()),
-            Some(true) => thread::sleep(Duration::from_millis(100)),
-            None => return Err("关闭 Codex 后无法确认进程状态".into()),
-        }
-    }
-    Err("Codex 桌面客户端未能在 5 秒内退出，请手动退出后重试".into())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn stop_unprotected_codex_desktop() -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -150,14 +116,9 @@ pub(crate) async fn launch_codex_desktop(
     runtime: State<'_, SharedRuntime>,
 ) -> Result<Value, String> {
     let runtime = runtime.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if !protected_codex_running(&runtime)? {
-            stop_unprotected_codex_desktop()?;
-        }
-        launch_protected_codex(&app, &runtime)
-    })
-    .await
-    .map_err(|_| "Codex 桌面启动任务异常退出".to_owned())??;
+    tauri::async_runtime::spawn_blocking(move || launch_protected_codex(&app, &runtime))
+        .await
+        .map_err(|_| "Codex 桌面启动任务异常退出".to_owned())??;
     Ok(serde_json::json!({"status": "started"}))
 }
 

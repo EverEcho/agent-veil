@@ -102,7 +102,7 @@
 | Agent | 已开发 | 已验证 | 待开发 | 待验证 |
 |---|---|---|---|---|
 | Codex | 按实际选中 Provider 解析 API Key、ChatGPT 登录上游和自定义 Base URL；通过 CLI 最终生效清单枚举配置与插件提供的 MCP；Linux/macOS 默认 OpenAI/ChatGPT 主模型 Protected Launch | Linux 0.153.4 API Key/ChatGPT 与 macOS 0.153.4 ChatGPT `--help` launch smoke；自定义 Provider 和远程 MCP 保守降级测试 | Codex 远程 MCP 改写、自定义 Header/Query/Signer、跨平台进程出口强制 | 真实 Provider 请求、其他版本和 Windows |
-| Codex Desktop | 独立发现官方 App 内置 app-server；AgentVeil 私有会话级 `CODEX_HOME`；复制登录状态但不修改原配置；GUI 受保护启动按钮；退出与崩溃残留清理 | macOS 内置 0.154.0 接受 Provider/WebSocket/压缩配置；Manifest 将主模型与本机 App Tools/MCP 分开 | Windows、GUI 已运行检测跨平台化、App Tools 出口接管、macOS pre-connect 阻断 | 真实 GUI Provider 往返、应用升级、异常退出和长期运行 | 当前只能声明主模型 Route；本机 App Tools、MCP 和 Shell 子进程不是内容保护 |
+| Codex Desktop | 独立发现官方 App 内置 app-server；进程级 `openai_base_url` 沿用原会话目录；旧版私有 Home 残留清理；GUI 启动按钮 | 临时 Home 和本地假代理验证内置 app-server 模型路由与 `openai` 会话元数据；WebSocket `426` 回退 Mock 通过 | Windows、App Tools 出口接管、macOS pre-connect 阻断 | 真实 GUI Provider 往返、应用升级、异常退出和长期运行 | 当前只能声明主模型 Route；应用连接、浏览器、MCP 和 Shell 子进程不是内容保护 |
 | Claude Code | 配置发现、API Key Protected Launch | Linux 2.1.220 `--help` launch smoke | OAuth 能力注入与验证 | OAuth、真实 Anthropic 请求和其他平台 |
 | Hermes | 主模型、辅助、Vision、Fallback、Delegation、远程 MCP 配置改写 | Linux 0.20.6 多 Surface 和 legacy SSE 自动化 | 更多 Provider 与特殊 transport | 真实复杂配置、远程 MCP 和长期运行 |
 | OpenClaw | 模型、MCP、ACP、Browser、Web Tool Surface 发现 | 配置 fixture | Provider Bridge、Gateway、Plugin 和 Protected 接入 | 真实版本与嵌套运行 |
