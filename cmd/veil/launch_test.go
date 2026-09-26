@@ -50,13 +50,14 @@ func TestWriteLaunchProtectionPlanRejectsUnknownSurface(t *testing.T) {
 	}
 }
 
-func TestProtectedCodexArgsKeepCapabilitiesOutOfArgv(t *testing.T) {
-	args := protectedCodexArgs("http://127.0.0.1:1234/route/primary/v1", []string{"exec", "hello"}, true)
+func TestProtectedCodexArgsUseBuiltInProvider(t *testing.T) {
+	baseURL := "http://127.0.0.1:1234/route/primary/__veil/veil-v1:session:token"
+	args := protectedCodexArgs(baseURL, []string{"exec", "hello"})
 	joined := strings.Join(args, " ")
-	if strings.Contains(joined, "session-secret") || !strings.Contains(joined, "env_http_headers") || !strings.Contains(joined, "env_key") {
+	if !strings.Contains(joined, `model_provider="openai"`) || !strings.Contains(joined, "openai_base_url=") || !strings.Contains(joined, baseURL) || strings.Contains(joined, "model_providers.agentveil") {
 		t.Fatalf("args=%v", args)
 	}
-	for _, required := range []string{`supports_websockets=false`, `features.enable_request_compression=false`, `features.apps=false`} {
+	for _, required := range []string{`features.enable_request_compression=false`, `features.apps=false`} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("protected Codex arguments are missing %q: %s", required, joined)
 		}
@@ -67,12 +68,17 @@ func TestProtectedCodexBaseURLDoesNotInventProviderPath(t *testing.T) {
 	if got := protectedCodexBaseURL("http://127.0.0.1:1234/", "route-primary"); got != "http://127.0.0.1:1234/route/route-primary" {
 		t.Fatalf("protected Codex base URL=%q", got)
 	}
+	if got := protectedCodexCapabilityBaseURL("http://127.0.0.1:1234", "route-primary", "session-0123456789abcdef", strings.Repeat("t", 64)); !strings.Contains(got, "/route/route-primary/__veil/") || strings.HasSuffix(got, "/v1") {
+		t.Fatalf("protected Codex capability base URL=%q", got)
+	}
 }
 
 func TestProtectedCodexArgsRejectRouteBypasses(t *testing.T) {
 	blocked := [][]string{
 		{"-c", `model_provider="direct"`},
 		{"--config", `model_providers.openai.base_url="https://api.openai.com/v1"`},
+		{"--config", `openai_base_url="https://api.openai.com/v1"`},
+		{"--config", `profile="direct"`},
 		{`--config=features.enable_request_compression=true`},
 		{`-c=features.apps=true`},
 		{"--enable", "apps"},
@@ -122,29 +128,35 @@ func TestPrepareNestedLaunchBindsVerifiedCapabilityTransports(t *testing.T) {
 		Routes:  []nativesdk.RouteCredential{{RouteID: routeID, Token: token}},
 	}
 	agent := domain.AgentInstance{Kind: "codex", Mode: domain.ModeLaunch, Executable: "/bin/true"}
-	for _, transports := range [][]string{{nativesdk.CapabilityTransportHeaders}, {nativesdk.CapabilityTransportHeaders, nativesdk.CapabilityTransportPath}} {
+	for _, transports := range [][]string{{nativesdk.CapabilityTransportHeaders, nativesdk.CapabilityTransportPath}} {
 		child := baseChild
 		child.Protocol = domain.ProtocolOpenAIResponses
 		child.CapabilityTransports = transports
-		launch, args, err := prepareNestedLaunch("codex", agent, endpoint, parentID, routeID, child, []string{"exec", "task"}, false)
+		launch, args, err := prepareNestedLaunch("codex", agent, endpoint, parentID, routeID, child, []string{"exec", "task"})
 		if err != nil || launch.Environment["VEIL_PARENT_SESSION"] != parentID || launch.Environment["VEIL_ROUTE_ID"] != routeID {
 			t.Fatalf("transports=%q launch=%+v err=%v", transports, launch, err)
 		}
 		joined := strings.Join(args, " ")
-		if !strings.Contains(joined, "env_http_headers") || strings.Contains(joined, token) || strings.Contains(joined, "/__veil/") {
-			t.Fatalf("transports=%q exposed or omitted nested headers: args=%v", transports, args)
+		if !strings.Contains(joined, `model_provider="openai"`) || !strings.Contains(joined, "/__veil/") || !strings.Contains(joined, token) {
+			t.Fatalf("transports=%q omitted nested capability route: args=%v", transports, args)
 		}
+	}
+	headerOnly := baseChild
+	headerOnly.Protocol = domain.ProtocolOpenAIResponses
+	headerOnly.CapabilityTransports = []string{nativesdk.CapabilityTransportHeaders}
+	if _, _, err := prepareNestedLaunch("codex", agent, endpoint, parentID, routeID, headerOnly, []string{"exec", "task"}); err == nil {
+		t.Fatal("nested Codex accepted a route without path capabilities")
 	}
 	claudeChild := baseChild
 	claudeChild.Protocol = domain.ProtocolAnthropic
 	claudeChild.CapabilityTransports = []string{nativesdk.CapabilityTransportAnthropicAPIKey}
 	claudeAgent := domain.AgentInstance{Kind: "claude", Mode: domain.ModeLaunch, Executable: "/bin/true"}
-	launch, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil, false)
+	launch, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil)
 	if err != nil || launch.Environment["ANTHROPIC_BASE_URL"] != endpoint+"/route/"+routeID || launch.Environment["ANTHROPIC_API_KEY"] != "veil-v1:"+claudeChild.Session.ID+":"+token {
 		t.Fatalf("nested Claude launch=%+v err=%v", launch, err)
 	}
 	claudeChild.Protocol = domain.ProtocolOpenAIResponses
-	if _, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil, false); err == nil {
+	if _, _, err := prepareNestedLaunch("claude", claudeAgent, endpoint, parentID, routeID, claudeChild, nil); err == nil {
 		t.Fatal("nested Claude accepted a mismatched protocol")
 	}
 }

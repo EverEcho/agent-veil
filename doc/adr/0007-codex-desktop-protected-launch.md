@@ -1,6 +1,6 @@
 # ADR-0007：Codex Desktop 受保护启动
 
-- 状态：部分接受
+- 状态：由 [ADR-0008](0008-codex-process-local-model-routing.md) 取代；仅保留旧版会话目录的清理依据
 - 范围：macOS Codex Desktop、Go Launch Integration、Tauri 控制入口
 
 ## 决策

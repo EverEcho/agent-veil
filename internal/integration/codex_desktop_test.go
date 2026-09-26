@@ -60,7 +60,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if err := os.WriteFile(agent.Executable, []byte("binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	plan, err := prepareLegacyCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestPrepareCodexDesktopLaunchUsesIsolatedHomeAndPreservesSource(t *testing.
 	if artifact, err := os.ReadFile(filepath.Join(home, "visualizations", "protected-artifact")); err != nil || string(artifact) != "protected artifact" {
 		t.Fatalf("protected visualization did not survive retirement: %q %v", artifact, err)
 	}
-	second, err := PrepareCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
+	second, err := prepareLegacyCodexDesktopLaunch(agent, executable, source, launches, "http://127.0.0.1:9191/route/primary/v1", false, nil, "http://127.0.0.1:9191", "session-0123456789", strings.Repeat("t", 32))
 	if err != nil {
 		t.Fatal(err)
 	}

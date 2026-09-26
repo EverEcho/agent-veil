@@ -238,7 +238,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestsProtocolUpgrade(r.Header) {
 		auditEvent.Action = domain.ActionBlock
 		auditEvent.ErrorCode = domain.ErrUnknownProtocol
-		fail(w, http.StatusForbidden, string(domain.ErrUnknownProtocol))
+		status := http.StatusForbidden
+		if route.Protocol == domain.ProtocolOpenAIResponses && r.Method == http.MethodGet && (endpoint == "/responses" || endpoint == "/v1/responses") && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			// Codex's built-in provider falls back immediately to inspected HTTP
+			// Responses after 426. A generic 403 triggers repeated WS retries.
+			status = http.StatusUpgradeRequired
+		}
+		fail(w, status, string(domain.ErrUnknownProtocol))
 		return
 	}
 	if len(r.Header.Values("Cookie")) != 0 {

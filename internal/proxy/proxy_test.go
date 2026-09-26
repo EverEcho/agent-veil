@@ -699,6 +699,39 @@ func TestPathCapabilityIsRemovedWithoutReplacingProviderAuthorization(t *testing
 	}
 }
 
+func TestCodexBuiltInBaseURLKeepsUpstreamPath(t *testing.T) {
+	var upstreamPath string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"output_text":"safe"}`)
+	}))
+	defer provider.Close()
+	upstream, _ := url.Parse(provider.URL + "/v1")
+	manager := session.NewManager()
+	created, _ := manager.Create("", "local", []string{"primary"}, time.Minute)
+	handler, err := NewHandler(manager, []Route{{ID: "primary", Protocol: domain.ProtocolOpenAIResponses, Upstream: upstream, CapabilityPath: true, Policy: policy.Engine{Default: domain.ActionRedact}, MaxRequestBytes: 4096, MaxResponseBytes: 4096, VaultLimits: redactor.Limits{MaxEntries: 2, MaxOriginalBytes: 100}}}, provider.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := EncodeCapability(created.Session.ID, created.Routes[0].Token)
+	upgrade := httptest.NewRequest(http.MethodGet, "/route/primary/__veil/"+capability+"/responses", nil)
+	upgrade.Header.Set("Connection", "Upgrade")
+	upgrade.Header.Set("Upgrade", "websocket")
+	upgradeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(upgradeResponse, upgrade)
+	if upgradeResponse.Code != http.StatusUpgradeRequired || upstreamPath != "" {
+		t.Fatalf("WebSocket downgrade status=%d upstream path=%q", upgradeResponse.Code, upstreamPath)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/route/primary/__veil/"+capability+"/responses", strings.NewReader(`{"input":"safe"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || upstreamPath != "/v1/responses" {
+		t.Fatalf("status=%d upstream path=%q", recorder.Code, upstreamPath)
+	}
+}
+
 func TestRouteCapabilityHeadersMustBeUnique(t *testing.T) {
 	providerCalls := 0
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

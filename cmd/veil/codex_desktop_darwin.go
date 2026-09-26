@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os/exec"
 	"regexp"
+	"time"
 )
 
 const officialCodexDesktopExecutable = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
@@ -17,19 +18,44 @@ func codexDesktopExecutable() (string, error) {
 	return officialCodexDesktopExecutable, nil
 }
 
-func ensureCodexDesktopStopped(executable string) error {
+func codexDesktopRunning(executable string) (bool, error) {
 	for _, pattern := range codexDesktopProcessPatterns(executable) {
 		err := exec.Command("/usr/bin/pgrep", "-f", pattern).Run()
 		if err == nil {
-			return errors.New("Codex 桌面客户端仍在运行；请从 Codex 菜单完全退出，等待几秒后重试")
+			return true, nil
 		}
 		var exitError *exec.ExitError
 		if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
 			continue
 		}
-		return errors.New("无法安全确认 Codex 桌面客户端是否正在运行")
+		return false, errors.New("无法安全确认 Codex 桌面客户端是否正在运行")
 	}
-	return nil
+	return false, nil
+}
+
+func stopCodexDesktopForProtectedLaunch(executable string) error {
+	running, err := codexDesktopRunning(executable)
+	if err != nil || !running {
+		return err
+	}
+	status := exec.Command("/usr/bin/pkill", "-TERM", "-f", codexDesktopProcessPatterns(executable)[0]).Run()
+	if status != nil {
+		var exitError *exec.ExitError
+		if !errors.As(status, &exitError) || exitError.ExitCode() != 1 {
+			return errors.New("无法安全关闭原 Codex 桌面客户端")
+		}
+	}
+	for attempt := 0; attempt < 50; attempt++ {
+		running, err = codexDesktopRunning(executable)
+		if err != nil {
+			return err
+		}
+		if !running {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("原 Codex 桌面客户端未能在 5 秒内退出；请手动退出后重试")
 }
 
 func codexDesktopProcessPatterns(executable string) []string {

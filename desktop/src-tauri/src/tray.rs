@@ -8,7 +8,9 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::{
     bridge::browser_url,
-    core_supervisor::{monitor_core, refresh_sessions, stop_owned, SharedRuntime},
+    core_supervisor::{
+        monitor_core, protected_codex_running, refresh_sessions, stop_owned, SharedRuntime,
+    },
 };
 
 pub(crate) fn setup(
@@ -50,11 +52,13 @@ pub(crate) fn setup(
                 };
             }
             "quit" => {
-                if refresh_sessions(&tray_runtime) > 0 {
+                if refresh_sessions(&tray_runtime) > 0
+                    || protected_codex_running(&tray_runtime).unwrap_or(true)
+                {
                     show_main_window(app);
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window
-                            .eval("alert('仍有受保护会话运行，AgentVeil 将继续留在托盘中。')");
+                            .eval("alert('Codex 或其他受保护会话仍在使用 Veil。请先退出 Codex；Veil 将继续留在托盘中。')");
                     }
                 } else {
                     stop_owned(&tray_runtime);
